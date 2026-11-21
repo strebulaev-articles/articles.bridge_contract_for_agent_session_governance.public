@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/disconnect.response.schema.json",
+  "title": "Wire response: disconnect",
+  "type": "object",
+  "properties": {
+    "status": {
+      "const": "disconnected"
+    },
+    "session_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "session_id"
+  ],
+  "additionalProperties": false
+}

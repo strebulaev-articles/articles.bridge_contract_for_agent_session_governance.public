@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/TOOL_CALL_DRAINED.schema.json",
+  "title": "TOOL_CALL_DRAINED payload",
+  "x-invariants": "I13",
+  "description": "A queued call forwarded at drain with its retained tool, permission and content; repeats h_q.",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "permission": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "content": {
+      "description": "The retained content, forwarded as hashed."
+    },
+    "authority_hash": {
+      "type": "string"
+    },
+    "shown_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "key",
+    "tool",
+    "permission",
+    "content",
+    "authority_hash",
+    "shown_hash"
+  ],
+  "additionalProperties": false
+}

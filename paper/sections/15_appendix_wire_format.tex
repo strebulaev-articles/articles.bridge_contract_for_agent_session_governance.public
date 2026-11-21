@@ -1,0 +1,476 @@
+\section{Client--Bridge Wire Format}
+\label{app:wire-format}
+% ================================================================================
+
+This appendix is \emph{normative} for the reference transport: a bridge
+that claims to speak it and emits or accepts messages in a different
+shape is non-conformant at the wire level, even if its committed event
+log and final session state agree with the contract. A binding to
+another transport keeps only the parts named in
+Section~\ref{sec:wire-binding}. The conformance unit remains the committed event log
+and the final session state (Section~\ref{sec:formal-status}); the
+wire format is what makes byte-level interoperability between
+bridges achievable.
+
+\paragraph{What is exercised.} The normative status is wider than the
+evidence, and the evidence is stated here. The signed byte strings, the
+reason names and the canonical encoding are pinned by known-answer vectors
+and checked by both bridges. The envelope is exercised end to end on both
+reference implementations: a wire front-end in each
+(\texttt{supplementary/wire\_server.py} and
+\texttt{supplementary/rust-bridge/src/wire\_server.rs}) decodes a request,
+refuses bytes that are not canonical JSON, dispatches the op-types
+\texttt{attach}, \texttt{challenge}, \texttt{add\_client},
+\texttt{reattach}, \texttt{join}, \texttt{disconnect},
+\texttt{escalate}, \texttt{resolve}, \texttt{submit\_tool\_call},
+\texttt{answer\_tool\_call}, \texttt{delivered}, \texttt{completed},
+\texttt{narrow}, \texttt{extend} and \texttt{terminate}, and the operator
+events \texttt{revoke}, \texttt{add\_key} and \texttt{operator\_terminate},
+to its bridge, and returns the response. The vectors run through each with
+real signatures that the bridge verifies from the message, and the session
+of each vector is created by an \texttt{attach} message
+(\texttt{run\_vectors.py -{}-wire} and the Rust test
+\texttt{all\_vectors\_pass\_through\_the\_wire\_server}). The two
+front-ends share the reason names and the hook for the transport's
+caller check, and were written by the same author. What the vectors do not
+send as messages are the clock and restart hooks and the tampering of logs
+and registries, which are test-harness actions, and a re-attach left
+incomplete or flagged as a transport replay.
+
+The wire format is JSON, encoded canonically per RFC~8785~\cite{rundgren2020json}
+for the value types the contract uses: strings (any Unicode text, emitted
+as raw UTF-8 with the RFC~8785 escapes), integers whose magnitude is at
+most $2^{53}$, finite numbers (ECMAScript formatting, so a timestamp
+\texttt{1.0} is encoded \texttt{1}), arrays, and objects with string
+member names sorted by UTF-16 code units. A value outside that set (NaN,
+an infinity, an integer beyond $2^{53}$) has no canonical form and a
+bridge MUST refuse to hash or sign it. Both reference implementations
+produce the same bytes, pinned by known-answer vectors
+(Section~\ref{sec:wire-kat}).
+A future revision MAY define a binary encoding (e.g., protobuf or
+CBOR) as an alternative binding, provided it preserves a canonical
+byte representation for signatures.
+
+\subsection{What a transport binding must keep}
+\label{sec:wire-binding}
+
+A deployment may carry the contract in its own messages, for example
+inside the frames of an existing agent protocol, instead of in the
+envelope below. Such a binding is conformant at the wire level when it
+keeps the parts listed here and may change the rest.
+\begin{itemize}[leftmargin=2em]
+\item \textbf{Signature scope.} The arrays in the ``Signature over''
+column and in the signature-scope subsection, with their
+domain-separation tags and the order of their elements, are normative.
+A client and a bridge that sign and verify other bytes do not
+interoperate with a bridge that follows the vectors.
+\item \textbf{Reason names.} The reasons in Table~\ref{tab:wire-reasons}
+are the rejection vocabulary of the contract. A binding MAY wrap a
+reason in its own error structure, but it MUST preserve the reason name
+so that a client can tell \texttt{prefix\_mismatch} from
+\texttt{nonce\_used}.
+\item \textbf{Canonical encoding of signed bytes.} What is signed is the
+RFC~8785 canonical JSON of the listed array, whatever encoding carries
+the message. A binding that does not use JSON on the wire still
+reconstructs these bytes before it signs or verifies.
+\end{itemize}
+The envelope with its \texttt{op}, \texttt{status} and \texttt{reason}
+fields, the one-request-one-response framing and the op-type names are
+the reference transport only. A binding MAY map each op-type onto its
+own message type, and the vectors then act as the acceptance interface
+at the level of events and final state, not of message shape. The
+requirements on unsigned ops (authentication and freshness by the
+transport) apply to every binding.
+
+\subsection{Envelope}
+
+Every client$\to$bridge request is a JSON object with an \texttt{op}
+field naming the op-type and a \texttt{session\_id} field (except
+\texttt{restart}, which is bridge-level). Every bridge$\to$client
+response is a JSON object with a \texttt{status} field and a
+\texttt{session\_id} field. Errors use
+\texttt{status: "rejected"} and a short snake\_case \texttt{reason}.
+
+\begin{lstlisting}
+// client -> bridge
+{"op": "<op-type>", "session_id": "<sid>", ...op-specific fields...}
+
+// bridge -> client (success)
+{"status": "<status>", "session_id": "<sid>", ...response fields...}
+
+// bridge -> client (error)
+{"status": "rejected", "session_id": "<sid>", "reason": "<reason>"}
+\end{lstlisting}
+
+\subsection{Op-types}
+
+Table~\ref{tab:wire-ops} lists the op-types. The
+\texttt{signature} field, where present, is a hex-encoded signature (Ed25519 or ECDSA P-256 in the
+reference implementations), over the canonical JSON of the array listed in the
+``Signature over'' column. The bridge verifies signatures against
+the registry of client public keys (I11).
+
+\footnotesize
+\begin{longtable}{p{0.13\columnwidth} p{0.26\columnwidth} p{0.26\columnwidth} p{0.21\columnwidth}}
+\caption{Client--bridge op-types.}\label{tab:wire-ops}\\
+\toprule
+\textbf{Op} & \textbf{Request fields} & \textbf{Response} & \textbf{Signature over} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Op} & \textbf{Request fields} & \textbf{Response} & \textbf{Signature over} \\
+\midrule
+\endhead
+\texttt{attach} &
+\texttt{session\_id}, \texttt{principal}, \texttt{scope[]}, \texttt{lineage[]}, \texttt{key\_id}, \texttt{scheme}, \texttt{public\_key}, \texttt{grant}, \texttt{signature} &
+\texttt{status: "attached"}, \texttt{seq: 0}, \texttt{hash} \emph{or} \texttt{status: "rejected"}, \texttt{reason} &
+\texttt{["bc/v1/attach", bridge\_id, sid, principal, scope, lineage, key\_id, scheme, public\_key]} \\
+\texttt{add\_client} &
+\texttt{session\_id}, \texttt{via\_key\_id}, \texttt{new\_key\_id}, \texttt{scheme}, \texttt{new\_public\_key}, \texttt{nonce}, \texttt{signature} &
+\texttt{status: "added"} \emph{or} \texttt{status: "rejected"}, \texttt{reason} &
+\texttt{["bc/v1/add-client", sid, via\_key\_id, new\_key\_id, scheme, new\_public\_key, nonce]} \\
+\texttt{challenge} &
+\texttt{session\_id} &
+\texttt{status: "nonce"}, \texttt{nonce}, \texttt{ttl\_seconds} &
+--- (no signature) \\
+\texttt{reattach} &
+\texttt{session\_id}, \texttt{key\_id}, \texttt{nonce}, \texttt{seq}, \texttt{hash}, \texttt{signature} &
+\texttt{status: "verified"}, \texttt{events[]} \emph{or} \texttt{status: "rejected"}, \texttt{reason} &
+\texttt{["bc/v1/reattach", sid, key\_id, nonce, seq, hash]} \\
+\texttt{join} &
+same as \texttt{reattach} (session is attached) &
+\texttt{status: "joined"}, \texttt{events[]} &
+\texttt{["bc/v1/join", sid, key\_id, nonce, seq, hash]} \\
+\texttt{disconnect} &
+\texttt{session\_id}, \texttt{key\_id}? (absent = all), \texttt{reason} &
+\texttt{status: "disconnected"} &
+--- \\
+\texttt{escalate} &
+\texttt{session\_id}, \texttt{trigger}? &
+\texttt{status: "escalated"} &
+--- \\
+\texttt{resolve} &
+\texttt{session\_id} &
+\texttt{status: "resolved"} &
+--- \\
+\texttt{submit\_tool\_call} &
+\texttt{session\_id}, \texttt{tool}, \texttt{key}?, \texttt{permission}?, \texttt{content} &
+\texttt{status: "queued"} or \texttt{"forwarded"} (under the forward profile); a duplicate key or a full queue is refused through the error envelope (\texttt{duplicate\_key}, \texttt{queue\_full}) &
+--- \\
+\texttt{answer\_tool\_call} &
+\texttt{session\_id}, \texttt{key}, \texttt{shown\_hash}, \texttt{decision} &
+\texttt{status: "answered"} &
+--- \\
+\texttt{delivered} &
+\texttt{session\_id}, \texttt{key} &
+\texttt{status: "delivered"} &
+--- \\
+\texttt{completed} &
+\texttt{session\_id}, \texttt{key}, \texttt{result\_hash}? &
+\texttt{status: "completed"} &
+--- \\
+\texttt{narrow} &
+\texttt{session\_id}, \texttt{new\_scope[]} &
+\texttt{status: "narrowed"|"rejected"}, \texttt{new\_version}?, \texttt{reason}? &
+--- \\
+\texttt{extend} &
+\texttt{session\_id}, \texttt{new\_scope[]}, \texttt{source} &
+\texttt{status: "rejected"}, \texttt{reason: "extension\_rejected"},
+\texttt{current\_scope[]} for a widening asked for (I3); \texttt{status:
+"revert\_requested"} for a widening the runtime announced
+(\texttt{source: "observed"}), recorded and to be reverted;
+\texttt{status: "unchanged"} for a subset; all three carry
+\texttt{current\_scope[]}, the scope in force &
+--- \\
+\texttt{terminate} &
+\texttt{session\_id}, \texttt{reason} &
+\texttt{status: "terminated"} &
+--- (refused as \texttt{key\_exhausted} on a session without active keys) \\
+\texttt{revoke} &
+\texttt{session\_id}, \texttt{key\_id}, \texttt{reason}, \texttt{signature}?, \texttt{requested\_by}? &
+\texttt{status: "revoked"|"requested"} &
+\texttt{["bc/v1/revoke", bridge\_id, sid, key\_id, reason, seq, head]} (operator) \\
+\texttt{add\_key} &
+\texttt{session\_id}, \texttt{key\_id}, \texttt{scheme}, \texttt{public\_key}, \texttt{signature} &
+\texttt{status: "key\_added"} &
+\texttt{["bc/v1/add-key", bridge\_id, sid, key\_id, scheme, public\_key, seq, head]} (operator) \\
+\texttt{operator\_terminate} &
+\texttt{session\_id}, \texttt{reason}, \texttt{signature} &
+\texttt{status: "terminated"} &
+\texttt{["bc/v1/terminate", bridge\_id, sid, reason, seq, head]} (operator) \\
+\bottomrule
+\end{longtable}
+
+\noindent The op-types \texttt{tick} (timer evaluation) and
+\texttt{restart} (bridge recovery) are test-harness and
+operator actions respectively, not client--bridge wire ops. They
+are carried by the operator channel, not by the client--bridge wire
+format defined here.
+
+\subsection{Signature scope}
+
+These op-types carry a \texttt{signature} field:
+\begin{itemize}[leftmargin=2em]
+\item \texttt{attach}: the client proves it holds the private key of
+the \texttt{public\_key} it is registering. The signature is made with
+that key over the canonical JSON of the array
+\texttt{["bc/v1/attach", bridge\_id, sid, principal, scope, lineage,
+key\_id, scheme, public\_key]}, where \texttt{bridge\_id} is the identity
+of the bridge the request is addressed to (deployment configuration known
+to both sides; it is not a field of the request), \texttt{scheme} is the
+scheme tag and \texttt{public\_key} the hex string registered. The array
+has the fields of the grant (below) under a different tag, so the proof
+and the grant cannot stand for one another. A missing proof, or one that
+does not verify under the presented key, is answered with the reason
+\texttt{possession\_invalid}; nothing is committed and no key is
+registered.
+\item \texttt{add\_client}: the connected client (identified by
+\texttt{via\_key\_id}) authorises the new key. The signature is over
+\texttt{["bc/v1/add-client", sid, via\_key\_id, new\_key\_id, scheme,
+new\_public\_key, nonce]}, where \texttt{nonce} was issued by a
+\texttt{challenge} for the session and is spent by the first authentic
+presentation, so the authorisation cannot be replayed, and
+\texttt{new\_public\_key} is the hex string registered. The bridge verifies
+under the registered key of \texttt{via\_key\_id}, which must be connected
+and not revoked. The refusals are \texttt{via\_not\_connected},
+\texttt{bad\_signature} (missing, forged, or made for another operation,
+session or key), \texttt{revoked\_key}, \texttt{nonce\_unknown},
+\texttt{nonce\_used}, \texttt{nonce\_expired} and
+\texttt{key\_already\_registered}; none commits an event, so a caller that
+holds no registered key writes nothing to the log.
+\item \texttt{reattach} and \texttt{join}: the client proves
+possession of a registered key and binds the request to the
+challenge nonce and the last event it saw. The signature is over
+\texttt{["bc/v1/reattach", sid, key\_id, nonce, seq, hash]}
+(for \texttt{reattach}) or
+\texttt{["bc/v1/join", sid, key\_id, nonce, seq, hash]}
+(for \texttt{join}); this is the one definition, and the specification
+and the state machine refer to it. The domain-separation tag
+(\texttt{"bc/v1/reattach"} vs \texttt{"bc/v1/join"})
+ensures that a \texttt{reattach} and a \texttt{join} signing the
+same underlying values produce different signatures, preventing
+cross-operation replay, and the key id ties the proof to the identity
+that signs it. The bridge verifies against the operation it received,
+not one the request names, so a proof made for the other operation is
+refused as \texttt{bad\_signature}. A \texttt{reattach} for a session
+that is attached is refused as \texttt{already\_attached}, and a
+\texttt{join} for one that is not attached is refused.
+\end{itemize}
+The reference signature scheme is Ed25519, hex-encoded. A deployment
+MAY use another scheme that is existentially unforgeable (A3), for
+example ECDSA P-256 where a client platform lacks Ed25519; the
+deployment's verifier then fixes the encoding of signature and public
+key, and the signed bytes are unchanged. The reference implementations
+also implement ECDSA P-256 with SHA-256 (public key: the 65-byte SEC1
+uncompressed point; signature: the 64-byte $r \Vert s$ form, as
+WebCrypto produces it), and the registry records a scheme tag with each
+key. Vectors V59--V62 and V94 use P-256 (the file \texttt{p256\_kat.json} fixes its bytes); the other vectors use Ed25519. The
+bridge verifies against
+the registry of client public keys (I11); the registry holds
+verification material only.
+
+\paragraph{Known-answer vectors.}\label{sec:wire-kat}
+\texttt{vectors/bytes\_kat.json} fixes the bytes, not only the behaviour.
+It lists, with the bytes as text and as hex: the canonical form of
+inputs that cover non-ASCII strings, escapes, key order beyond the
+basic plane, integral and fractional numbers and exponent forms; inputs
+that have no canonical form; the canonical bytes and hash of an event
+and of tool-call content (so the event hash and the content hash are
+pinned, including a non-ASCII payload and an integral timestamp); and
+re-attach and join proofs under a fixed Ed25519 seed, with the exact
+signed bytes and the signature (Ed25519 is deterministic, so the
+signature is fixed), together with signatures that must not verify (the
+other operation, another key id, the untagged tuple, the tuple without
+the key id). Both reference implementations read the file, and the
+canonical forms and signatures were also reproduced outside both, with
+the string and number rules of JavaScript \texttt{JSON.stringify} and the
+Ed25519 verifier of Node.js (OpenSSL). An independent implementation confirms
+byte-level conformance by reproducing the file.
+
+\paragraph{Authentication of unsigned ops.}
+The op-types \texttt{resolve}, \texttt{answer\_tool\_call},
+\texttt{escalate}, \texttt{delivered}, \texttt{completed},
+\texttt{narrow}, \texttt{extend}, \texttt{disconnect},
+\texttt{submit\_tool\_call}, and \texttt{terminate} do not
+carry a client signature in the wire format. They MUST be
+authenticated by the transport binding (e.g., TLS client
+certificates, mTLS, or a session token issued at \texttt{attach}).
+The bridge MUST verify the caller identity and reject unsigned
+ops from unauthenticated transports. Unauthenticated answers are a
+deployment risk: anyone who can speak the wire can inject a
+\texttt{resolve} or \texttt{answer\_tool\_call}. The deployment
+MUST document which transport-level authentication is used and
+under which identity these ops are accepted. The transport binding
+also carries freshness for these ops: they have no nonce or
+\texttt{seq} of their own, so the contract does not make them
+replay-safe on a transport that does not. Signing them is not
+required and is not specified: an approval is bound to the request it
+answers by a hash (I14), not to a signing identity, so who approved is
+exactly what the transport authenticated, no more. The unsigned
+\texttt{terminate} is the exception that the bridge itself narrows: on a
+session without active keys it is refused (\texttt{key\_exhausted}) and only
+the operator's signed termination ends the session.
+
+\paragraph{Grant.}
+The \texttt{grant} field of \texttt{attach} carries the scope grant that
+the bridge presents to the deployment's grant verifier before it commits
+\texttt{ATTACHED} (Section~\ref{sec:spec}, authorisation boundary). It is
+an opaque string to the contract and is not covered by the client
+signature: it authenticates itself, because it binds the bridge identity,
+the session identifier, the principal, the scope, the lineage and the
+client key (identifier, scheme tag and public key) under the domain tag
+\texttt{"bc/v1/grant"}. Binding the public key stops a party that sees
+a grant in transit from attaching the session under the granted key
+identifier with a public key of its own; binding the bridge identity
+stops a grant from being replayed at another bridge. The reference
+verifier takes a hex Ed25519 signature by the operator over the
+canonical JSON of \texttt{["bc/v1/grant", bridge\_id, sid, principal,
+scope, lineage, key\_id, scheme, public\_key]}; a
+deployment may use another format, such as an AGTP identity document or
+a mission contract. A missing grant, a grant that does not verify, or a
+bridge with no verifier is answered with the reason
+\texttt{grant\_invalid}.
+
+\paragraph{Operator signatures.}
+A revocation, a key addition and a termination each carry a hex Ed25519
+signature by the operator key, the key that signs scope grants. The signed
+bytes are the canonical JSON of
+\texttt{["bc/v1/revoke", bridge\_id, sid, key\_id, reason, seq, head]},
+\texttt{["bc/v1/add-key", bridge\_id, sid, key\_id, scheme, public\_key,
+seq, head]} and
+\texttt{["bc/v1/terminate", bridge\_id, sid, reason, seq, head]}, where
+\texttt{bridge\_id} is the identity of the bridge that verifies (the one
+the grant binds), \texttt{public\_key} is the hex string registered,
+\texttt{scheme} its scheme tag, and \texttt{seq} and \texttt{head} are the
+sequence number and the event hash of the last committed event of the
+session at the moment of signing. The bridge verifies against its current
+last event, so a signature holds only while nothing has been committed
+after that position and only at the bridge it names. The domain
+tags keep these signatures, and the grant, from standing for one another.
+A missing signature, one that does not verify, one by another key, or one
+over another operation, session, bridge or log position is answered with
+the reason \texttt{operator\_signature\_invalid}, and nothing is committed. A
+revocation request without a signature (\texttt{KEY\_REVOCATION\_REQUESTED})
+is recorded as a request and revokes nothing.
+
+\subsection{Error reasons}
+
+All rejections use \texttt{status: "rejected"} with a short
+snake\_case \texttt{reason}. The defined reasons are:
+
+\footnotesize
+\begin{longtable}{p{0.28\columnwidth} p{0.60\columnwidth}}
+\caption{Error reasons.}\label{tab:wire-reasons}\\
+\toprule
+\textbf{Reason} & \textbf{Meaning} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Reason} & \textbf{Meaning} \\
+\midrule
+\endhead
+\texttt{unknown\_session} & The \texttt{session\_id} does not name a known session. \\
+\texttt{unknown\_key} & The \texttt{key\_id} is not in the session's registry $K(s)$. A re-attach or join naming such a key is recorded with this reason but answered \texttt{bad\_signature}, so a caller learns nothing about which key ids a session registers (I11); \texttt{revoke} names it. \\
+\texttt{nonce\_used} & The nonce has already been spent (I11d). \\
+\texttt{nonce\_expired} & The nonce is older than $T_{\text{nonce}}$ (I9). \\
+\texttt{nonce\_unknown} & The nonce was never issued by the bridge for this session (I11b). \\
+\texttt{prefix\_mismatch} & The $(\mathit{seq}, \mathit{hash})$ pair is not a prefix of the bridge's chain (I4). \\
+\texttt{resume\_in\_progress} & A re-attach is already being verified (I11d). \\
+\texttt{already\_attached} & An authentic \texttt{reattach} reached a session that is attached; \texttt{join} is the only way into an attached session. Given only after the signature verifies; the nonce is spent. \\
+\texttt{transport\_replay} & The transport reported a 0-RTT replay (I8). \\
+\texttt{queue\_full} & The tool-call queue is at $Q_{\max}$ (I13). \\
+\texttt{unanswered} & The call has no answer at drain (I14). \\
+\texttt{denied} & The call was answered with \texttt{deny} (I14). \\
+\texttt{answer\_mismatch} & $h_a \neq h_q$ at drain (I14). \\
+\texttt{scope} & The call's permission is not in the current scope at drain (I13). \\
+\texttt{call\_ttl} & The queued call outlived $T_{\text{call}}$ (I13). \\
+\texttt{approval\_ttl} & The approval outlived $T_{\text{approve}}$ (I13). \\
+\texttt{terminated} & The session is in $\bot$ (I6). \\
+\texttt{quarantined} & The session is quarantined (rule~Q). \\
+\texttt{not\_a\_strict\_narrowing} & The proposed scope equals or widens the current scope (I10). The reference bridges do not emit this name: they answer such a \texttt{narrow} with \texttt{refused}. \\
+\texttt{refused} & The uniform refusal that names no cause: an unknown, terminated or quarantined session at re-attach or join (I11a), and in the reference bridges also a \texttt{join} on a session that is not attached and a \texttt{narrow} that is not a strict narrowing. \\
+\texttt{unsupported\_op} & The reference wire server does not serve the op-type named. \\
+\texttt{bad\_signature} & The signature does not verify, is malformed, or (re-attach and join) names a key id the session does not register. \\
+\texttt{via\_not\_connected} & \texttt{add\_client} names an authorising key that is not connected (I15). \\
+\texttt{key\_already\_registered} & \texttt{add\_client} names a key id already in $K(s)$. \\
+\texttt{bad\_canonical} & The signed bytes are not canonical JSON per RFC 8785. \\
+\texttt{revoked\_key} & The key has been revoked (I11-REVOKE); re-attach is rejected. \\
+\texttt{key\_exhausted} & The session has no active keys (I11-REVOKE); all client operations are rejected, as is an unsigned \texttt{terminate}. \\
+\texttt{not\_key\_exhausted} & \texttt{add\_key} or \texttt{operator\_terminate} reached a session that has active keys. \\
+\texttt{extension\_rejected} & \texttt{extend} asked for a scope wider than the current one (I3); the response carries \texttt{current\_scope}. \\
+\texttt{duplicate\_key} & A tool call with this idempotency key is already queued (I13). \\
+\texttt{grant\_invalid} & The scope grant is missing or does not verify for this bridge, session, scope and client key (authorisation boundary). \\
+\texttt{unauthenticated} & The transport binding did not authenticate the caller of an unsigned op (the paragraph on unsigned ops); nothing is committed. \\
+\texttt{possession\_invalid} & The attach carries no proof of possession of the registered key, or the proof does not verify under it; nothing is committed and no key is registered. \\
+\texttt{operator\_signature\_invalid} & The operator signature on a revocation, key addition or termination is missing, does not verify under the operator key, or covers another operation, bridge or log position (I-OPERATOR); nothing is committed. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Worked example}
+
+A challenge--reattach sequence:
+
+\begin{lstlisting}
+-> {"op": "challenge", "session_id": "sess-001"}
+<- {"status": "nonce", "session_id": "sess-001",
+    "nonce": "9c1f5e0a77d24b3e8a6f21d0c4b7e913",
+    "ttl_seconds": 60}
+
+-> {"op": "reattach", "session_id": "sess-001",
+    "key_id": "ck-7f3a",
+    "nonce": "9c1f5e0a77d24b3e8a6f21d0c4b7e913",
+    "seq": 6,
+    "hash": "a7ffc6f8bf1ed76651c14756a061d662f3f7...",
+    "signature": "q3Zk0f..."}
+<- {"status": "verified", "session_id": "sess-001",
+    "events": [{"sequence": 7, ...}, {"sequence": 8, ...}]}
+\end{lstlisting}
+
+\noindent The reference wire servers return only the kinds of the replayed
+events in \texttt{events} of a \texttt{verified} or \texttt{joined}
+response (for example \texttt{["TOOL\_CALL\_QUEUED", ...]}), not the event
+objects shown here, and their \texttt{narrow} response carries no
+\texttt{new\_version}, which the message schema requires.
+
+\noindent A rejection:
+
+\begin{lstlisting}
+-> {"op": "reattach", "session_id": "sess-001",
+    "key_id": "ck-7f3a",
+    "nonce": "9c1f5e0a77d24b3e8a6f21d0c4b7e913",
+    "seq": 6,
+    "hash": "deadbeef...",
+    "signature": "q3Zk0f..."}
+<- {"status": "rejected", "session_id": "sess-001",
+    "reason": "prefix_mismatch"}
+\end{lstlisting}
+
+\subsection{What is not in the wire format}
+
+\begin{itemize}[leftmargin=2em]
+\item \textbf{Transport layer} (HTTP, WebSocket, QUIC): out of scope.
+The wire format is the JSON message content; the transport carries
+it. A transport binding MAY recommend \texttt{Content-Type:
+application/bridge-contract+json} for HTTP, but this is not
+normative. The client authenticates the bridge via the transport
+binding (e.g., TLS), which is out of scope here; the wire format
+assumes an authenticated channel in the bridge-to-client direction.
+\item \textbf{Streaming or batching}: each message is one request,
+one response. A future revision MAY define a batch envelope.
+\item \textbf{Bridge-to-client authentication}: the bridge is
+trusted (A4); the client authenticates the bridge via the transport
+binding (e.g., TLS), which is out of scope here.
+\item \textbf{Operator actions} (\texttt{OPERATOR\_ADD\_KEY},
+\texttt{OPERATOR\_TERMINATION}, \texttt{KEY\_REVOKED}):
+not client-initiated. Operator actions travel on a separate operator
+channel; the operator key is bound out-of-band (GAR \S 6.1), and the bridge
+verifies the operator signature on each action before it commits (see the
+operator signatures below). The reference front-ends give these actions
+a request form in the same envelope (\texttt{revoke}, \texttt{add\_key},
+\texttt{operator\_terminate}), so that the signature check is exercised
+from a message; a deployment may carry them otherwise.
+\item \textbf{Key exchange}: keys are registered at \texttt{attach}
+and \texttt{add\_client}; there is no key-agreement message.
+\end{itemize}
+
+% ================================================================================

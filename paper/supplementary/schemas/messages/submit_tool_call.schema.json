@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/submit_tool_call.schema.json",
+  "title": "Wire op: submit_tool_call",
+  "type": "object",
+  "properties": {
+    "op": {
+      "const": "submit_tool_call"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "key": {
+      "type": "string",
+      "description": "Idempotency key; optional (bridge generates if absent)."
+    },
+    "permission": {
+      "type": "string"
+    },
+    "content": {
+      "type": "object",
+      "description": "What the human is shown; the bridge hashes this for I14."
+    }
+  },
+  "required": [
+    "op",
+    "session_id",
+    "tool",
+    "content"
+  ],
+  "additionalProperties": false
+}

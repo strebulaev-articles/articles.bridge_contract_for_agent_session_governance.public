@@ -1,0 +1,545 @@
+\appendix
+\section{Formal Specification}
+\label{app:formal}
+% ================================================================================
+
+This appendix provides the formal artefacts accompanying the
+Bridge Contract specification. The artefacts are also available as
+standalone files in the accompanying \texttt{formal-spec/} directory:
+\texttt{BridgeContract.tla}, the TLC configurations, a mutation script
+and a \texttt{README.md} with run instructions and the recorded results.
+The product machine of Section~\ref{sec:product-model} is the normative
+state model stated here, and the TLA+ module models it (Appendix~\ref{app:tla-extract}).
+
+\subsection{Product model}
+\label{app:product-model}
+
+The formal state space is the product
+\[
+\mathcal{S} = \textsc{Attachment} \times \textsc{Human} \times \textsc{Lifecycle}
+\]
+where
+\begin{itemize}[leftmargin=2em]
+\item $\textsc{Attachment} = \{\textsc{Attached},
+\textsc{Detached}, \textsc{Resuming}\}$;
+\item $\textsc{Human} = \{\textsc{None}, \textsc{Pending}\}$;
+\item $\textsc{Lifecycle} = \{\textsc{Active}, \textsc{Terminated}\}$.
+\end{itemize}
+
+The product space is Attachment $\times$ Human $\times$ Lifecycle. Every
+active cell is reachable; the terminated cells are folded into
+one, $\bot$:
+
+\footnotesize
+\begin{longtable}{l l l p{0.40\columnwidth}}
+\caption{Product cells and their derived named-state view.}\label{tab:cells}\\
+\toprule
+\textbf{Attachment} & \textbf{Human} & \textbf{Lifecycle} & \textbf{Derived view of named states} \\
+\midrule
+Attached & None & Active & ATTACHED \\
+Detached & None & Active & DETACHED \\
+Attached & Pending & Active & PENDING\_HUMAN \\
+Detached & Pending & Active & PENDING\_HUMAN \\
+Resuming & None & Active & RESUMING \\
+Resuming & Pending & Active & RESUMING \\
+any & any & Terminated & TERMINATED ($\bot$) \\
+\bottomrule
+\end{longtable}
+
+The fold of $(\textsc{Att},\textsc{Pend})$ and $(\textsc{Det},\textsc{Pend})$
+into one name is lossy, which is why the named-state view is not
+normative (Section~\ref{sec:mece-status}).
+
+\subsection{TLA+ model and TLC results}
+\label{app:tla-extract}
+
+\texttt{formal-spec/BridgeContract.tla} models the product machine with
+the client set (I15), challenge-response re-attach with a single-use nonce
+and a prefix check (I4, I9, I11), narrow-only authority (I3, I10), durable
+append and restart recovery (I12), the tool queue (I13) and answer binding
+(I14), quarantine on a chain failure (rule~Q), the cumulative detachment
+cap $T_{\text{total}}$, the detached-call policy (rule~D, calls outside an
+escalation), the forwarding acknowledgement and the key lifecycle
+(I11-REVOKE). The key set $K$ keeps revoked keys, marked as revoked
+(\texttt{rev}) and, for a revocation for compromise, as hard
+(\texttt{hard}); the actions are a soft or hard revocation (KEY\_REVOKED; a
+hard one also detaches a connected client and abandons a re-attach that
+client is verifying), \texttt{OperatorAddKey} (OPERATOR\_ADD\_KEY) and
+\texttt{OperatorEnd} (OPERATOR\_TERMINATION, also for a key-exhausted
+session). A session in which every registered key is revoked is
+key\_exhausted, a side predicate rather than a cell: it keeps its cell and
+serves no client action, but its timers keep running, a restart treats it like
+any other session and a lost transport detaches it, so a detached
+key-exhausted session ends after $T_{\text{detach}}$ unless
+\texttt{OperatorAddKey} adds a key; \texttt{OperatorEnd} ends it at once. A revoked key
+is refused at re-attach, which still spends the nonce it names. Whether the
+hard revocation of the key being verified abandons the verification is a
+modelling choice, because the text is silent; the branch needs an event bound
+of at least 7 to fire, so only the runs with \texttt{MaxEvents}=7 reach it; both reference
+bridges abandon the re-attach in the same way (T128, V111). Invariants carry
+the paper's names (\texttt{IRev}: a key revoked for compromise is neither
+connected nor being verified); step properties
+($[\,][\,]_{\mathit{vars}}$ formulas) state I3, I4, I5--I7, I9, I10, I11,
+I11-REVOKE, I14, I15 and Rule~D over single transitions, among them that
+$K$, \texttt{rev} and \texttt{hard} only grow, that a joining client is not
+revoked, that a key is registered only through a connected unrevoked client or
+by the operator on a key-exhausted session, and that a key-exhausted session
+changes only by time, a restart or a lost transport, the operator's end or a
+new key. The event log is represented by its
+length and the state it determines, a transition appends its events and
+changes the state in one committed step, and a crash between the append and the in-memory change is
+equivalent to the same step followed by a restart, which rebuilds the
+state from the log. Hashes are abstract. A re-attach is presented as a key, a signature, a
+claimed nonce and a prefix verdict; the signature is a record that verifies
+only for the key, nonce and verdict it names (Appendix~\ref{app:attacker}),
+and only an authentic request with a live unspent nonce and a matching prefix
+is accepted. The nonce book keeps every nonce issued with its own countdown;
+at most a bounded number are live and a challenge is refused when the book is
+full (I11 (f)); an unauthenticated failure is recorded only while fewer than a
+bounded number were recorded since the last request whose signature verified
+(I11 (g)).
+
+SANY parses the module and TLC reports no error in every configuration
+(Table~\ref{tab:tlc}). The runs used the TLC build
+\texttt{2026.11.06.222357} (the revision of the TLA+ tools jar, \texttt{d8fb231}, not of this repository) from the v1.8.0 release URL
+of the TLA+ tools (sha256 \texttt{e1f11b75\ldots d7f}; the banner is a build
+number, not a release number such as 2.19), OpenJDK 21 in the container
+\texttt{eclipse-temurin:21-jre} on 8 cores. The image digest is
+\texttt{sha256:0b99b3376fbb\ldots 901a}; the
+logs are in \texttt{docs/logs/tlc-2026-11-11/} of the repository. A second
+run of the same configurations (\texttt{docs/logs/tlc-freeze-2026-11-11/}) agrees
+on every verdict and on every count except the two-session row, where the
+view classes visited differ slightly (881,106 generated, 210,408 distinct): the counts are
+sizes, not values a rerun must reproduce to the last digit.
+
+\begin{table}[htbp]
+\centering
+\caption{TLC results for \texttt{BridgeContract.tla}. The safety rows count
+classes of states under a view that drops what cannot affect the checked
+properties (see the text); the fair row runs without it.}
+\label{tab:tlc}
+\small
+\begin{tabularx}{\columnwidth}{X l r r r}
+\toprule
+\textbf{Configuration} & \textbf{Checks} & \textbf{Generated} & \textbf{Distinct} & \textbf{Depth} \\
+\midrule
+2 sessions, \texttt{MaxEvents}=2, no attacker & safety & 881,440 & 210,466 & 20 \\
+1 session, \texttt{MaxEvents}=7, no attacker & safety & 9,713,752 & 2,208,460 & 19 \\
+1 session, \texttt{MaxEvents}=7, attacker, \texttt{ObsMax}=2 & safety & 18,875,492 & 1,082,581 & 21 \\
+1 session, \texttt{MaxEvents}=5, fair & L1, L2, cap & 3,792,867 & 1,479,144 & 21 \\
+1 session, \texttt{MaxEvents}=5, policy \texttt{queue} & safety & 890,183 & 228,468 & 17 \\
+1 session, \texttt{MaxEvents}=6, policy \texttt{forward} & safety & 2,868,553 & 685,335 & 18 \\
+1 session, \texttt{MaxEvents}=5, $T_{\text{human}} > T_{\text{detach}}$ & safety & 1,069,099 & 275,159 & 17 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{What each configuration reaches.} A configuration that
+reaches few cells or fires few actions checks little, whatever its state
+count. Table~\ref{tab:tlc-reach} lists, for each configuration, the cells
+that no state is in and the actions that generate no new state
+(\texttt{formal-spec/tlc\_coverage.py}; the cells are the active cells,
+$\bot$, quarantine and the key\_exhausted side predicate; the fair configuration is probed without fairness,
+which does not change which states exist). The two-session run, with an event bound of 2,
+never reaches a cell with $a=\textsc{Res}$ and never fires
+\texttt{Disconnect}, \texttt{Resolve}, \texttt{Submit}, \texttt{Drain},
+\texttt{Forward}, \texttt{OperatorAddKey}, \texttt{OperatorEnd} or the
+re-attach completion: a detachment appends two
+events and so exceeds the bound. What it checks is the interaction of two
+sessions through the clock and a restart, over escalation, narrowing and
+termination, and key revocation (\texttt{Revoke} fires and the key\_exhausted
+state is reached, but the operator's add-key and end from it are not); the
+detach, resume, drain and key-exhaustion exits are checked by the one-session
+runs, which reach every cell and the key\_exhausted state. \texttt{SubmitAway} never fires under the policy
+\texttt{refuse}, because a refused call changes nothing. \texttt{Deliver},
+the delivery acknowledgement, fires only in the run with the larger event
+bound; the other runs do not exercise it, and the acknowledgement mutants
+are run on a deeper, narrower configuration for that reason.
+
+\begin{table}[htbp]
+\centering
+\caption{Cells not reached and actions that never fire, per TLC
+configuration.}
+\label{tab:tlc-reach}
+\small
+\begin{tabularx}{\columnwidth}{X l X}
+\toprule
+\textbf{Configuration} & \textbf{Cells not reached} & \textbf{Actions that never fire} \\
+\midrule
+2 sessions, \texttt{MaxEvents}=2, no attacker & $(\textsc{Res},\textsc{None})$,
+$(\textsc{Res},\textsc{Pend})$ & \texttt{Answer}, \texttt{CompleteResume},
+\texttt{Deliver}, \texttt{Disconnect}, \texttt{Drain},
+\texttt{ExpireCall}, \texttt{Extend}, \texttt{Forward},
+\texttt{OperatorAddKey}, \texttt{OperatorEnd}, \texttt{Resolve}, \texttt{Submit},
+\texttt{SubmitAway} \\
+1 session, \texttt{MaxEvents}=7, no attacker & none & \texttt{SubmitAway} \\
+1 session, \texttt{MaxEvents}=7, attacker & quarantine &
+\texttt{Corrupt}, \texttt{SubmitAway} \\
+1 session, \texttt{MaxEvents}=5, fair & none & \texttt{Deliver},
+\texttt{SubmitAway} \\
+1 session, \texttt{MaxEvents}=5, policy \texttt{queue} & none &
+\texttt{Deliver} \\
+1 session, \texttt{MaxEvents}=6, policy \texttt{forward} & none &
+\texttt{Deliver} \\
+1 session, \texttt{MaxEvents}=5, $T_{\text{human}} > T_{\text{detach}}$ &
+none & \texttt{Deliver}, \texttt{SubmitAway} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{State-space reduction and what it costs.} Adding the attacker to
+every configuration made the deep run too large (it had not finished after
+five hours at over $10^8$ distinct states), so the model has two switches and
+a view. The attacker is on only in the attacker configuration (one session,
+one permission, one call key, no log tampering, \texttt{MaxEvents}=7); in
+the others it is off, so the configuration with two sessions has no attacker. The
+attacker remembers at most \texttt{ObsMax}=2 honest signatures. Hence the
+attacker checks (\texttt{NoForgery}, replay, forgery with its own keys) run
+only in that configuration; its interleaving with the tool queue, draining
+and forwarding, and with log corruption and quarantine (the cell is not
+reached there), is not checked; and an attack that combines three or more
+distinct remembered signatures is not explored. The nonce-book and
+failure-record invariants stay in every configuration. The safety
+configurations use a view that drops the last presentation, the spent-nonce
+set and the countdowns of dead nonces, the approval countdown when it cannot
+be read, and all but the outcome of a terminated session; step properties are
+evaluated on every transition. The argument that the view is sound is in the
+README of the specification; the queue, forward and long human timeout configurations, small enough to
+run without the view, report no error
+there as well.
+
+To check that the verdict is not vacuous, mutants of the module are
+defined (for example, for the key lifecycle, a revoked key accepted, a
+revocation that removes the key from $K$ or accepts a key outside it, a hard
+revocation that leaves the client connected or does not abandon a
+verification, a revoked client that registers a key, a key-exhausted session
+that serves client operations, whose timers stop or whose timeout does not fire,
+OPERATOR\_ADD\_KEY on a session that is not key-exhausted or that clears the
+revocation markers; for the attacker model, a client's signing key in the attacker's hands, a signature that verifies under any key or that is not bound to its nonce or to the prefix verdict; for I11 (f) and (g), a challenge that ignores the live-nonce limit or evicts a live nonce, unauthenticated failures that are all recorded, a verifying request dropped past the limit and an authentic request that does not restore the allowance; and further an expired or spent nonce accepted, the prefix not
+checked, a partial departure that detaches, a drain that ignores the answer
+hash, a widening applied, a chain failure that terminates instead of
+quarantining, a cap that a restart or a disconnect resets or that counts
+time attached, a delivered call forwarded again, a forward that ignores
+the operator's allowlist). TLC rejects every mutant in the set, run on one session with \texttt{MaxEvents}=6 under the same view (the attacker mutants with the attacker on; the last line of
+\texttt{docs/logs/tlc-2026-11-11/mutants.log} reports all killed; each yields a violation
+of an invariant or of the step properties), and removing the fairness of
+the timeout action makes L1 and L2 fail on this model. Findings from the
+model: L1 is verified in its per-episode form (a detached session leaves
+$\textsc{Det}$, terminates or is quarantined), and it showed that a
+quarantined session is the one cell besides $\bot$ in which a session may
+stay for ever. An earlier form of the model froze a key-exhausted session,
+so that no timer ended it, and L1 and L2 had to name it as an exception;
+the model now keeps its timers running and L1 and L2 name only quarantine. The cumulative
+cap is checked as a safety property (it is never reset and runs down only
+while detached) and, under fairness, as a liveness property (a detached
+session whose cap is used up leaves $\textsc{Det}$, ends or is quarantined);
+the model cannot exhibit an unbounded detach/re-attach cycle, so the
+absence of one is argued by the cap and shown by the reference bridge and
+vectors. Delivery of a drained call across a crash is modelled by the
+forwarding acknowledgement: a drained call that was not delivered is
+forwarded again after a restart, and a delivered one never is.
+
+\subsection{Attacker model}\label{app:attacker}
+
+This subsection is the threat model of the formal specification; the
+broader STRIDE-lite table is in Section~\ref{sec:threat-model}. The model has an
+explicit attacker for the re-attach and join path (I11), and TLC checks the
+safety properties against it.
+
+\paragraph{Capabilities.} The attacker (i) observes the log and the wire, so
+every signature an honest client has produced is known to it; (ii) replays a
+request or a signature it has observed, at any later time and in any session
+state; (iii) reorders, by presenting a signature after a newer challenge has
+been issued or after the nonce it names has been spent or has expired;
+(iv) submits requests of its own, with a key that is registered but whose
+signing key it does not hold, with a key that is not registered, and with any
+nonce number and prefix verdict; and (v) holds signing keys of its own
+(\texttt{AdvKeys}), none of which is a client key. It never obtains a signing
+key of a registered client; the theft of such a key is out of scope (A7), and
+I11-REVOKE, not this model, is the answer to it. It cannot make the bridge
+diverge from the log (A4).
+
+\paragraph{Possession.} A signature is a record of the key that signed, the
+nonce it covers and the prefix verdict it covers. The predicate
+\texttt{Verifies(key, sig, claimed, pre)} holds iff the signing key is the
+key the request names and the signed nonce and verdict are the ones the
+request carries. An honest client builds only signatures with its own key
+over what it presents, and each goes on the wire; the attacker builds
+signatures only with its own keys, or resubmits one from the wire. A request
+is authentic iff its key is registered and \texttt{Verifies} holds (and, for
+I11-REVOKE, the key is not revoked).
+
+\paragraph{Unforgeability assumption (UF).} The model assumes that a
+signature verifies for a key only if the holder of that key produced it,
+and that it covers the fields \texttt{Verifies} compares. This is the
+existential unforgeability of A3 for the signature scheme, stated once and
+not model-checked: TLC does not check that Ed25519 or ECDSA P-256 are
+unforgeable, and it does not check that the reference bridges sign the
+fields the wire format lists (the tests, vectors and mutants do). What TLC
+checks is that, if UF holds, the attacker cannot build a signature of its
+own that is accepted. The step property
+\texttt{NoForgery} (the conjunct on entering \textsc{Res} or joining) states
+that every accepted request has a live nonce that it spends and a signature
+that an honest client produced for that key, nonce and verdict. It does not
+state that an honest client presented the request: a signature the attacker
+observed satisfies it. The model reaches such a step in the attacker
+configuration: an honest request for a key that is not yet registered is
+refused and its nonce is not spent (a nonce is spent only when the key is
+known), the key is then added, and the attacker presents the observed
+signature and joins. This is the pre-registration replay of the limitations
+register (Table~\ref{tab:limitations}); it was found by reading the model
+and replaying the trace in a transcription of it, not by a TLC run, and the
+stronger property (every accepted request was presented by an honest client)
+is not checked.
+
+\paragraph{What TLC checks.} The model records who built a
+request. The checks are: a signature replayed under another nonce, or
+with another prefix verdict, is refused (a nonce is single use and bound to
+the signature); a replayed signature under a spent or expired nonce is
+refused and changes nothing (under a live nonce it can be accepted, above); a request signed by a key the attacker holds is
+never authentic for a registered key; and the nonce book and the record of
+unauthenticated failures stay within their bounds under the same attacker
+(I11 (f), (g); the bounds stand for the limits of the reference bridges, which are
+configuration values, not protocol constants). Every configuration sets
+\texttt{LiveLimit} to one, so the property that a challenge never evicts a
+live nonce reads over an empty set and is not meaningfully checked; the
+bound on the book is. The model
+mutants of the attacker are in the list of mutants above; each is killed.
+
+\paragraph{Limits.} One honest client signs for each key; the attacker
+does not interleave sessions, so a signature replayed from one session in
+another is not modelled (the model is single-session in its attacker and the
+wire format binds the session id). The attacker does not attack the chain
+(I5 stays a corruption fault), the transport (I8), the operator signatures
+or the attach proof (I-GRANT). Requests whose signature verifies are
+recorded without bound, so replaying one observed request fills the log at
+the rate of the attacker; I11 (g) bounds only the failures before
+authentication, as its text says. The attacker is on only in the attacker
+configuration, which has one permission, one call key and no log tampering,
+and remembers at most two honest signatures; its checks do not reach the
+tool queue, draining, quarantine or an attack that combines three or more
+distinct remembered signatures, and the other configurations, including the
+two-session one, run without it.
+
+\subsection{Compositional safety arguments}
+\label{app:comp-safety}
+
+\paragraph{BC $\circ$ PACE.}
+The compositional safety property for PACE is stated over the committed
+log of a session, $L$, which is the only store the contract needs:
+\[
+\forall i:\ L[i].\textit{kind} = \texttt{RESUME\_STARTED}
+\Rightarrow
+\exists j < i:\ L[j].\textit{kind} = \texttt{RESUME\_PREPARED}
+\,\wedge\, L[j].\textit{seq} = L[i].\textit{seq}.
+\]
+This holds only when the client names the chain head as it stood at
+detachment, which is the \texttt{RESUME\_PREPARED} event, or an anchor
+that PACE itself defines. It is not claimed for a client that names any
+other event of the chain as last seen: the contract admits such a client
+(I4) and replays every later event, so \texttt{RESUME\_STARTED}
+then names an event that need not be a \texttt{RESUME\_PREPARED}. For the
+restricted case, every accepted re-attach names a
+\texttt{RESUME\_PREPARED} event that is in the log. Under the contract's own re-attach, a
+client is admitted iff its presented history is a prefix of the
+hash-chained log and it answers a live challenge, which is guaranteed by
+I1 + I4 + I5 + I11 (Lemma~\ref{lem:recover}). This is a statement about
+the contract's re-attach, not about PACE: PACE, as read, reserves
+\texttt{SESSION\_SUSPEND} (0x05) and \texttt{SESSION\_RESUME} (0x06) in
+its message-type registry without a defined body, and defines no resume
+credential.
+
+\paragraph{BC $\circ$ GEC.}
+The compositional safety property for GEC is vacuous in
+GEC-present deployments (the GEC signs events; the bridge forwards
+unsigned events). In GEC-less deployments, the bridge is the sole
+emitter; the property states that every event in the log was emitted
+by the bridge: every event $L[i]$ in the log carries
+$L[i].\textit{prev\_hash}=\textit{event\_hash}(L[i-1])$ (I5), so an
+event that the bridge did not emit breaks the chain. I-SIGN-EVENT (SHOULD)
+governs whether the bridge signs events with an operator key; this is
+a deployment choice, not a structural property.
+
+\paragraph{Multi-hop composition (BC $\circ$ BC).}
+Multi-hop composition is out of scope (Section~\ref{sec:scope}) and
+not modelled here. A future revision may extend the contract with a
+\texttt{BC\_HOP} invariant that requires the downstream bridge to
+verify the upstream bridge's signature chain before accepting
+resumes.
+
+\subsection{Merkle tree for $O(\log n)$ verification (informative)}
+\label{app:merkle}
+
+\textbf{Partly normative.} The Merkle tree below is the construction
+referenced by the SHOULD-level checkpoint rule I-CHECKPOINT
+(Section~\ref{sec:invariants-checkpoint}). The Merkle-augmented
+\emph{resume record} $R^+$ remains an informative sketch. The
+resume record is bridge-private (I11): a client never holds it, so $R^+$
+describes what the bridge could derive for its own use, not a message. The conformance suite in Section~\ref{sec:conformance} still
+uses an $O(n)$ full-chain verification.
+
+The conformance suite's full-chain verification is
+$O(n)$ in the number of events emitted since session attach. For
+long-running sessions ($n > 10^4$), the bridge SHOULD maintain a
+Merkle tree over event hashes to enable $O(\log n)$ inclusion proofs.
+
+\begin{definition}[Merkle tree over event log]\label{def:merkle}
+Let $\mathit{log} = [e_0, e_1, \ldots, e_{n-1}]$ be the event log of a
+session, and let $h_i = \textit{event\_hash}(e_i)$. The Merkle tree
+$T(\mathit{log})$ is the binary tree whose leaves are $h_0, \ldots,
+h_{n-1}$ and whose internal nodes are $\textit{SHA-256}(\textit{left}
+\,\|\, \textit{right})$. The tree's root $\textit{root}(\mathit{log})$
+is the hash of the topmost node.
+
+An inclusion proof for event $e_i$ is the sequence of sibling hashes
+along the path from leaf $i$ to the root; verification requires
+$O(\log n)$ SHA-256 computations.
+\end{definition}
+
+\begin{definition}[Merkle-augmented resume record]\label{def:merkle-rt}
+A Merkle-augmented resume record extends
+Definition~\ref{def:rt} with two additional fields:
+\[
+R^+ = R \cup (\textit{merkle\_root}, \textit{inclusion\_proof})
+\]
+where $\textit{merkle\_root} = \textit{root}(\mathit{log}_{\textit{seq}})$
+is the Merkle root over the event log up to and including the
+\texttt{RESUME\_PREPARED} event whose sequence number is
+$\mathit{seq}$, and $\textit{inclusion\_proof}$ is the inclusion proof
+for that event in the Merkle tree. A bridge that keeps $R^+$ verifies
+the prefix a re-attaching client names in $O(\log n)$ time.
+
+\end{definition}
+
+The current conformance suite uses an $O(n)$
+full-chain verification.
+
+\subsection{Property-based conformance tests}
+\label{app:property-tests}
+
+In addition to the example-based tests of
+Section~\ref{sec:conformance}, the conformance suite includes the
+property-based tests using the Hypothesis library
+(\url{https://hypothesis.readthedocs.io/}):
+
+\begin{longtable}{p{0.08\columnwidth} p{0.22\columnwidth} p{0.58\columnwidth}}
+\caption{Property-based tests.}\label{tab:property-tests}\\
+\toprule
+\textbf{Test} & \textbf{Property} & \textbf{Description} \\
+\midrule
+T8 & Monotonic seq across any action sequence & For any sequence of
+bridge operations, the bridge's event log has strictly increasing
+\texttt{sequence} numbers (no gaps, no duplicates, no out-of-order). \\
+T9 & Invariants across any action sequence & For any sequence
+of bridge operations, including restarts and clock jumps, the invariants
+I1--I3, I5, I6, I10, I11(d), I14 and I15 hold and the cell equals the fold of the committed
+log, at every intermediate state. \\
+T10 & Resume from any detached cell & For any sequence that leaves the
+session in a cell with $a=\textsc{Det}$, a fresh challenge resumes it and
+the invariants hold afterwards. \\
+\bottomrule
+\end{longtable}
+
+Hypothesis generates random action sequences (up to 40 actions per
+sequence for T8 and T9, 30 for T10; 100 examples per property). Each property invariant is checked
+after every action, not just at the end. This catches corner cases
+that example-based tests miss (e.g., multiple sequential re-attaches
+with stale seqs, interleaved detachments and escalations).
+
+\subsection{Traceability matrix}
+\label{app:traceability}
+
+Table~\ref{tab:traceability} puts the checks of each invariant and model
+rule in one place: the TLA+ property, the tests, the vectors, and the
+mutants killed on the Python bridge, on the Rust crate and in the TLA+
+module. It is generated by \texttt{supplementary/traceability.py} from the
+files that hold those facts (the tags in the pytest docstrings, the
+\texttt{covers} field of the vector files, the mutant registries of the Python bridge, the Rust crate and the TLA+ module, with
+the verdicts in \texttt{docs/logs/tlc-2026-11-11/mutants.log}, and the
+\texttt{Inv}, \texttt{StepProps} and liveness definitions of
+\texttt{BridgeContract.tla}); \texttt{make traceability-check}, part of
+\texttt{make validate}, fails on a stale file, on a name that no longer
+exists and on an empty cell without a stated limit. An entry
+\texttt{Inv.X} is a state invariant and \texttt{StepProps[\ldots]} a
+labelled conjunct of the step property, both checked by every safety
+configuration of Table~\ref{tab:tlc}; \texttt{L1}, \texttt{L2} and
+\texttt{CapEnds} are checked by the fair configuration. A ranged entry lists
+only members that carry the row. Where a cell says ``---'' it states the
+limit that leaves it empty; how far the model covers a row (abstracted flag
+or tests only) is argued in Table~\ref{tab:invariant-independence} and not
+repeated here. The matrix does not say which configuration reaches which
+cell or action; that is Table~\ref{tab:tlc-reach}. Python mutants are filed
+under the label their registry gives them, so a name with another prefix
+(for example a timer mutant filed under I1) sits in the row of its label's
+check. The Rust tests carry no invariant tag, so the matrix lists the Rust
+crate through the vectors it runs (all but those that require
+\texttt{CHECKPOINT}) and its mutants.
+
+\input{sections/generated_traceability}
+
+\subsection{Limitations of the formal model}
+\label{app:formal-limitations}
+
+\begin{itemize}[leftmargin=2em]
+\item \textbf{Bounded state space.} TLC checks bounded models: two
+sessions with an event bound of 2 (one state-growing action per session
+after attach) and one session with a bound of 7, both with two client
+keys, at most two challenges, two permissions, two tool-call keys and one
+restart. Sessions
+interact only through the clock tick and the restart. For the safety
+properties this removes the number of sessions as a bound. Every state
+invariant and step property is quantified over one session at a time; a
+step by one session changes only that session's record and its forwarded
+calls; and the clock tick and the restart act on each session as a
+function of its own record (the restart also chooses which sessions
+suffer a recovery fault). Deleting the other sessions from a trace
+therefore leaves a trace of the same model with one session and the same
+restart bound, and a violation by a session is a violation in that
+trace. A one-session model thus covers any number of sessions for the
+properties checked as state invariants and step properties. This is an
+informal projection argument, not a mechanised one, and it does not
+cover the liveness properties L1 and L2. Results do not generalise to
+unbounded keys, challenges, permissions, events or restarts without
+additional argument.
+\item \textbf{Fairness.} L1 and L2 are checked only under weak
+fairness of the clock tick, the timeout actions and the completion of
+verification (axiom A6), in a one-session model. The event bound also
+bounds the $\textsc{Det}\to\textsc{Res}\to\textsc{Det}$ re-attach cycle, so
+the model cannot exhibit a client that cycles forever; L1 is verified in
+its per-episode form.
+\item \textbf{Simplifications of the new rules.} Time does not pass
+during a restart in the model, so the cap counts no bridge downtime
+(the reference bridge does, and a vector checks it). The detached-call
+variants are checked one per configuration, each with one session.
+\texttt{TOOL\_CALL\_COMPLETED} changes no state and is not modelled. An
+operator-drained call is forwarded at any later point while no escalation
+is pending, which over-approximates the reference bridge, which forwards it
+at once.
+\item \textbf{Abstract cryptography.} The hash chain and the signature
+bytes are not modelled (they rely on A3); the prefix check is a verdict flag,
+and tampering with the log is a nondeterministic fault. A signature is a
+record whose verification is the possession predicate of
+Appendix~\ref{app:attacker}, so TLC checks the protocol against an attacker
+that holds no client key, not the scheme: unforgeability is assumed, not
+model-checked. The cryptographic checks are exercised by the conformance
+suite and its mutants (Ed25519 and ECDSA P-256 signatures, a registry of
+public keys and scheme tags only).
+\item \textbf{The model is not linked to the code by proof.} The model
+is written by hand, and no refinement mapping connects it to the reference
+implementations. A clean TLC run is evidence about the model. The evidence
+about the code is the conformance suite, the shared vectors and the
+mutants (Table~\ref{tab:traceability}), which show that the code agrees with
+the checked rules on the cases exercised, not that it refines the model.
+\item \textbf{No Byzantine faults.} A4 (trusted bridge) and A5
+(serialised event emission) are assumed. Faults are limited to log
+tampering and recovery failure.
+\item \textbf{No multi-hop.} BC $\circ$ BC composition is not modelled.
+\item \textbf{Compositional safety is one-directional.} The
+compositional safety properties in \S\ref{app:comp-safety} state
+invariants over the bridge's state; they do not prove that PACE and
+GEC, when composed, preserve these invariants. A full compositional
+proof requires stating the corresponding invariants in the PACE and
+GEC specifications and showing that the composition preserves them;
+this is the target for a future revision.
+\end{itemize}
+

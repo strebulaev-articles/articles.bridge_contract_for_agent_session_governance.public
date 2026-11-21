@@ -1,0 +1,51 @@
+{
+  "id": "V103",
+  "title": "Recovery removes a registry entry the log does not record",
+  "covers": [
+    "I11",
+    "I12",
+    "recovery",
+    "registry-log"
+  ],
+  "session": {
+    "session_id": "sess-103",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "tamper_registry",
+      "client": "ck-9",
+      "how": "extra"
+    },
+    {
+      "do": "restart"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "BRIDGE_RECOVERED",
+      "DETACHMENT",
+      "RESUME_PREPARED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0,
+    "quarantined": false,
+    "registry": [
+      "ck-1"
+    ]
+  }
+}

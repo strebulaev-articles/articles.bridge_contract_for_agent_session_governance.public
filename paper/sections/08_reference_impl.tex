@@ -1,0 +1,90 @@
+\section{Reference Implementation Notes}
+\label{sec:impl}
+% ================================================================================
+
+This section sketches how a generic agent-runtime bridge can implement
+the Bridge Contract without requiring changes to AGTP, GAR, or PACE.
+The implementation is on the bridge side only.
+
+\paragraph{State store.} The bridge maintains a state store keyed by
+\texttt{Session-ID}, mapping each session to its current state, its
+Session Identity Descriptor, its tool queue, and its event log. The store
+is private to the bridge; AGTP, GAR, and PACE components do not read
+from it directly.
+
+\paragraph{Event emitter.} The bridge emits events in a JSON shape that
+is compatible with GAR's SAR record (causal ordering, hash chaining).
+In a GEC-present deployment, the events are forwarded to the GEC for
+signing; the GEC remains the sole authoritative source. In a GEC-less
+deployment (Definition~\ref{def:gecless}), the bridge SHOULD sign the
+events itself with an operator key whose JWKS endpoint is published
+through an out-of-band channel bound to the operator's deployment
+identity (GAR \S 6.1, Invariants I-SIGN-EVENT and I-SIGN-JWKS). The bridge MUST NOT accept a
+JWKS endpoint learned from session-supplied metadata.
+
+\paragraph{Challenge store.} The bridge keeps, per session, a small
+volatile set of live challenge nonces with their issue times and a
+used flag (I9, I11). It is not durable: a restart voids every nonce and
+clients ask again. The registry of client keys is scoped to a session and is rebuilt from the
+log, which records each key's scheme tag and public key, and a restart
+compares the stored registry with it.
+Everything else needed to resume, the chain and the resume record, is in
+the log (I12). The Python reference bridge and the Rust crate verify
+resume requests signed with Ed25519 or ECDSA P-256 (clients and fixtures
+sign), and their key registries
+hold a scheme tag and public keys only, so the evidence exercises proof of possession against verification
+material alone.
+
+\paragraph{Tool-call queue.} While the human dimension is pending,
+the bridge maintains a bounded queue of pending tool calls, each with
+an idempotency key. Each enqueued call emits
+\texttt{TOOL\_CALL\_QUEUED}. Once the client is attached and no
+escalation is outstanding, the queue is drained in arrival order, each
+call re-validated against the current scope and approval (I13).
+
+\paragraph{Durable log and recovery.} The event log is written with a
+commit barrier before any state change or acknowledgement (I12). On
+start the bridge replays each log, verifies the chain, and recovers
+sessions as detached (Section~\ref{sec:recovery}).
+
+\paragraph{Findings from integration.} Mapping the contract onto a real
+product (Termenbox ACP workspaces: the server is the bridge, the browser
+the client, the agent a child process on stdio) found, as reported by the
+author (the product is closed source and no reader can check this), problems that the
+paper's own evidence could not, because the evidence came from the same
+author reading the same text. A resume token minted at detach and
+superseded by every later change while the client was away, could not
+reach a client that vanished abruptly, and I9 then terminated the
+session when it expired; the model had one client where a product owner
+has several devices attached at once; the bridge sees an approval
+request, not tool execution, so I2 as first worded promised more than a
+bridge can see; an agent announces its own mode changes, which a bridge
+can observe and revert but not prevent; and the independent defaults for
+the human and call timers ended work that a mobile owner expects to
+survive. Each, as reported, led to a change of the specification, not of the product
+(challenge-response resume, a client set, answer binding, the
+coverage limits of I2 and I3, derived timers). The same author wrote
+both sides, which limits what this shows.
+
+\paragraph{Reference implementation.} A reference implementation is
+provided in the conformance test suite (Section~\ref{sec:conformance}).
+The suite includes a \texttt{Bridge} class that the suite and its mutants
+exercise against invariants $I_1, \ldots, I_{15}$; known deviations are
+recorded in the limitations register (Table~\ref{tab:limitations}). It also has a
+\texttt{SessionIdentity}, \texttt{Event}, and re-attach request data
+model. A second implementation in Rust
+(\texttt{supplementary/rust-bridge/}), written from Sections~4 and~5
+rather than ported from the Python code (though it shares comments, error
+texts and the key format with it), runs the same JSON vectors except
+V52--V54, V88 and V89, which expect checkpoint events the crate does not
+emit; it
+has the same author, so it shows consistency of one reading of the
+text. A runtime such as
+Termenbox~\cite{termenbox}, a self-hosted web terminal for AI coding agents
+(the author's project; see the note on evidence at the front of this
+document), is one
+example of a runtime that could implement the Bridge Contract; the
+contract is deliberately implementation-agnostic and does not depend
+on any particular runtime substrate.
+
+% ================================================================================

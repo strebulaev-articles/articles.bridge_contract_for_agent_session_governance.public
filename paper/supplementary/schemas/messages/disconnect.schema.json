@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/disconnect.schema.json",
+  "title": "Wire op: disconnect",
+  "type": "object",
+  "properties": {
+    "op": {
+      "const": "disconnect"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "key_id": {
+      "type": "string",
+      "description": "Optional; absent means all connected clients."
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "op",
+    "session_id",
+    "reason"
+  ],
+  "additionalProperties": false
+}

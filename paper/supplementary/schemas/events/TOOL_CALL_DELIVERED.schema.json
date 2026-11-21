@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/TOOL_CALL_DELIVERED.schema.json",
+  "title": "TOOL_CALL_DELIVERED payload",
+  "x-invariants": "I12, I13",
+  "description": "The runtime acknowledged that it received a forwarded call; until then a restart forwards the call again with the same key.",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "key"
+  ],
+  "additionalProperties": false
+}

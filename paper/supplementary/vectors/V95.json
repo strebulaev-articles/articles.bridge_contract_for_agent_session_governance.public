@@ -1,0 +1,54 @@
+{
+  "id": "V95",
+  "title": "A second session that reuses the key id leaves the first session's key in place and the owner re-attaches",
+  "covers": [
+    "I11",
+    "I15",
+    "registry-scope"
+  ],
+  "session": {
+    "session_id": "sess-95",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "attach_other",
+      "session_id": "sess-95b",
+      "client": "ck-1"
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1"
+    ],
+    "other_events": {
+      "sess-95b": [
+        "ATTACHED"
+      ]
+    }
+  }
+}

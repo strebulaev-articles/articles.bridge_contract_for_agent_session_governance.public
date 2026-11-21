@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/RESUME_STARTED.schema.json",
+  "title": "RESUME_STARTED payload",
+  "x-invariants": "I4, I9, I11",
+  "description": "An authentic, fresh, prefix-pinned re-attach request; enters Res.",
+  "type": "object",
+  "properties": {
+    "key_id": {
+      "type": "string"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nonce_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16,64}$",
+      "description": "Hex digest, truncated to at least 64 bits."
+    }
+  },
+  "required": [
+    "key_id",
+    "seq",
+    "hash",
+    "nonce_digest"
+  ],
+  "additionalProperties": false
+}

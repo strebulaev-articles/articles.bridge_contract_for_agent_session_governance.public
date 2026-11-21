@@ -1,0 +1,24 @@
+{
+  "id": "V98",
+  "title": "Attach with a proof signed by another key is refused as possession_invalid",
+  "covers": [
+    "I11",
+    "I-GRANT",
+    "attach-possession"
+  ],
+  "session": {
+    "session_id": "sess-98",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1",
+    "possession": "wrong-key"
+  },
+  "expect": {
+    "attach_refused": true,
+    "attach_reason": "possession_invalid"
+  },
+  "actions": []
+}

@@ -1,0 +1,683 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/event.schema.json",
+  "title": "Bridge Contract governance event",
+  "description": "Envelope of one governance event. `prev_hash` is the SHA-256 of the canonical JSON (RFC 8785) of the preceding event, empty for the genesis event (I5). The event's own hash is derived, not a field.",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "enum": [
+        "ATTACHED",
+        "CLIENT_JOINED",
+        "CLIENT_LEFT",
+        "CLIENT_ADDED",
+        "DETACHMENT",
+        "RESUME_PREPARED",
+        "RESUME_STARTED",
+        "RESUME_REJECTED",
+        "RESUME_VERIFIED",
+        "RESUME_FAILED",
+        "HUMAN_PENDING",
+        "HUMAN_RESOLVED",
+        "HUMAN_TIMEOUT",
+        "DETACH_TIMEOUT",
+        "AUTHORITY_EXTENSION_REJECTED",
+        "AUTHORITY_NARROWED",
+        "AUTHORITY_NARROWING_REJECTED",
+        "TERMINATION",
+        "TOOL_CALL_QUEUED",
+        "TOOL_CALL_ANSWERED",
+        "TOOL_CALL_DRAINED",
+        "TOOL_CALL_DELIVERED",
+        "TOOL_CALL_COMPLETED",
+        "TOOL_CALL_REJECTED",
+        "TOOL_CALL_EXPIRED",
+        "BRIDGE_RECOVERED",
+        "RECOVERY_FAILED",
+        "CHECKPOINT",
+        "KEY_REVOKED",
+        "KEY_REVOCATION_REQUESTED",
+        "OPERATOR_ADD_KEY",
+        "OPERATOR_TERMINATION"
+      ]
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic per session, 0 at genesis."
+    },
+    "prev_hash": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64})?$"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "timestamp": {
+      "type": "number",
+      "description": "Informational; never used for ordering."
+    }
+  },
+  "required": [
+    "kind",
+    "session_id",
+    "sequence",
+    "prev_hash",
+    "payload",
+    "timestamp"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "ATTACHED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/ATTACHED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "CLIENT_JOINED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/CLIENT_JOINED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "CLIENT_LEFT"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/CLIENT_LEFT.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "CLIENT_ADDED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/CLIENT_ADDED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "DETACHMENT"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/DETACHMENT.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "RESUME_PREPARED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/RESUME_PREPARED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "RESUME_STARTED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/RESUME_STARTED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "RESUME_REJECTED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/RESUME_REJECTED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "RESUME_VERIFIED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/RESUME_VERIFIED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "RESUME_FAILED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/RESUME_FAILED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "HUMAN_PENDING"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/HUMAN_PENDING.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "HUMAN_RESOLVED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/HUMAN_RESOLVED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "HUMAN_TIMEOUT"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/HUMAN_TIMEOUT.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "DETACH_TIMEOUT"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/DETACH_TIMEOUT.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "AUTHORITY_EXTENSION_REJECTED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/AUTHORITY_EXTENSION_REJECTED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "AUTHORITY_NARROWED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/AUTHORITY_NARROWED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "AUTHORITY_NARROWING_REJECTED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/AUTHORITY_NARROWING_REJECTED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "TERMINATION"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/TERMINATION.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "TOOL_CALL_QUEUED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/TOOL_CALL_QUEUED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "TOOL_CALL_ANSWERED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/TOOL_CALL_ANSWERED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "TOOL_CALL_DRAINED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/TOOL_CALL_DRAINED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "TOOL_CALL_DELIVERED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/TOOL_CALL_DELIVERED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "TOOL_CALL_COMPLETED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/TOOL_CALL_COMPLETED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "TOOL_CALL_REJECTED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/TOOL_CALL_REJECTED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "TOOL_CALL_EXPIRED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/TOOL_CALL_EXPIRED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "BRIDGE_RECOVERED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/BRIDGE_RECOVERED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "RECOVERY_FAILED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/RECOVERY_FAILED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "CHECKPOINT"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/CHECKPOINT.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "KEY_REVOKED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/KEY_REVOKED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "KEY_REVOCATION_REQUESTED"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/KEY_REVOCATION_REQUESTED.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "OPERATOR_ADD_KEY"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/OPERATOR_ADD_KEY.schema.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "OPERATOR_TERMINATION"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "events/OPERATOR_TERMINATION.schema.json"
+          }
+        }
+      }
+    }
+  ]
+}

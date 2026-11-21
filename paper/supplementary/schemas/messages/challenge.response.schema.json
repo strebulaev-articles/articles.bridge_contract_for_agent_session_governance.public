@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/challenge.response.schema.json",
+  "title": "Wire response: challenge",
+  "type": "object",
+  "properties": {
+    "status": {
+      "const": "nonce"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32,}$",
+      "description": "Fresh single-use nonce (>= 128 bits)."
+    },
+    "ttl_seconds": {
+      "type": "number",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "status",
+    "session_id",
+    "nonce",
+    "ttl_seconds"
+  ],
+  "additionalProperties": false
+}

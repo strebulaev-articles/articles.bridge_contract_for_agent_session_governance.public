@@ -1,0 +1,31 @@
+{
+  "comment": "ECDSA P-256 / SHA-256 known answers signed by the OpenSSL command line; public_key is the 65-byte SEC1 uncompressed point, signatures are 64-byte r||s in hex. The first signature has s above n/2 (WebCrypto does not normalise s), the second is its low-s twin. The message text is sample input for the scheme, not a message the bridge signs (see bytes_kat.json for those).",
+  "scheme": "ecdsa-p256",
+  "public_key": "04a7973fcca49342e8731aac42bba543d0afaa4ffdfb9b3b2f73919af5477e10ad941893c57dd204f52aa043646de2575b8e09ff01c4893b40a3799ca346daf29e",
+  "cases": [
+    {
+      "name": "valid, high s",
+      "message": "[\"sess-kat\",\"nonce-kat\",3,\"hash-kat\"]",
+      "signature": "b0d7bdcb183e687ac39ac238227e0cae0dd1b15f52a03a0e314ae0ee0c1e1997a18c388457cd085d300f6c69b463dc9b17298f1e54b26bbd0b2f85728aacde86",
+      "valid": true
+    },
+    {
+      "name": "valid, low s",
+      "message": "[\"sess-kat\",\"nonce-kat\",3,\"hash-kat\"]",
+      "signature": "b0d7bdcb183e687ac39ac238227e0cae0dd1b15f52a03a0e314ae0ee0c1e19975e73c77aa832f7a3cff093964b9c2364a5bd6b8f526532c7e88a455071b646cb",
+      "valid": true
+    },
+    {
+      "name": "different message",
+      "message": "[\"sess-kat\",\"nonce-kat\",4,\"hash-kat\"]",
+      "signature": "b0d7bdcb183e687ac39ac238227e0cae0dd1b15f52a03a0e314ae0ee0c1e1997a18c388457cd085d300f6c69b463dc9b17298f1e54b26bbd0b2f85728aacde86",
+      "valid": false
+    },
+    {
+      "name": "altered signature",
+      "message": "[\"sess-kat\",\"nonce-kat\",3,\"hash-kat\"]",
+      "signature": "b0d7bdcb183e687ac39ac238227e0cae0dd1b15f52a03a0e314ae0ee0c1e1997a18c388457cd085d300f6c69b463dc9b17298f1e54b26bbd0b2f85728aacde80",
+      "valid": false
+    }
+  ]
+}

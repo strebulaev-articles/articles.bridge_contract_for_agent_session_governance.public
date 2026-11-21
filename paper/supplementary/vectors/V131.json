@@ -1,0 +1,45 @@
+{
+  "id": "V131",
+  "title": "A re-attach naming an unregistered key is refused as a bad signature; the log keeps the true reason",
+  "covers": [
+    "I11",
+    "I11a",
+    "I15",
+    "uniform-reattach-refusal"
+  ],
+  "session": {
+    "session_id": "sess-131",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach_key_uniform",
+      "client": "ck-9"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0,
+    "last_event_payload": {
+      "reason": "unknown_key"
+    }
+  }
+}

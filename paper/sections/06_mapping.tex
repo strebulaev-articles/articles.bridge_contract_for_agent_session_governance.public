@@ -1,0 +1,358 @@
+\section{Relationship to Existing Protocols}
+\label{sec:mapping}
+% ================================================================================
+
+This section answers RQ1--RQ4 by comparing each Bridge Contract
+obligation with the cited drafts and one product, and states the
+complementarity boundary explicitly. Section~\ref{sec:related-work} gives
+the per-draft readings; this section holds the cross-draft comparison and
+does not restate them.
+
+\subsection{Method}\label{sec:comparison-method}
+
+The candidates are the drafts that name a session, resumption, human
+escalation or audit concern close to the contract (AGTP with its session
+and bindings companions, GAR, HEM, PACE, the Agent Audit Trail) and one
+product that implements detach (Herdr). The drafts on evidence binding and
+attestation composition were read and left out because they concern none of
+the obligations. AgentThread analyses protocols but specifies none, so it
+has no column. Termenbox, the author's own product, is closed source: no text
+of it can be checked by a reader, so it has no column and claims about it stay
+as reported by the author.
+
+The rows are the contract's own obligations. Each cell records one status:
+specified, partly (a neighbouring mechanism covers part),
+described (a product behaviour with no specification), not specified, or
+not verified. ``Not specified'' means \emph{as read}: the saved text
+under \texttt{paper/sources/} was searched for the concern and nothing was
+found; it is a statement about those bytes and not about the protocol's
+intent or any later revision. ``Not verified'' marks a reading whose
+normative text was not read, and is a stated limit rather than a guess. The
+cells were first drafted on 28 October 2026; each was checked again
+against the saved text on 10 November 2026, with one exception: the RESUME
+method of the AGTP standard-methods companion was not read (its bytes were not
+retrievable, see \texttt{paper/sources/MANIFEST.md}) and is cited as reported. The data (Table~\ref{tab:mapping}), with the version, section,
+evidence and reading date of each cell, are in
+\texttt{data/related-work-matrix.json}; the table is generated from it
+(\texttt{make related-matrix}) and \texttt{make validate} fails on a stale
+file, a cell without a section pointer or a source that is not saved.
+
+\subsection{Matrix}
+
+\input{sections/generated_matrix}
+
+\subsection{Analysis}
+
+\emph{Neighbours, not owners.} For detached execution, the human-pending
+queue, resume proof and restart recovery no source specifies
+the obligation for a bridge: the best cell is partly, and the closest
+mechanisms are AGTP SUSPEND with its nonce, PACE re-subscription, and the
+Agent Audit Trail's pause, resume and recovery records. For quarantine
+every cell is not specified: GAR quarantines telemetry spans and the Audit
+Trail flags a broken chain, and neither isolates a session. Each is
+a message or a record, not a check made against a durable chain, which is
+why the contract attaches the proof to the log (I4, I5, I11, I12).
+
+\emph{Overlaps the contract reuses.} Audit continuity is specified by
+GAR and the Agent Audit Trail, and the human timers and the single-use
+signed decision by HEM. These are the contract's I11, I14 and timer rules in
+another setting, and the contract does not present them as new; it borrows
+the chain shape and ties the timers to a detach. The GAR and Audit Trail
+cells also conflict with one another: GAR presupposes a GEC as sole source,
+while the Audit Trail lets the agent record itself and asks, from trust
+level L2, for an independent recorder (an API gateway or reverse proxy, a
+sidecar or middleware, or an external monitor) that SHOULD sign records
+with its own key (Audit Trail \S 5.2); the bridge is a recorder of that
+kind, so the Audit Trail neighbours the contract's audit role more closely
+than GAR does. Their chains use different parent
+fields; no mapping between them is specified, and the contract's
+sequence-numbered events fit neither exactly.
+
+\emph{Gaps.} No source checks that authority did not grow
+while the client was away. AGTP does reject a request outside the
+Authority-Scope with status 262 (AGTP \S 6.5.3, \S 6.6, as read); the claim is that
+the check is per request and has no relation to a detach. HEM's cell for
+drift is not verified. The answer-binding cell for PACE and Herdr and the timer cell for
+Herdr are empty only as far as the pages read go.
+
+On the drafts as read, every obligation has a neighbour in at least one source and
+none specifies the obligation for a bridge; this is
+a reading, not a proof, and it does not hold for every future revision. The
+matrix has limits of its own. The obligations are the contract's, so a row
+can show a neighbour or a gap but not that the contract chose the right
+rows, and a cell can be wrong in either direction. The Bridge Contract is
+thus positioned as a complement, not a competitor. RQ1's answer: yes,
+uncovered bridge obligations exist (the gap classes G1--G4 of
+Definition~\ref{def:gap}). RQ2's answer: the Bridge Contract is an
+execution-side precondition for GAR in non-GEC deployments. RQ3's
+answer: the Bridge Contract's resume record and re-attach protocol complement
+PACE; PACE handles ``how to re-attach'', the Bridge Contract handles
+``what happened during the detach''.
+
+\paragraph{Why a separate contract and not a profile or extension.}
+An extension of one of AGTP, GAR or PACE would bind only the implementers
+of that draft, yet each obligation of the contract crosses the scopes of
+more than one of them: the transport (AGTP), the audit record (GAR) and
+the resumption of a suspended session (PACE). A bridge sits at their
+intersection, and none of AGTP, GAR and PACE can impose a requirement on the
+others. Table~\ref{tab:why-separate} gives, for the obligations that the
+matrix does not mark as specified in any source, and for audit continuity
+where no GEC is present (GAR and the Audit Trail specify it for a GEC or
+for a recorder other than the bridge), the closest provision as read and
+why placing the obligation there would not suffice. Quarantine and restart
+recovery are in the last row.
+
+\begin{table}[htbp]
+\centering
+\caption{Why an existing draft, as read, does not suffice as the home of
+an obligation.}
+\label{tab:why-separate}
+\footnotesize
+\begin{tabularx}{\columnwidth}{p{0.24\columnwidth} X X}
+\toprule
+\textbf{Obligation} & \textbf{Closest provision} & \textbf{Why a profile of it is not enough} \\
+\midrule
+Detached execution & PACE defines a suspended state and recovery
+(\S\ref{sec:rw-pace}); AGTP defines transport headers
+(\S\ref{sec:rw-agtp}). & Neither says what the bridge does while the
+client is away; the obligation is about a component that neither draft
+defines. \\
+Resume proof & PACE re-attaches a suspended session
+but, as read, defines no resume credential and reserves
+\texttt{SESSION\_RESUME} (0x06) without a body; the AGTP SUSPEND method as read issues
+a single-use nonce for a requested pause but binds it to no audit
+position, and the RESUME method itself is reported to be specified in the companion
+\cite{I-D.hood-agtp-standard-methods} \S 8.7 (not read; reported by its table of contents) (\S\ref{sec:rw-pace}, \S\ref{sec:rw-agtp}). & The
+proof depends on a durable, hash-chained record kept by the bridge
+(I4, I5, I11, I12), not on a message field, so a message-level profile
+would leave the record unspecified. \\
+Audit continuity (no GEC) & GAR defines the record shape and presupposes a
+GEC as the source (\S\ref{sec:rw-gar}). & A GAR profile cannot make the
+bridge the source without dropping GAR's own assumption; the contract
+instead emits into GAR's shape when no GEC is present
+(Definition~\ref{def:gecless}). \\
+Human-pending queue, authority drift &
+HEM specifies a pending state, timeouts and single-use decisions per
+governed object (\S\ref{sec:rw-hem}); none of the drafts ties them to held
+tool calls. & The obligations couple the
+escalation, the queue and the log (I2, I3, I13, I14); each draft would
+carry only the part inside its own scope. \\
+Quarantine, restart recovery & GAR quarantines telemetry spans from
+unauthenticated processes (\S15), and the Audit Trail flags a chain break
+and records a recovery gap (\S13.4, \S8.2, \S8.3); PACE and AGTP say that a
+session survives a restart (\S\ref{sec:rw-gar}, \S\ref{sec:rw-pace}). &
+None isolates a session whose log fails verification or re-verifies the
+chain on restart; the obligations are about the bridge's own log, which a
+profile of a message format would not reach. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+This is an argument from the drafts as read. It would weaken if one of
+them were extended to define the bridge component and its detach-window
+obligations itself.
+
+\paragraph{RQ4: contribution.} The contribution is one artifact made of a
+specification, evidence and a gap analysis. The \emph{specification} is the naming of the orphaned bridge
+obligations (G1--G4), the product state model, a normative transition
+table, a challenge-response re-attach pinned to the acknowledged prefix of
+the chain, and invariants I1--I15. The \emph{executable evidence} and the
+\emph{formal model} are described in Section~\ref{sec:conformance} and
+Appendix~\ref{app:formal}. Relative to
+product implementations such as Herdr, which restore sessions but, as far as I could find, publish
+no interoperable format or conformance criteria, the difference is that the Bridge
+Contract is a specification that can be tested; it makes no claim that
+such products lack the behaviour.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize,
+  msg/.style={-{Stealth[length=4pt]},thick},
+  note/.style={draw,rounded corners=1pt,fill=gray!10,inner sep=2pt,align=left},
+  cell/.style={draw,rounded corners=1pt,fill=yellow!15,inner sep=2pt}]
+\def\cx{0}\def\bx{3.1}\def\rx{6.2}\def\hx{8.9}
+\foreach \n/\x in {Client/\cx,Bridge/\bx,Runtime/\rx,Human/\hx}{
+  \node[draw,fill=blue!6,minimum width=1.6cm] (\n) at (\x,0) {\n};
+  \draw[dashed,gray] (\x,-0.3) -- (\x,-11.4);}
+\draw[msg] (\rx,-1) -- node[above]{escalate} (\bx,-1);
+\draw[msg] (\bx,-1.6) -- node[above]{ask} (\hx,-1.6);
+\node[cell,anchor=west] at (\bx+0.15,-2.2) {\texttt{HUMAN\_PENDING}: (Att,Pend)};
+\draw[thick] (\cx-0.15,-3) -- (\cx+0.15,-3.3) (\cx-0.15,-3.3) -- (\cx+0.15,-3) ;
+\node[anchor=west] at (\cx+0.3,-3.15) {transport lost};
+\node[cell,anchor=west] at (\bx+0.15,-3.8) {\texttt{DETACHMENT}, \texttt{RESUME\_PREPARED}: (Det,Pend)};
+\draw[msg] (\rx,-4.6) -- node[above]{tool call (queued, I2)} (\bx,-4.6);
+\draw[msg] (\hx,-5.3) -- node[above]{answer; resolve} (\bx,-5.3);
+\node[cell,anchor=west] at (\bx+0.15,-5.9) {\texttt{HUMAN\_RESOLVED}: (Det,None); no drain while away};
+\draw[msg] (\cx,-6.7) -- node[above]{challenge} (\bx,-6.7);
+\draw[msg] (\bx,-7.2) -- node[above]{nonce} (\cx,-7.2);
+\draw[msg] (\cx,-7.9) -- node[above]{signed (nonce, seq, hash)} (\bx,-7.9);
+\node[cell,anchor=west] at (\bx+0.15,-8.5) {\texttt{RESUME\_STARTED}: (Res,None); chain verified};
+\node[cell,anchor=west] at (\bx+0.15,-9.2) {\texttt{RESUME\_VERIFIED}: (Att,None)};
+\draw[msg] (\bx,-9.8) -- node[above]{events after seq} (\cx,-9.8);
+\draw[msg] (\bx,-10.5) -- node[above]{drain: forward (I13, I14)} (\rx,-10.5);
+\end{tikzpicture}
+\caption{The disconnect / resume / re-attach sequence, with an escalation
+pending when the client disconnects. Cells are written (attachment,
+human). The re-attach is a challenge and a signed request, not a token;
+the human's resolution while the client is away does not drain the queue,
+verification does.}\label{fig:sequence}
+\end{figure}
+
+\subsection{Threat model (STRIDE-lite)}
+\label{sec:threat-model}
+
+This subsection presents the threat model for the Bridge Contract
+following the STRIDE methodology~\cite{shostack2014threat}, restricted to the
+categories relevant to bridge-mediated session governance (the
+``-lite'' suffix). For each STRIDE category we state whether the
+Bridge Contract mitigates it, partially mitigates it, or defers to
+another specification; for ``No'' rows we identify the residual-risk
+owner.
+
+\paragraph{Assets.} The Bridge Contract protects the following
+assets:
+\begin{itemize}[leftmargin=2em]
+\item \textbf{Event log integrity.} The append-only, hash-chained
+log of governance events per session (A1, I5).
+\item \textbf{Resume integrity and authenticity.} The resume record
+written at detach and the challenge-response that gates re-attach (I1,
+I4, I5, I9, I11).
+\item \textbf{Authority scope.} The set of permissions granted to
+the session at attach; widening is refused, or reported when the runtime does it itself, in every cell (I3, I10).
+\item \textbf{Tool-call queue.} The queue of pending tool calls
+while the human dimension is pending; queue contents are part of the resume
+record and of the replay (I2, I13).
+\item \textbf{Session lifecycle.} The set of allowed state
+transitions; $\bot$ is terminal (I6).
+\end{itemize}
+
+\paragraph{Adversaries.} The threat model considers the following
+adversaries:
+\begin{itemize}[leftmargin=2em]
+\item \textbf{Network attacker.} Can observe and modify traffic
+between client, bridge, and (in GEC-present deployments) GEC.
+The contract specifies no transport binding, so this is mitigated only by a transport the deployment supplies (``Approvals and resolutions are not signed'', Table~\ref{tab:limitations}); I-SIGN-EVENT is a SHOULD without a test.
+\item \textbf{Byzantine client (in scope, \S\ref{sec:scope}).} May attempt to replay captured
+re-attach requests, present a history that is not a prefix of the chain,
+forge requests to terminate sessions, or supply malicious JWKS
+endpoints. Mitigated by I4, I9 and I11 (prefix consistency, short-lived
+single-use nonce, proof of possession, rejection without state change)
+and I-SIGN-JWKS (MUST NOT accept session-supplied JWKS), assuming no
+registered client key is stolen (A7).
+The formal model gives this adversary explicit capabilities and checks
+the re-attach path against it (Appendix~\ref{app:attacker}).
+\item \textbf{Byzantine bridge.} May suppress governance events or
+forge events. \emph{Out of scope} (A4); mitigations are
+deployment-level (external transparency logs, e.g., SCITT), and the residual risk is owned by a future revision of the contract (see the register below).
+\item \textbf{Operator error.} May misconfigure timeouts, JWKS
+endpoints, or authority scope. Mitigated by I-SIGN-JWKS (JWKS
+source restriction), I3 (authority lock) and the timer bounds of
+Section~\ref{sec:timeouts}.
+\item \textbf{Compromised runtime.} The agent runtime may be
+prompt-injected or otherwise compromised. It may self-approve
+escalations (bypassing I2/I13 if the bridge does not authenticate
+the human channel), flood the tool-call queue (mitigated by
+$Q_{\max}$, I13), squat on client keys (mitigated by I11-REVOKE
+revocation), or attempt to widen its own authority (reported by I3
+as \texttt{observed}, not prevented). The runtime is trusted for
+execution (the bridge cannot see what the runtime does with a
+forwarded call), but not for authority changes: I3 and I10 ensure
+the bridge's record never widens, even if the runtime's effective
+authority does.
+\end{itemize}
+
+\paragraph{Trust boundaries.} The trust boundaries assumed by the
+Bridge Contract are:
+\begin{itemize}[leftmargin=2em]
+\item \textbf{Client $\leftrightarrow$ Bridge.} Untrusted: the
+client may be Byzantine, but it does not control the bridge's event log;
+its misbehaviour is mitigated by I4, I9, I11 and I-SIGN-JWKS, except where it
+holds a valid key (A7).
+\item \textbf{Bridge $\leftrightarrow$ Agent runtime.} Trusted
+under A4 (the bridge is non-Byzantine); the agent runtime is
+out of scope.
+\item \textbf{Bridge $\leftrightarrow$ GEC.} In GEC-present
+deployments, the GEC is the sole authoritative event source
+(per GAR \S 3); the bridge forwards unsigned events.
+\item \textbf{Bridge $\leftrightarrow$ Audit consumer.} The audit
+consumer (e.g., a SIEM feed, a SCITT transparency log) reads
+events emitted by the bridge; in GEC-less deployments, the
+consumer verifies the operator key binding out-of-band
+(I-SIGN-EVENT).
+\end{itemize}
+
+\paragraph{STRIDE coverage.} Table~\ref{tab:threats} maps STRIDE
+categories to Bridge Contract invariants. ``S'' = Spoofing;
+``T'' = Tampering; ``R'' = Repudiation; ``I'' = Information
+Disclosure; ``D'' = Denial of Service; ``E'' = Elevation of
+Privilege.
+
+\begin{table}[htbp]
+\centering
+\caption{STRIDE coverage: threats the Bridge Contract mitigates
+(or does not), with residual-risk owner for unmitigated rows.}
+\label{tab:threats}
+\small
+\begin{tabularx}{\columnwidth}{l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X}
+\toprule
+\textbf{STRIDE} & \textbf{Threat} & \textbf{Mitigated by BC?} & \textbf{Residual-risk owner} \\
+\midrule
+S & Authority spoofing (forged or widened scope) & Partial (I3 observed, not enforced, when the runtime widens its own authority; a forwarded call in (Att,None) is not scope-checked; I10 for the bridge's record) & Runtime; deployment operator (Table~\ref{tab:limitations}) \\
+S & JWKS endpoint spoofing & Yes (I-SIGN-JWKS, MUST; by inspection only, Table~\ref{tab:limitations})\textsuperscript{a} & --- \\
+S & Re-attach spoofing & Yes (I11 proof of possession) & Key custody (A7): deployment \\
+T & Event log tampering (edit or reordering of events inside the log) & Yes (A1, I5) & --- \\
+T & Truncation of the log, or rewriting of its last events & No without a head held outside the log (I-CHECKPOINT anchor) & Bridge operator (storage integrity, external head) \\
+T & Tampering with the history presented at re-attach & Yes (I4 prefix check, I5) & --- \\
+T & Forged or injected approval, resolution or escalation on an unauthenticated transport (these ops carry no signature) & No: they are transport-authenticated (Appendix~\ref{app:wire-format}) & Transport binding; deployment operator \\
+T & Tampering during storage write & Partial (I12, I5) & Bridge operator (storage integrity, A1) \\
+T & Replay of queued side effects after detach or crash & Yes (I13), with a cooperating runtime & Runtime must honour idempotency keys \\
+R & Agent repudiation & Partial (I5 + I-SIGN-EVENT) & GEC if present; otherwise bridge operator \\
+R & Bridge repudiation (a Byzantine bridge is out of scope, A4) & Partial (I5 + I-SIGN-EVENT + I-CHECKPOINT; both SHOULD, not in the baseline; the reference bridges keep no external head and the Rust crate emits no checkpoints) & External transparency log (SCITT) \\
+\textbf{I} & \textbf{Disclosure of the resume record and of the replay} & \textbf{Partial} & \textbf{Bridge operator (encryption at rest and in transit per \S\ref{sec:limitations})} \\
+I & Event log information disclosure & No & Bridge operator (deployment-level access control) \\
+I & Tool-call queue information disclosure & No & Bridge operator (queue contents in the log and the replay; mitigate via encryption) \\
+D & Detach timeout exhaustion & Partial (L1 bounds detachment and gives no availability; it is violated for a soft-revoked key in $a=\textsc{Res}$ through the two-phase interface; Table~\ref{tab:limitations}) & Bridge operator; deployment (Table~\ref{tab:limitations}) \\
+D & Human timeout exhaustion & Yes (L2) & --- \\
+D & Session termination by forged re-attach attempts or by holding the nonce book & Partial (I11: a rejected request changes no cell; but a caller without a key that holds the live-nonce limit refuses a detached client every challenge until $T_{\text{detach}}$ ends the session, Section~\ref{sec:invariants-token-auth}) & Rate-limiting or authentication of the transport in front of \texttt{challenge}: bridge operator \\
+D & Denying a genuine re-attach by flooding \texttt{challenge} or the log without a key & Partial (I11 (f), (g): a live nonce is never evicted, and the failures before authentication recorded between two verifying requests are bounded; a replayed authentic request is recorded and restores that allowance, so the log grows with the caller's effort; the limit of live nonces can still be held, delaying a new challenge by up to $T_{\text{nonce}}$ each time) & Rate-limiting or authentication of the transport in front of \texttt{challenge}: bridge operator \\
+D & Bridge restart & Partial (I12, Section~\ref{sec:recovery}) & Bridge operator (HA, replication) \\
+E & Authority drift in any cell & Partial (I3 observed; I10 for the bridge's record) & Runtime; deployment operator (Table~\ref{tab:limitations}) \\
+E & Privilege escalation by presenting a stale or forged history & Yes (I4, I11) & --- \\
+S & Replay of a captured re-attach or join request & Partial (a request that was accepted cannot be replayed: I11 single use, I9 lifetime; one refused before its key was registered is accepted if the key is registered within $T_{\text{nonce}}$, Table~\ref{tab:limitations}) & Author (fix planned, not done); deployment operator (register a key before its device presents a request) \\
+S & Theft of a client key & Partial (I11-REVOKE: operator can revoke) & Key management: deployment (operator must sign revocation) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\noindent\textsuperscript{a} I-SIGN-JWKS is vacuous in GEC-present deployments (the GEC provides the JWKS endpoint).
+
+\paragraph{Residual-risk register.} Rows marked ``Partial'' or
+``No'' have residual risk owned by:
+\begin{itemize}[leftmargin=2em]
+\item \textbf{Bridge operator (deployment).} Configures
+persistence, HA, encryption at rest, access control. Not in scope
+for BC.
+\item \textbf{GEC (if present).} Authoritative event source per
+GAR; bridge forwards events in GEC-present deployments.
+\item \textbf{External transparency log (SCITT).} For
+non-repudiation of bridge events in GEC-less deployments where
+the bridge operator is potentially untrusted.
+\item \textbf{Future revision of BC.} For concerns explicitly
+deferred (multi-hop composition, Byzantine bridge, partial
+detach), the residual risk is owned by a future revision of this
+specification.
+\end{itemize}
+
+\paragraph{Out-of-scope threats.} The following STRIDE-relevant
+threats are explicitly out of scope for this document (see
+\S\ref{sec:scope}):
+\begin{itemize}[leftmargin=2em]
+\item Bridge replication and failover (D): deployment-level.
+\item Network partition / partial detach (D, T): not modelled.
+\item True concurrency on the same session (T, R): events are
+serialised (A5); interleavings are covered by the product machine only.
+\item Byzantine bridge (T, R, I): A4 assumes non-Byzantine bridge.
+\item Multi-hop composition (S, T, E): BC $\circ$ BC not modelled.
+\end{itemize}
+
+% ================================================================================

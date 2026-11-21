@@ -1,0 +1,31 @@
+{
+  "id": "V54",
+  "title": "A checkpointed log that is tampered with fails recovery (rule Q)",
+  "requires": ["checkpoint"],
+  "covers": ["I-CHECKPOINT", "I5"],
+  "session": {
+    "session_id": "sess-54",
+    "principal_id": "user-alice",
+    "authority_scope": ["read:docs"],
+    "client_key_id": "ck-1"
+  },
+  "config": {
+    "n_checkpoint": 3,
+    "t_checkpoint": 999999
+  },
+  "actions": [
+    {"do": "escalate"},
+    {"do": "tool_call", "tool": "shell:ls", "key": "k1", "permission": "read:docs", "content": {"cmd": "ls"}},
+    {"do": "tamper_log", "index": 0, "field": "prev_hash"},
+    {"do": "restart"}
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED", "HUMAN_PENDING", "TOOL_CALL_QUEUED", "CHECKPOINT",
+      "RECOVERY_FAILED"
+    ],
+    "cell": ["Att", "Pend"],
+    "scope_version": 0,
+    "quarantined": true
+  }
+}

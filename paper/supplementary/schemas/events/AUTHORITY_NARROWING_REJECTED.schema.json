@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/AUTHORITY_NARROWING_REJECTED.schema.json",
+  "title": "AUTHORITY_NARROWING_REJECTED payload",
+  "x-invariants": "I10",
+  "description": "An out-of-order, duplicate or non-narrowing change attempt.",
+  "type": "object",
+  "properties": {
+    "proposed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "current": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why it was refused, e.g. 'not a strict narrowing'."
+    }
+  },
+  "required": [
+    "proposed",
+    "current",
+    "reason"
+  ],
+  "additionalProperties": false
+}

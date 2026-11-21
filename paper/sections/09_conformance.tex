@@ -1,0 +1,259 @@
+\section{Conformance Suite}
+\label{sec:conformance}
+% ================================================================================
+
+The reference test suite comprises the pytest cases in
+\texttt{conformance\_suite.py} (Python 3.10, pytest 9.1.1, Hypothesis
+6.168.5; \texttt{requirements.txt}): deterministic tests T1--T158 (some
+parametrised over the active cells), and property-based tests
+T8--T10 that run random action sequences of up to 40 operations (30 for T10), % count-ok
+including a second device, restarts and clock jumps. Every invariant
+I1--I15 is exercised (Table~\ref{tab:invariant-independence}). The tests
+run the reference \texttt{Bridge} class through its public API only, and
+no deterministic test passes by swallowing a refusal
+(\texttt{BridgeError}); the property-based driver treats refusals as
+expected outcomes and checks the invariants after every action. I8 is
+tested through a transport-reported replay flag. I-SIGN-EVENT and
+I-SIGN-JWKS concern keys and external services outside the reference
+bridge and have no test or vector; I-SIGN-JWKS is a MUST, so a claim
+of conformance to it rests on inspection of how the bridge obtains
+keys, not on a test, and it has no mutant. I-CHECKPOINT local emission
+and field names are tested by T63--T66 and by vectors V52--V54, V88 and
+V89, which expect the \texttt{CHECKPOINT} event and run on the Python bridge
+only, because the Rust crate has no emission (its runner skips vectors that
+require it); external anchoring (SCITT submission) has no test.
+
+\textbf{Important caveat.} The pytest suite tests the
+reference \texttt{Bridge} class only and is not an interop test. The
+language-neutral vectors (\S\ref{sec:test-vectors}) are the interface for
+other implementations; so far they have been run against the Python reference bridge
+and the Rust crate, both by the same author; no third-party implementation exists.
+Table~\ref{tab:tests} maps the tests to the invariants they exercise;
+Table~\ref{tab:traceability} (Appendix~\ref{app:traceability}) traces each
+invariant to its TLA+ property, tests, vectors and mutants.
+
+\input{sections/generated_tests}
+
+\paragraph{Mutation check.} A passing suite shows little unless it can
+fail. \texttt{mutation\_check.py} applies one-line mutants to the
+reference bridge, at least one per invariant I1--I15 and one for the
+timer bounds (for example: mutate before append, drop the previous hash,
+skip the prefix check, spend a nonce only on success, let an expired
+nonce terminate, forward on a mismatching answer hash, detach on a
+partial departure, record an observed widening), and requires the suite
+to fail on each. A mutant is killed only when pytest exits with code 1
+and reports a failed test; a collection, import or syntax error is
+reported as an error, not a kill, and a patch that changes nothing must
+survive (a control). The script prints the failing tests and whether one
+of them carries the mutant's invariant tag in its docstring (kills by a
+test with no such tag are listed). Every mutant is killed; the script
+exits non-zero otherwise. I-SIGN-JWKS, which is checked by inspection, has none. The mutants include the eviction of a live nonce by a further challenge
+and the unbounded logging of unauthenticated failures (I11 (f), (g)), the
+dropping of the operation tag or of the key id from the re-attach and join
+proof, and, in the canonical encoding, the escaping of non-ASCII text,
+code point instead of UTF-16 key order, the printing of an integral float
+as \texttt{1.0} and the acceptance of an integer beyond $2^{53}$; and
+the count trigger of I-CHECKPOINT
+(counting the whole log instead of the events since the last
+checkpoint). The Rust crate has a separate, smaller harness,
+\texttt{mutation\_check\_rust.py}, which applies one-line mutants to
+signature verification, nonce spend, expiry and replay, revoked-key
+rejection, the registered-key check, the acknowledged-prefix check, the
+hash chain, the operation tag and key id of the resume proof and the
+canonical encoding, and requires \texttt{cargo test} to fail on each. It is
+a sample of the highest-value rules, not one mutant per invariant; the
+mutation evidence for I1--I15 as a whole is on the Python bridge.
+
+\paragraph{Reproducibility.} To reproduce, from
+\texttt{paper/supplementary}:
+
+\begin{lstlisting}[language=,basicstyle=\ttfamily\small,frame=single,backgroundcolor=\color{codebg},breaklines=true]
+$ python3 -I -m pytest conformance_suite.py -q     # all tests passed
+$ python3 -I mutation_check.py                     # every mutant killed
+$ python3 -I mutation_check_rust.py                # every Rust mutant killed
+$ python3 -I run_vectors.py                        # all vectors passed (V01-V134)
+$ python3 -I run_vectors.py --wire                 # wire roundtrip smoke test
+$ (cd rust-bridge && cargo test)                   # all vectors on MemStorage and FileStorage
+\end{lstlisting}
+
+\noindent The same commands are listed in \texttt{paper/supplementary/REPRODUCE.md}
+for readers who prefer a shell-readable copy. The TLC runs are described in
+Appendix~\ref{app:formal}. The commands assume a virtual environment in
+which \texttt{requirements.txt} is installed (\texttt{python3 -I} ignores
+packages installed per user). The runtime requirements of the Python
+suite are Python $\geq 3.10$, \texttt{pytest} $\geq 8.0$,
+\texttt{hypothesis} $\geq 6.0$, \texttt{cryptography} and
+\texttt{jsonschema} (the schema check), with the RFC~8785 encoder bundled
+as \texttt{jcs.py}; \texttt{requirements.txt} lists them.
+
+\paragraph{Conformance language and unit.} ``Conformance'' in this
+specification is defined at the \emph{bridge} level: a bridge
+implementation is conformant if it satisfies all MUST invariants
+($I_1, \ldots, I_{15}$, I11-REVOKE, I-GRANT, I-OPERATOR and
+I-SIGN-JWKS) for every session it
+mediates. Conformance is \emph{not} defined at the session,
+deployment, or runtime level; a non-conformant bridge may still
+mediate conformant sessions, but its emitted event log is not a
+trustworthy audit feed. The tests and vectors provided with this
+document check the Python reference bridge and the Rust crate, written by one author; they are not a
+third-party interop campaign.
+
+\subsection{Test vectors}\label{sec:test-vectors}
+
+The vectors are language-neutral JSON files in
+\texttt{supplementary/vectors/} (\texttt{V01.json}--\texttt{V134.json}).
+Each gives a session, an optional configuration, a list of actions and
+the expected committed event kinds, final cell and scope version; the
+file \texttt{vectors/README.md} defines the schema. The table below is
+generated from those files by \texttt{run\_vectors.py --emit-tex} and
+checked for staleness by \texttt{run\_vectors.py --check-paper}; a
+trailing \texttt{!} marks an action the bridge must refuse. The Python
+reference bridge passes all of them (\texttt{python3 -I run\_vectors.py}),
+and the Rust crate in \texttt{supplementary/rust-bridge/} runs the same
+files, except V52--V54, V88 and V89, which expect checkpoint events the
+crate does not emit.
+
+Table~\ref{tab:vectors} lists them.
+
+\input{sections/generated_vectors}
+
+\subsection{Event schemas}\label{sec:schemas}
+
+Every event kind has a JSON Schema for its payload in
+\texttt{supplementary/schemas/events/}, and \texttt{event.schema.json}
+fixes the envelope (\texttt{kind}, \texttt{session\_id}, \texttt{sequence},
+\texttt{prev\_hash}, \texttt{payload}, \texttt{timestamp}). The schemas close
+the free-form gap that otherwise lets bridges satisfy the invariants and
+still produce non-interoperable logs (Section~\ref{sec:limitations}). They
+are generated by \texttt{schemas/build\_schemas.py}, and
+\texttt{check\_schemas.py} validates every event the reference bridge emits
+during the test suite against them and fails if an emitted kind has no
+schema. \texttt{CHECKPOINT} is specified (I-CHECKPOINT, SHOULD) with
+frozen field names (\texttt{root}, \texttt{tree\_size},
+\texttt{signature}, \texttt{receipt}) and is emitted by the
+reference bridge when the configured threshold is reached
+(tests T63--T66, vectors V52--V54, V88, V89).
+
+\subsection{Fault-injection and cost measurements}\label{sec:measurements}
+
+The tests show that each invariant holds; they do not show what the
+mechanism buys in operation or what it costs. The measurements of event loss and of verification cost address
+that, produced by \texttt{supplementary/measure\_faults.py}
+(\texttt{make measurements}), which is seeded and reports only counts
+(calls, events, SHA-256 computations), so a rerun gives the same tables.
+
+\paragraph{Event loss.} For each fault class the script generates
+seeded schedules of tool calls, human escalations and answers, clock
+advances and one injected fault type (client disconnects, human
+timeouts, replays of re-attach requests the bridge had accepted, resubmitted call keys, bridge
+restarts, and all of them together), and runs the same schedule against
+the reference bridge and against an acknowledging relay. The relay is a
+stand-in whose rules are listed in the script: it numbers every accepted
+call and writes the call, its acknowledgement and the open prompt to a
+store that survives a restart; it forwards while a client is attached and
+no prompt is open, holds the other calls unacknowledged and replays them
+on re-attach; it denies a prompt after $T_{\text{human}}$, drops the calls
+behind it and records the drop; it never terminates a session on a
+timeout; and it accepts any re-attach request, with no nonce and no
+signature. It is the strongest baseline that still lacks an authenticated
+resume, so the measurement asks what the contract adds beyond reliable
+delivery. A call counts as \emph{accepted} if the agent was told so, as
+\emph{lost} if it was neither forwarded nor left any recorded
+disposition, and as \emph{orphaned} if it is in the log but the session
+ended by timeout before it was forwarded, rejected or expired. Both
+systems are scored on the same set: the calls both accepted and the replay
+attempts both made, so the Accepted columns of a row are equal. (The
+bridge refuses calls after a timeout has terminated the session; the relay
+never terminates, so it accepts more calls than the bridge in those rows,
+and the surplus is left out.)
+
+\input{tables/measurements}
+
+Table~\ref{tab:fault-loss} shows no loss for either system on any
+schedule: a relay that numbers and stores its calls, acknowledges them and
+replays the unacknowledged ones loses nothing under disconnects, human
+timeouts or restarts, so the bridge's log is not what separates the two
+on this measure. The columns that differ are the others. Replays of
+re-attach requests that the bridge had accepted are rejected in every
+attempt by the bridge (nonce use and expiry, I9) and accepted in every
+attempt by the relay, which has nothing to check them against; this is the
+authentication the contract adds and the relay lacks by construction. The
+measurement replays only requests that were accepted: a request refused
+before its key was registered, which both bridges accept on replay once the
+key is registered (limitations register), is not among its fault classes. The bridge forwards fewer duplicate
+keys (the Dup column) because it holds a queued call under its key (I14);
+the relay forwards a resubmitted key as a new call. The bridge does
+\emph{not} remove duplicates in general: a call forwarded directly while a
+client is attached and no prompt is open leaves no record, so a
+resubmission under the same key is forwarded again. The cost of the
+contract shows in the orphaned column: when a timeout terminates the
+session, queued calls remain logged without a recorded disposition, which
+an operator must treat as an audit finding; the relay avoids this by never
+ending the session, which is the unbounded detachment the contract exists
+to rule out.
+
+\paragraph{Verification cost.} The script grows real logs of the
+reference bridge to the lengths in Table~\ref{tab:verify-cost}, with and
+without checkpoints, and counts SHA-256 computations. The checkpoints
+are emitted by the count trigger at the default interval of $N=1000$
+events since the previous checkpoint. Both logs are driven through the
+same number of cycles, so they hold the same events; the checkpointed
+log holds in addition the checkpoint events themselves (the
+\emph{Events} column counts the events of the plain log, and the full
+verification of the checkpointed log hashes those plus the
+checkpoints). Full verification (I5) is linear in the log. Verifying
+only the suffix after the latest checkpoint is bounded by the
+checkpoint interval whatever the log length, and one Merkle inclusion
+proof grows with $\log_2$ of the log. The price is on the writing side,
+and it grows: the reference bridge recomputes the whole tree over all
+preceding events at every checkpoint, so with a checkpoint every $N$
+events the total writer cost is quadratic in the log length and the cost
+per logged event grows linearly with it (last column: a few
+computations per event at the shortest log, tens at the longest). This
+growth belongs to the reference implementation, not to the contract:
+I-CHECKPOINT requires the root over the preceding events and says
+nothing about how it is computed, and an incremental (append-only) tree
+that keeps only its right-hand frontier would make the work per
+appended event constant and a checkpoint cost logarithmic in the log.
+The reference does not have one, and the measurement does not test that
+claim. The suffix figures assume the checkpoint root is
+trusted; the signature field in the reference is a placeholder, and a verifier that recomputes the root
+pays the full linear cost once.
+
+\paragraph{Limits.} The same author wrote the bridge, the relay, the
+fault injector and the loss definition, so a zero shows that the
+mechanisms behave as designed on these schedules, not that they are
+complete. The relay is this paper's own construction, chosen as the
+strongest baseline without an authenticated resume; a different relay (one
+that checks a nonce, or that does not record its drops) would give
+different columns, and a real product was not measured. It records its
+drops and survives a restart by assumption, which a deployment may not
+provide. The faults are synthetic and independent of each other and the
+schedules are short. Scoring on the calls both systems accepted makes
+the columns comparable inside a row; rows with human timeouts and restarts
+differ in the number of calls because the bridge terminates sessions, so the
+rows are not comparable as rates. The loss measure says nothing about
+approval: a relay that replays held calls after a disconnect may forward
+a call no human answered, and \texttt{Lost} does not count that. The Rust
+crate is not measured: it does not emit \texttt{CHECKPOINT}. Timing is not
+reported because wall-clock figures of a single-process reference say little
+about a deployment. The writer cost reported is that of the reference's
+recompute-everything checkpoint, not a lower bound for the contract.
+
+\paragraph{Conformance classes.} Following IETF conventions, the
+conformance classes are:
+
+\begin{itemize}[leftmargin=2em]
+\item \textbf{MUST} (mandatory): Invariants $I_1, \ldots, I_{15}$,
+I11-REVOKE, I-GRANT, I-OPERATOR and I-SIGN-JWKS; the corresponding tests and vectors. A bridge that fails any
+MUST is non-conformant.
+\item \textbf{SHOULD}: Invariants I-SIGN-EVENT (event signing in
+GEC-less deployments, per GAR \S 6.1) and I-CHECKPOINT (anchored
+checkpoints).
+\item \textbf{MAY}: Custom event payload schemas; additional states or
+conditions beyond the cells of the product state machine
+(Definition~\ref{def:sm}). Extensions MUST be documented and MUST
+NOT weaken any MUST invariant.
+\end{itemize}
+
+% ================================================================================

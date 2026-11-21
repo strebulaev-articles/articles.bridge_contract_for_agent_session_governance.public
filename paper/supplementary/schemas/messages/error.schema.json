@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/error.schema.json",
+  "title": "Wire error response",
+  "type": "object",
+  "properties": {
+    "status": {
+      "const": "rejected"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "reason": {
+      "enum": [
+        "unknown_session",
+        "unknown_key",
+        "nonce_used",
+        "nonce_expired",
+        "nonce_unknown",
+        "prefix_mismatch",
+        "resume_in_progress",
+        "already_attached",
+        "transport_replay",
+        "queue_full",
+        "unanswered",
+        "denied",
+        "answer_mismatch",
+        "scope",
+        "call_ttl",
+        "approval_ttl",
+        "terminated",
+        "quarantined",
+        "not_a_strict_narrowing",
+        "bad_signature",
+        "bad_canonical",
+        "revoked_key",
+        "key_exhausted",
+        "duplicate_key",
+        "grant_invalid",
+        "unauthenticated",
+        "possession_invalid",
+        "operator_signature_invalid",
+        "not_key_exhausted",
+        "key_already_registered",
+        "extension_rejected",
+        "via_not_connected",
+        "unsupported_op",
+        "refused"
+      ]
+    }
+  },
+  "required": [
+    "status",
+    "session_id",
+    "reason"
+  ],
+  "additionalProperties": false
+}

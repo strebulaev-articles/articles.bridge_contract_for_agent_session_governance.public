@@ -1,0 +1,61 @@
+\section{Extension: Signature Schemes and Long-Lived Evidence}
+\label{sec:ext-schemes}
+% Self-contained extension: no invariant of the core is changed or weakened.
+% Written to move unchanged into the extension part of a core/extension split.
+% ================================================================================
+
+This section is an extension. It adds conventions and guidance and removes
+no MUST: every invariant of \S\ref{sec:additional-invariants} holds with
+any scheme whose verifier is unforgeable, because the contract constrains
+\emph{what a signature binds} (the domain-separated tuple of
+Appendix~\ref{app:wire-format}), not how it is computed.
+
+\paragraph{Scheme tag and registry convention.} Each client key is
+registered with a scheme tag and verification material (I15), and the
+tag is part of the signed registration tuple, so a key cannot be
+re-read under another scheme. A deployment keeps a scheme list: a mapping
+from tag to a verifier and to the encoding of its public key and
+signature. The reference list holds \texttt{ed25519} and
+\texttt{ecdsa-p256}. A tag not on the list is invalid, never a fallback to
+another scheme, and a verifier answers false for malformed material. A
+further scheme, a post-quantum one such as ML-DSA, or a hybrid that
+requires both signatures to verify, is added by registering a tag and a
+verifier; the bridge, the state machine and the log format are unchanged.
+Tags SHOULD name the algorithm and parameter set, and a hybrid SHOULD have
+its own tag rather than reuse a component's. The schemas list the
+reference tags and are extended by the deployment with its own. Evidence:
+a test-only stub scheme is accepted through the same verifier on both
+runners (T144, and the test \texttt{a\_further\_scheme\_is\_accepted\_through\_the\_verifier}
+of the Rust crate), and the same key is refused where the verifier lacks
+the tag; it exercises dispatch only and says nothing about a real
+post-quantum scheme.
+
+\paragraph{Long-lived signatures.} The signatures differ in how long they
+must hold. A re-attach, join or key-addition signature matters while its
+nonce is live and, for the key, while the session can still be resumed,
+so migrating client keys to a new scheme is a rotation (I15,
+I11-REVOKE) that needs no change to past events. The operator
+signatures on events and checkpoints are archived evidence and outlive any
+algorithm. For these:
+\begin{itemize}
+\item Sign checkpoints (I-CHECKPOINT) with a post-quantum or hybrid scheme
+ first; a checkpoint covers every earlier event through the Merkle root,
+ so protecting it protects the prefix.
+\item Before a scheme is retired, re-sign: write a new checkpoint over the
+ current head under the new scheme, and keep the old checkpoint. The
+ hash chain, not the old signature, then carries integrity of the prefix, as
+ long as the hash function remains collision resistant.
+\item Anchor the checkpoint root outside the bridge (a transparency
+ service or a timestamp) before the old algorithm weakens, so that
+ evidence made earlier cannot be backdated after a break.
+\item Record the scheme tag with every signature and allow several
+ signatures over one checkpoint, so a verifier accepts evidence that
+ verifies under any scheme it still trusts.
+\end{itemize}
+
+\paragraph{Algorithm agility without downgrade.} A verifier trusts a
+configured list, not the tag a signer presents. Removing a scheme from the
+list rejects new signatures under it, and archived evidence under it is
+accepted only with an anchor or a later re-signature as above. The bridge
+never negotiates a scheme with the client. Hash agility (the chain and
+Merkle hash) is out of scope here.

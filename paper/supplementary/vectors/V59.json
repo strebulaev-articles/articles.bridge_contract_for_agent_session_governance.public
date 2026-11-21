@@ -1,0 +1,40 @@
+{
+  "id": "V59",
+  "title": "P-256: a valid signature under the registered key resumes",
+  "covers": [
+    "I11",
+    "B.2"
+  ],
+  "session": {
+    "session_id": "sess-59",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1",
+    "scheme": "ecdsa-p256"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0
+  }
+}

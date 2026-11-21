@@ -1,0 +1,301 @@
+\section{Problem Statement: The Bridge Responsibility Gap}
+\label{sec:problem}
+% ================================================================================
+
+\begin{definition}[Bridge component]\label{def:bridge}
+A \emph{bridge} is any component $B$ that mediates between a client
+transport $T_c$ and an agent runtime $A$, such that messages from
+$T_c$ reach $A$ only via $B$ and messages from $A$ reach $T_c$ only
+via $B$. The bridge is the locus of identity binding (it attaches
+\texttt{Agent-ID} and \texttt{Authority-Scope} from AGTP to agent
+messages), of audit emission (it emits events that a GAR consumer
+observes), and of session-state continuity (it records the resume point
+that PACE-style re-attach starts from).
+\end{definition}
+
+\begin{definition}[Bridge Responsibility Gap]\label{def:gap}
+The \emph{Bridge Responsibility Gap} is the \emph{phenomenon} of
+orphaned obligations at the composition boundary of AGTP, GAR, and PACE.
+It is concretely realised as the \emph{set} of obligations comprising
+gap classes G1--G4, defined below.
+
+\begin{description}[leftmargin=2em]
+\item[G1. Client-Detach-But-Agent-Continues.] The client transport $T_c$
+disconnects (mobile handoff, network failure, user-initiated background)
+while the agent $A$ is mid-execution. The bridge must record a
+resume point, suspend the forwarding of new tool calls that arrive
+while no client is attached (refusing them, holding them for an answer
+after re-attach, or forwarding only those the operator allowlisted,
+Section~\ref{sec:state-machine}), and leave work that is already in
+flight undisturbed.
+
+\item[G2. Human-Escalation-Pending.] The agent escalates a decision to a
+human in the loop (HITL), but the human is unavailable (sleep, time zone,
+context switch). The bridge must set the human dimension of the session to pending, so that all
+subsequent tool calls are queued rather than executed, and
+must emit a \texttt{HUMAN\_PENDING} governance event. HEM already
+specifies a pending state in which every state transition is rejected, with
+timeouts and an escalation chain (Section~\ref{sec:rw-hem}); what G2 adds
+is the queue of tool calls held while the client may also be away, and the
+relation of the human wait to a detach.
+
+\item[G3. Resume-After-Detach.] The client re-attaches
+(PACE-style) after a detach. The bridge must authenticate the client
+by a challenge it answers under a registered key, verify that the
+history the client presents is a prefix of the bridge's chain, must transition to the re-attaching ($\textsc{Res}$)
+attachment, must re-verify the hash chain over governance events, and
+must transition back to attached only if verification succeeds.
+
+\item[G4. Bridge-Restart-With-Live-Sessions.] The bridge process
+restarts (crash, upgrade) while sessions are live. Every client
+transport is lost, but the agent and the human dimension are not. The
+bridge must rebuild each session from its durable event log, treat it as
+detached, and record a resume point, without losing or duplicating
+governance events or queued tool calls.
+\end{description}
+\end{definition}
+
+The Bridge Responsibility Gap is not a hypothetical concern. AgentThread
+\cite{zheng2026formal} reports that ``no protocol assigns
+enforcement for cross-protocol behavior'' and that ``[i]nsecurity in
+agent protocols is therefore not only a specification or implementation
+problem, but also a responsibility gap across protocols, SDKs, and
+deployments'' (it also finds that ``composition is
+universally orphaned''). AgentThread's analysis constructs
+cases in which each action appears tool-valid in isolation while the
+harmful intent is visible only in the composed trace. It analyses other
+agent protocols --- MCP, A2A, ANP, and two different protocols both
+abbreviated ``ACP'' in the source paper (the Agent Communication
+Protocol and the Agent Client Protocol; see Section~\ref{sec:rw-agtp-thread}) --- and does not analyse AGTP, GAR or PACE, so its finding is
+motivation here, not a result about them. The gap classes G1--G4 above are
+this document's own derivation of the obligations that none of AGTP, GAR and PACE, nor GAR's companion HEM, as read, assigns to a bridge; the derivation is not shown to be
+complete. The Bridge Contract is a specification that owns them. The
+``Why this obligation is out of <draft>'s scope'' paragraphs in
+Section~\ref{sec:rw-agtp}--\ref{sec:rw-pace} and the Agent Audit
+Trail subsection argue that, in the versions read, the gap is one of scope (a scope
+mismatch) rather than an oversight: a revision of any cited draft that
+owned these obligations would be expanding its scope, not closing a gap
+inside it. This is an argument from a reading of dated texts, not a
+prediction about those drafts, and it weakens if one of them is
+extended to own these duties (Section~\ref{sec:limitations}). It is the
+reason given for the Bridge Contract being a separate specification, not
+a profile of an existing draft.
+
+\begin{example}[Concrete scenario]
+A mobile user asks an agent to reconcile three months of corporate
+expenses. The agent enqueues forty tool calls (database queries,
+spreadsheet operations, email reads). After twenty minutes the user's
+phone moves between cell towers; the transport disconnects for forty
+minutes. (This scenario uses the \emph{persistent} profile,
+$T_{\text{detach}} = 7$~days; under the default
+\emph{interactive-short} profile, $T_{\text{detach}} = 30$~minutes,
+the session would terminate before the user returns.)
+During those forty minutes the agent finishes the calls that
+were already in flight, escalates one
+ambiguity to the user (which the user does not see for forty minutes),
+has the calls that depend on the answer queued by the bridge,
+and attempts to extend its authority scope to read an additional mailbox
+``to save a round trip''. Without a Bridge Contract, all of these
+behaviours are unspecified: the runtime may silently extend authority
+(a violation of the obligation that I3 captures), may execute the
+escalated tool call (a violation of the obligation that I2 captures),
+or may lose the partial state produced during the detach (a consequence
+of violating I1's emission requirement). With a conformant bridge,
+each of these behaviours is audited and recoverable, and each is
+refused when it passes through the bridge; a change the runtime makes
+on its own, without asking the bridge, is observed and reported but not
+prevented (Section~\ref{sec:coverage}).
+This scenario exercises transitions
+$(\textsc{Att},\textsc{None}) \to (\textsc{Det},\textsc{None}) \to
+(\textsc{Det},\textsc{Pend}) \to (\textsc{Res},\textsc{Pend}) \to
+(\textsc{Att},\textsc{Pend})$ (see Figure~\ref{fig:state-machine}; see
+Table~\ref{tab:transitions} for preconditions and postconditions).
+\end{example}
+
+\paragraph{Decision guide: when the Bridge Contract helps and when it
+is overhead.}
+The Bridge Contract adds value only when at least one of the gap
+classes G1--G4 can fire in the deployment. Concretely, it helps when
+\emph{any} of these holds:
+\begin{itemize}[leftmargin=2em]
+\item \textbf{Long-lived agent + mobile client.} The agent outlives
+the interactive client that initiated it (G1, G3): a mobile user, a
+browser tab that can close, a laptop that can sleep. The bridge
+keeps the session governable across the detach.
+\item \textbf{Human-in-the-loop with an unavailable human.} The agent
+escalates to a human who may be asleep, in another time zone, or
+context-switched away (G2). The bridge queues, times out, and
+replays on resolution.
+\item \textbf{Multi-device principal.} The principal has several
+devices attached at once or in turn (I15). The bridge treats the
+session as detached only when none is connected, and a second device
+is a join, not a resume.
+\item \textbf{Regulated audit without a GEC.} The deployment needs a
+tamper-evident audit trail but has no Governing Enforcement Component
+(Definition~\ref{def:gecless}). The bridge is the event source, in
+GAR-shaped form.
+\item \textbf{Bridge restart with live sessions.} The bridge process
+may crash or upgrade while sessions are live (G4). The bridge
+rebuilds from the durable log and treats every session as detached.
+\end{itemize}
+The contract is \emph{overhead}---every state transition emits an
+event, every detach produces a resume record---when \emph{all} of
+these hold:
+\begin{itemize}[leftmargin=2em]
+\item short-lived sessions (the agent finishes within one client
+connection);
+\item always-connected client (no detach is possible);
+\item always-available human (no escalation ever waits);
+\item single-device principal (no client set needed);
+\item GEC-present deployment (the GEC is the audit source);
+\item no bridge restarts in scope (single-shot execution).
+\end{itemize}
+Conformant deployments MAY skip resume-record production when no
+detach is possible, but MUST still emit lifecycle events
+(\texttt{ATTACHED}, \texttt{TERMINATION}). The decision is a
+deployment-level configuration, not a property of the contract.
+
+\subsection{Scope and Failure Model}\label{sec:scope}
+
+The Bridge Contract specifies the obligations of a bridge component
+during the gap classes G1--G4 of Definition~\ref{def:gap}. The
+following failure modes and compositions are \emph{in scope}:
+
+\begin{itemize}[leftmargin=2em]
+\item Client transport disconnect (full disconnect, both directions
+down), with the agent continuing to execute. (G1)
+\item Human-in-the-loop escalation with the human currently unavailable
+(sleep, time zone, context switch). (G2)
+\item Client re-attach after a prior disconnect, with verification of
+the presented history and the hash chain. (G3)
+\item Bridge restart with live sessions, recovered from a durable event
+log. (G4)
+\item Authentication of the re-attaching client, including replay of captured re-attach requests and attempts to
+terminate a session with forged ones. (G3)
+\item Several clients of one principal, attached at once or in turn:
+the session is detached only when none is connected (client set,
+Section~\ref{sec:product-model}).
+\item Clean session termination from any state.
+\item Authority extension attempts in any cell: always rejected when
+requested through the bridge, and reported as \emph{observed} when the
+runtime announces the change itself (I3).
+\item A \emph{Byzantine client}: one that replays captured
+re-attach requests, forges signatures, claims a history that is not a
+prefix of the chain, or tries to terminate a session with forged
+re-attach attempts, provided no registered private key is compromised
+(A7). Such attempts are rejected without a state change (I4, I9, I11),
+with stated exceptions: a request refused before its key was registered is
+accepted on replay if the key is registered within $T_{\text{nonce}}$, and
+a caller that holds the live-nonce limit can keep a detached client from
+re-attaching until the detach timeout ends the session (limitations
+register, Table~\ref{tab:limitations}).
+\end{itemize}
+
+The following failure modes and compositions are \emph{out of scope}
+for this document and are deferred to future revisions or to other
+specifications:
+
+\begin{itemize}[leftmargin=2em]
+\item \textbf{Bridge availability.} Replication, failover and
+storage faults beyond Axiom A1 are deployment-level concerns. The
+contract covers restart of a single bridge with a durable log
+(Section~\ref{sec:recovery}), not high availability.
+\item \textbf{Sharing between principals.} A session belongs to one
+principal. Several principals attached to the same session, with
+per-principal authority, are not modelled.
+\item \textbf{Network partition (partial detach).} The contract models
+full disconnect of a client only; partial connectivity (e.g., one direction down)
+is out of scope.
+\item \textbf{Concurrent events.} The state machine assumes serialised
+event emission per session; concurrent emission of, e.g.,
+\texttt{HUMAN\_PENDING} and \texttt{DETACHMENT} is not modelled as
+true concurrency. Because the product machine has orthogonal dimensions
+(Section~\ref{sec:product-model}), serialised events from different
+dimensions commute on the cell they reach (Axiom A5).
+\item \textbf{Compromised keys.} Theft of a client's private key (Axiom A7). A Byzantine client without the key
+is in scope (above); a client that holds the key is indistinguishable
+from the legitimate one.
+\item \textbf{Byzantine bridge.} A bridge that deliberately suppresses
+governance events or forges events is out of scope.
+Mitigations require external transparency logs (e.g., SCITT) and are
+deployment-level.
+\item \textbf{Multi-hop composition (BC $\circ$ BC).} If two bridges
+are composed in sequence, the obligations at their composition boundary
+are not modelled here. Multi-hop composition is the target for a future
+revision.
+\item \textbf{Concurrent BC and GEC.} In a deployment with both a
+bridge and a GEC, the GEC remains the sole authoritative event source
+(per GAR \S 3); the bridge forwards events to the GEC for signing.
+The interaction is governed by the GEC-less deployment profile
+(Definition~\ref{def:gecless}) and Invariants I-SIGN-EVENT and I-SIGN-JWKS
+(Section~\ref{sec:invariants-signing}).
+\item \textbf{Multi-agent composition (A2A, MCP).} Declared out of
+scope; A2A and MCP operate above the session layer governed by the
+Bridge Contract.
+\item \textbf{QUIC 0-RTT replay.} AGTP-SESSION \S 10.5 and the
+replay-safety profile of AGTP-BINDINGS \S 4.6 are authoritative for replay
+protection of the underlying transport; the
+Bridge Contract defers to them and adds Invariant I8
+(Section~\ref{sec:invariants-quic}) for the bridge-layer consequence.
+\end{itemize}
+
+A future revision may extend the contract to cover partial detach,
+true concurrency, replication, and multi-hop composition.
+
+\subsection{What the bridge can see: coverage}\label{sec:coverage}
+
+The obligations of this contract attach to what crosses the bridge.
+Two consequences are part of the specification, not caveats to it.
+\begin{itemize}[leftmargin=2em]
+\item \textbf{Calls submitted for approval.} I2 and I13 apply to the
+tool calls that the runtime \emph{submits to the bridge} for approval or
+forwarding. In some runtimes the bridge sees only the permission request
+(for example the Agent Client Protocol's
+\texttt{session/request\_permission}; throughout this document ``ACP''
+means the Agent Client Protocol, see Section~\ref{sec:rw-agtp-thread}), not the
+execution that follows. Execution that the bridge does not mediate is
+outside the contract: the bridge cannot queue, suspend or audit what it
+does not see.
+\item \textbf{Enforced and observed authority changes.} A scope or mode
+change \emph{requested through the bridge} is enforced: widening is
+refused (I3). A change that the runtime announces itself, as an Agent
+Client Protocol (ACP) agent announces its own mode change, is
+\emph{observed}: the bridge
+cannot prevent it, so it records \texttt{AUTHORITY\_EXTENSION\_REJECTED}
+(source \texttt{observed}) and SHOULD instruct the runtime to revert.
+Between the announcement and the revert the runtime holds authority the
+bridge has not granted; the contract bounds this by audit and by the
+bridge's own record of the scope, which never widens, not by prevention.
+A bridge claims \emph{enforced} authority only where the runtime routes
+all authority changes through it; where the runtime may change authority
+on its own, the bridge's authority is \emph{observed}, not enforced.
+The deployment documents which case holds.
+\end{itemize}
+
+\subsection{Formal status of this specification}\label{sec:formal-status}
+
+This document is a \emph{normative engineering specification with a
+bounded formal model}. It provides
+definitions, invariants, axioms, lemmas, and a safety argument, and
+it accompanies them with a TLA+ model that is checked on bounded
+configurations. The wire format (Appendix~\ref{app:wire-format}) is
+normative for client--bridge messages in the signed bytes and the reason
+names, which the vectors and the known-answer files check; the vectors
+compare committed event kinds and final cells, not response bytes, so
+passing V01--V134 does not make two implementations byte-compatible at the
+message level (Section~\ref{sec:limitations}). The unit of
+conformance is the committed event log and the final session state:
+two implementations that produce the same committed event kinds and
+the same final cell on the same input trace are conformant at the
+semantic level, whether or not they share a transport binding. The
+normative state model is the product
+machine of Section~\ref{sec:product-model}; the names ATTACHED, DETACHED, PENDING\_HUMAN, RESUMING and TERMINATED
+survive only as a derived, lossy view
+(Section~\ref{sec:mece-status}). A TLA+ model of the product machine
+accompanies the document (Appendix~\ref{app:formal}); TLC finds no
+invariant violation on bounded configurations (two sessions with two
+principals and two permissions, and a one-session deep run), and a set of
+deliberately broken variants of the model is rejected by TLC. The result
+does not extend to unbounded sessions (Appendix~\ref{app:formal-limitations}).
+
+% ================================================================================

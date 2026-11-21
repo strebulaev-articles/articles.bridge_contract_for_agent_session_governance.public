@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/TOOL_CALL_REJECTED.schema.json",
+  "title": "TOOL_CALL_REJECTED payload",
+  "x-invariants": "I13, I14",
+  "description": "A call refused at a full queue or dropped at drain.",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "queue_full",
+        "scope",
+        "unanswered",
+        "denied",
+        "answer_mismatch"
+      ],
+      "description": "Reason code."
+    }
+  },
+  "required": [
+    "key",
+    "tool",
+    "reason"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/TOOL_CALL_QUEUED.schema.json",
+  "title": "TOOL_CALL_QUEUED payload",
+  "x-invariants": "I2, I13, I14",
+  "description": "A tool call queued while the human dimension is Pend, or held for an answer under the detached-call policy; shown_hash is h_q, the hash of the tool, the permission and the content.",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "permission": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "content": {
+      "description": "The call's content as hashed and as forwarded (null when none was supplied); retained so that the forwarded request is the hashed one."
+    },
+    "shown_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "expires_at": {
+      "type": "number"
+    },
+    "held": {
+      "type": "boolean",
+      "description": "True when queued with no escalation pending while no client was attached (detached_calls policy)."
+    }
+  },
+  "required": [
+    "key",
+    "tool",
+    "permission",
+    "content",
+    "shown_hash",
+    "expires_at"
+  ],
+  "additionalProperties": false
+}

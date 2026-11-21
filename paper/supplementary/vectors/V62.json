@@ -1,0 +1,52 @@
+{
+  "id": "V62",
+  "title": "P-256: a key added after the challenge answers that challenge",
+  "covers": [
+    "I11",
+    "I15",
+    "B.2"
+  ],
+  "session": {
+    "session_id": "sess-62",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1",
+    "scheme": "ecdsa-p256"
+  },
+  "actions": [
+    {
+      "do": "challenge",
+      "as": "n1"
+    },
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2",
+      "nonce": "n1"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0
+  }
+}

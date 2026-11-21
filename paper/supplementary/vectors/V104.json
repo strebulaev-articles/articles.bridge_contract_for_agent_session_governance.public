@@ -1,0 +1,56 @@
+{
+  "id": "V104",
+  "title": "Recovery accepts a registry that matches the log, with a key added by a connected client",
+  "covers": [
+    "I11",
+    "I12",
+    "recovery",
+    "registry-log"
+  ],
+  "session": {
+    "session_id": "sess-104",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "restart"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "BRIDGE_RECOVERED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-2"
+    ]
+  }
+}

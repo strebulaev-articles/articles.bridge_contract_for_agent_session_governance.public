@@ -1,0 +1,26 @@
+{
+  "id": "V46",
+  "title": "Wire: tool_call with explicit content, answer, drain",
+  "covers": ["I2", "I13", "I14"],
+  "session": {
+    "session_id": "sess-46",
+    "principal_id": "user-dave",
+    "authority_scope": ["exec:shell"],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {"do": "escalate"},
+    {"do": "tool_call", "tool": "shell:git", "key": "k1", "permission": "exec:shell", "content": {"cmd": "git push"}},
+    {"do": "answer", "key": "k1", "approve": true},
+    {"do": "resolve"}
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED", "HUMAN_PENDING", "TOOL_CALL_QUEUED",
+      "TOOL_CALL_ANSWERED", "HUMAN_RESOLVED", "TOOL_CALL_DRAINED"
+    ],
+    "cell": ["Att", "None"],
+    "scope_version": 0,
+    "forwarded": ["k1"]
+  }
+}

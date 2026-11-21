@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/TERMINATION.schema.json",
+  "title": "TERMINATION payload",
+  "x-invariants": "I6",
+  "description": "Irreversible session end.",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "description": "Termination reason, e.g. human_timeout, detach_timeout, 'human_timeout+detach_timeout (simultaneous)', detach_total_timeout, user_quit."
+    }
+  },
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false
+}

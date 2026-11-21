@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/ATTACHED.schema.json",
+  "title": "ATTACHED payload",
+  "x-invariants": "I5, I11",
+  "description": "Genesis event; registers the first client key with its scheme tag and public key.",
+  "type": "object",
+  "properties": {
+    "principal_id": {
+      "type": "string"
+    },
+    "authority_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "task_lineage": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "client_key_id": {
+      "type": "string"
+    },
+    "scheme": {
+      "type": "string",
+      "enum": [
+        "ed25519",
+        "ecdsa-p256"
+      ],
+      "description": "Scheme tag of the registered public key."
+    },
+    "public_key": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64}|[0-9a-f]{130})$",
+      "description": "Hex public key: 32 bytes (ed25519) or a 65-byte SEC1 uncompressed point (ecdsa-p256)."
+    },
+    "scope_version": {
+      "const": 0
+    }
+  },
+  "required": [
+    "principal_id",
+    "authority_scope",
+    "task_lineage",
+    "client_key_id",
+    "scheme",
+    "public_key",
+    "scope_version"
+  ],
+  "additionalProperties": false
+}

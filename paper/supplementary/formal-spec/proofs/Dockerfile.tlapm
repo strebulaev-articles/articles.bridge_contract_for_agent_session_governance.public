@@ -1,0 +1,6 @@
+FROM ubuntu:24.04
+RUN apt-get update -qq && apt-get install -y -qq curl ca-certificates tar gzip >/dev/null
+ARG URL=https://github.com/tlaplus/tlapm/releases/download/1.6.0-pre/tlapm-1.6.0-pre-x86_64-linux-gnu.tar.gz
+RUN mkdir /opt/tlapm && curl -sL $URL | tar xz -C /opt/tlapm --strip-components=1
+ENV PATH=/opt/tlapm/bin:$PATH
+WORKDIR /w

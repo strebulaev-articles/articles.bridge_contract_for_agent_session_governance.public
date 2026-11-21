@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/attach.schema.json",
+  "title": "Wire op: attach",
+  "type": "object",
+  "properties": {
+    "op": {
+      "const": "attach"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "principal": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "lineage": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "key_id": {
+      "type": "string"
+    },
+    "scheme": {
+      "type": "string",
+      "description": "Signature scheme tag of the client key (ed25519, ecdsa-p256)."
+    },
+    "public_key": {
+      "type": "string",
+      "pattern": "^[0-9a-f]+$",
+      "description": "Client public key, hex-encoded; its encoding is fixed by the scheme."
+    },
+    "grant": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque scope grant, presented to the deployment's grant verifier; it binds the session, principal, scope, lineage and client key. Not covered by the client signature. The reference verifier takes a hex Ed25519 operator signature over the domain tag bc/v1/grant and those fields."
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[0-9a-f]+$",
+      "description": "Signature by the attaching key over canonical JSON of [\"bc/v1/attach\", bridge_id, session_id, principal, scope, lineage, key_id, scheme, public_key]."
+    }
+  },
+  "required": [
+    "op",
+    "session_id",
+    "principal",
+    "scope",
+    "lineage",
+    "key_id",
+    "scheme",
+    "public_key",
+    "grant",
+    "signature"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/tick.response.schema.json",
+  "title": "Wire response: tick",
+  "type": "object",
+  "properties": {
+    "status": {
+      "const": "ticked"
+    },
+    "session_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "session_id"
+  ],
+  "additionalProperties": false
+}

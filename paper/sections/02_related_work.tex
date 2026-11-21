@@ -1,0 +1,366 @@
+\section{Related Work}
+\label{sec:related-work}
+% ================================================================================
+
+This section surveys the protocols and implementations closest to the
+Bridge Contract and states what each leaves uncovered.
+
+\subsection{Agent Transfer Protocol (AGTP)}\label{sec:rw-agtp}
+
+AGTP \cite{I-D.hood-agtp} is an application-layer protocol for AI agent
+traffic that introduces agent-native methods (among them QUERY, SUMMARIZE, EXECUTE,
+DELEGATE, CONFIRM, ESCALATE, SUSPEND, NOTIFY) and protocol-level identity
+headers including \texttt{Agent-ID}, \texttt{Owner-ID}, and
+\texttt{Authority-Scope}; \texttt{Session-ID} is an optional header.
+\texttt{Owner-ID} is the principal identifier carried in the agent
+identity document referenced by \texttt{Agent-ID} and surfaced as the
+\texttt{Owner-ID} request header when explicit wire-layer carriage is
+needed (AGTP-09 \S 2, Terminology); \texttt{Agent-ID} and \texttt{Authority-Scope}
+are also request headers (AGTP-09 \S 6). Its
+session companion \cite{I-D.hood-agtp-session} distinguishes bounded and
+persistent sessions (\S 3) and inherits identity, authority, and
+attribution from base AGTP (\S 5).
+
+AGTP defines a pause and resume pair at method level. SUSPEND
+(AGTP-09 \S 8.2.12) places a session workflow in a recoverable paused
+state and returns a single-use resumption nonce of at least 128 bits,
+an optional \texttt{resume\_by} deadline after which the session
+expires, and an optional agent-provided checkpoint that the server
+stores while the session is suspended. It is distinct from the
+lifecycle SUSPEND of the agent's registry record. The corresponding
+RESUME method is named in AGTP-09 \S 8.2.12 (the SUSPEND response
+notes that ``once presented to resume a session, the nonce is
+invalidated''), but AGTP-09 does not specify the RESUME request
+message itself. AGTP-09 lists RESUME among its Tier-2 ORCHESTRATE
+methods (\S 8.6.3). The companion vocabulary
+\cite{I-D.hood-agtp-standard-methods}, a separate draft from the AGTP
+base that could not be retrieved for this paper, is reported to list
+RESUME in its \S 8.7 (ORCHESTRATE category); we did not read it. The Bridge Contract concerns the
+case this pair does not: an abrupt detach in which no SUSPEND was
+issued. As read, AGTP-09 SUSPEND binds the resumption nonce to no
+audit position (the nonce is returned in a method response and is not
+tied to a chain sequence or a governance event), and AGTP and its
+companions define no handling of tool calls or human confirmations
+that arrive during the pause and no relation between a detach timeout
+and the human wait. AGTP positions itself as a ``narrow waist''---a
+transport-layer construct that other agent frameworks compose with
+rather than replace. AGTP does not specify what a bridge component
+sitting between a client transport and an agent runtime must do when the
+client transport disconnects while the agent continues to execute, nor
+when the human in the loop is unavailable. The Bridge Contract defines
+the execution semantics for AGTP headers in exactly those scenarios; it
+does not redefine the headers themselves.
+
+\paragraph{Why this obligation is out of AGTP's scope.}
+AGTP-09 is a transport-layer ``narrow waist''; bridge execution
+during detach is a governance obligation at a layer above it. A
+future revision that added bridge semantics would be expanding its
+scope, not filling a gap inside it.
+
+\subsection{Governance Audit Record (GAR)}\label{sec:rw-gar}
+
+GAR \cite{I-D.sato-soos-gar} defines a tamper-evident audit architecture
+comprising its audit types, the Session Audit Record (SAR), the Audit
+Alert system, and the Audit Package. GAR assumes a Governing Enforcement
+Component (GEC) that is the sole source of audit truth and that signs
+its audit artifacts, among them Session Audit Records and the Merkle
+roots of Session Blocks.
+GAR's design premise is non-suppressibility: the GEC ``MUST generate audit
+artifacts automatically, MUST sign them, and MUST NOT allow any agent,
+application, or principal to suppress, modify, or delete them''
+(GAR-08 \S 1, Introduction). The premise is sound. We
+introduce the following deployment profile to clarify the Bridge
+Contract's positioning with respect to GAR.
+
+\begin{definition}[GEC-less deployment profile]\label{def:gecless}
+A \emph{GEC-less deployment profile} is a deployment in which no
+Governing Enforcement Component (GEC) is present and in which the
+bridge is the sole emitter of governance events for sessions it
+mediates. In a GEC-less deployment the bridge's event log is the
+authoritative source of session governance events for downstream
+consumers (e.g., a SCITT transparency log or an external auditor).
+The bridge's events are emitted in a \emph{GAR-shaped} form---they
+are causally ordered, hash-chained, and serialised as canonical JSON
+(JSON Canonicalization Scheme, JCS, RFC~8785~\cite{rundgren2020json})---but
+are not signed by a GEC. The chain construction follows the Agent Audit
+Trail's \texttt{prev\_hash} over RFC~8785 (\S\ref{sec:rw-audit-trail}),
+not GAR's \texttt{prev\_span\_hash}. Event signing in a GEC-less deployment is governed
+by Invariant I-SIGN-EVENT (Section~\ref{sec:invariants-signing}).
+\end{definition}
+
+The Bridge Contract does \emph{not} claim to be a substitute for a
+GEC. In GEC-present deployments the bridge forwards events to the GEC
+for signing; the GEC remains the sole source of audit truth. In
+GEC-less deployments the bridge is the emitter, but consumers of its
+events MUST verify the operator key binding out-of-band (this paper's
+rule, by analogy with GAR \S 6.1). The Bridge Contract is thus a \emph{GAR-shaped event
+source for GEC-less deployments}, not a replacement for GAR's GEC-based
+audit architecture.
+
+\paragraph{Why this obligation is out of GAR's scope.}
+GAR-08 premises its architecture on a GEC; the GEC-less emitter is
+a deployment profile, not a GAR concern. A future revision that
+defined a GEC-less mode would be lowering its own premise, not
+filling a gap inside its scope.
+
+\subsection{Human Escalation Mechanism (HEM)}\label{sec:rw-hem}
+
+HEM \cite{I-D.sato-soos-hem} is a companion of GAR by the same author and
+defines the human side of a governed session. A trigger moves the session
+to \texttt{HEM\_PENDING} (\S 4, \S 5), during which the GEC MUST reject
+every state transition (\S 13.1). Each principal in a designation chain has
+a timeout budget with a minimum of 60 seconds and a pre-declared
+disposition: escalate to the next principal, suspend, terminate, or, under
+Cedar-gated conditions, auto-approve (\S 14.1, \S 14.2). A decision is a
+submission naming the \texttt{hem\_id}, signed with Ed25519, and admitted
+at most once; a later submission against a resolved event is rejected, and
+the exact action is checked by verifying the decision and the
+kernel-signed request jointly (\S 12.8). This overlaps the contract's
+single-use answers and its timer rules, and the contract does not present
+those mechanisms as new. HEM's absent party is the human principal, reached
+through a delivery channel, not a client transport. As read, it defines no
+queue of tool calls held while a session's client is detached, no resume
+record or re-attach proof, and no relation between a detach timeout and
+the human wait. It is written against a GEC kernel, which the bridge of
+the contract is not.
+
+\paragraph{Why this obligation is out of HEM's scope.}
+HEM-07 is the human side of a GAR-governed session; the client side
+and a non-GEC bridge component are out of its scope. A HEM profile
+that owned them would have to introduce a non-GEC component and a
+client-transport dimension; that is a scope expansion.
+
+\subsection{Protocol for Agent Communication Exchange (PACE)}\label{sec:rw-pace}
+
+PACE \cite{I-D.nandakumar-agentproto-moq-pace} defines a session protocol
+for AI agent communication over Media over QUIC Transport (MOQT). Its
+session recovery (\S 4.5) resumes a SUSPENDED session when the agent
+reconnects to the relay and re-subscribes on its agent prefix, after which
+the relay delivers cached objects from the point of disconnection; agents
+SHOULD publish state checkpoints. PACE's message-type registry (its
+Table~17) reserves \texttt{SESSION\_SUSPEND} (0x05) and
+\texttt{SESSION\_RESUME} (0x06), but, as read, defines no message body
+for either and no resume credential that a client must present; the
+\texttt{SESSION\_RESUME} row reads only ``Resume suspended session''.
+PACE also supports delegated authorization with scope narrowing on each
+delegation (\S 9.1.2); the related \S 5.1.2 concerns delegation-chain
+identity tracking, not scope narrowing. PACE presumes a relay or
+MOQT substrate that caches objects while the client is gone. PACE does not specify what happens during the detach window when
+the agent continues to execute and produces additional state that must be
+reconciled on re-attach. The Bridge Contract's Resume Record (Definition~\ref{def:rt}) is the
+bridge's own causally-pinned snapshot of a detachment, and its re-attach
+protocol (challenge-response over the last event the client saw)
+defines what a bridge checks before it replays; a bridge MAY export the
+record to a PACE-compatible relay for cross-vendor or cross-relay
+interoperation, as a non-authoritative snapshot; that export is optional and not
+specified here, so the cross-vendor case is aspirational until a second
+implementation exists. Intra-PACE recovery---where the same relay
+holds the suspended session throughout---does not require the Bridge
+Contract's resume record; the contract is necessary only
+when the suspension window spans relay restarts, vendor handoff, or
+cross-relay re-attach. The Bridge Contract thus complements PACE: PACE
+describes relay-level reconnection (\S 4.5); the Bridge Contract specifies ``what
+happened during the detach'' for the cross-vendor case.
+
+\paragraph{Why this obligation is out of PACE's scope.}
+PACE-00 is resumption over MOQT; bridge governance during absence is
+a different layer. A PACE profile that owned the Bridge Contract's
+obligations would have to specify a non-relay bridge component, a
+governance event log, and a challenge-response proof tied to that
+log; that is a different architecture from MOQT relaying.
+
+\subsection{Agent Audit Trail}\label{sec:rw-audit-trail}
+
+The Agent Audit Trail \cite{I-D.sharif-agent-audit-trail} defines a
+record format with registered action types (among them \texttt{tool\_call},
+\texttt{decision}, \texttt{delegation}, \texttt{escalation} and
+\texttt{lifecycle}), outcomes (success, failure, timeout, denied,
+escalated), trust levels L0--L4, and a chain in which \texttt{prev\_hash}
+is the SHA-256 of the canonical JSON (RFC~8785) of the previous record
+(\S 6, \S 8.2). It is session-structured: a session begins with a genesis
+record and ends with a close record carrying a session hash (\S 8.1,
+\S 8.3); lifecycle records can log pause and resume (\S 7); a record can be
+written before the action it authorises (\S 4); and a crash is documented by
+a recovery record or a synthetic close for an orphaned session
+(\S 8.2, \S 8.3). What it specifies is the record and the chain. As read, it
+defines no proof that a re-attaching client saw a given prefix of the chain,
+no queue of calls awaiting a human while the client is away, and no timers
+for that wait. The Bridge Contract's events chain the same way
+(\texttt{prev\_hash} over canonical JSON) but carry a per-session
+\texttt{sequence} number rather than a \texttt{parent\_record\_id}; no
+mapping between the two schemas is specified here. The contract adds the
+session-level state machine, the resume record and the re-attach protocol.
+
+\paragraph{Why this obligation is out of the Agent Audit Trail's scope.}
+The Agent Audit Trail is a record format and chain; bridge execution
+and re-attach proof are session-protocol concerns at a different
+layer.
+
+\subsection{Agent-to-Agent (A2A) and Model Context Protocol (MCP)}
+
+A2A defines a task lifecycle that includes an \texttt{input-required}
+state (not pinned in the source manifest), which overlaps the Bridge Contract's \texttt{HUMAN\_PENDING}
+cell. MCP's Streamable HTTP transport defines session identifiers,
+session termination, and \texttt{Last-Event-ID} resumability (not
+pinned in the source manifest), which
+overlaps the Bridge Contract's re-attach mechanism. Neither A2A nor
+MCP specifies what a bridge component MUST do during client detach,
+including durable event logging, queue management, timer-driven
+termination, or challenge-response re-attach pinned to an audit
+chain. The Bridge Contract complements both: A2A and MCP define the
+messaging and task lifecycle; the Bridge Contract defines the
+session-governance obligations of an intermediary that holds them
+during detach.
+
+\subsection{Herdr}
+
+Herdr \cite{herdr-product} is a product (Apache-2.0, Rust-based) that
+keeps terminals running in a background server when the client
+disconnects, restores the saved layout and can resume supported agent
+sessions after a restart, offers an experimental live handoff, and keeps
+layout snapshots. It is an implementation, not a specification. Its
+documentation (version~0.9.5) names \texttt{session.json} and the
+snapshot files but, as read, gives no schema, compatibility promise or
+conformance criteria for them, and snapshots hold layout and agent session
+references, not running processes or history. We use it as
+evidence of demand for the bridge responsibility class; the relationship
+is one of specification to implementation, not competition.
+
+\subsection{AgentThread}\label{sec:rw-agtp-thread}
+
+AgentThread \cite{zheng2026formal} (Zheng et al., arXiv:2606.28690) is a
+source-linked framework for security assurance analysis of agent
+protocols that compiles specification text into TLA+-style checks and
+replays counterexamples against SDKs. Its central finding is that no
+protocol assigns enforcement for cross-protocol behaviour, a
+responsibility gap across protocols, SDKs, and deployments. This
+motivates the Bridge Contract; it is not a result about AGTP, GAR or PACE.
+AgentThread analyses the protocols MCP, A2A, ANP, and two different
+protocols both abbreviated ``ACP'' in the source paper --- the
+\emph{Agent Communication Protocol} (ACP) and the \emph{Agent Client
+Protocol} (ACP-Client). Throughout this document, ``ACP'' means the
+\emph{Agent Client Protocol} (the protocol whose
+\texttt{session/request\_permission} the bridge may see, see
+Section~\ref{sec:coverage}); the AgentThread paper itself uses
+``ACP-Client'' for that protocol and ``ACP'' for the Agent Communication
+Protocol. AgentThread provides the
+analysis but no specification; the Bridge Contract specifies one class of
+the orphaned obligations, those at the bridge layer.
+
+\subsection{Precedents}
+
+Several techniques used by the Bridge Contract have well-established
+precedents that this document does not claim as novel:
+
+\begin{itemize}[leftmargin=2em]
+\item \textbf{Ack-and-replay resumption.} XMPP stream management
+(XEP-0198) and sequence-numbered gateway RESUME protocols use
+acknowledgement and replay to recover from transport disconnect.
+The Bridge Contract's re-attach replay (I4) is in the same family,
+but adds challenge-response authentication and hash-chain prefix
+verification, which XEP-0198 does not.
+\item \textbf{Tamper-evident logging.} Crosby and Wallach's
+work on append-only logs, RFC~6962 (Certificate Transparency), and
+RFC~9162 (Certificate Transparency v2) define Merkle-tree-based
+tamper-evidence. The Bridge Contract's I5 hash chain and
+I-CHECKPOINT Merkle root follow the same construction; the
+contribution is the integration with session governance, not the
+Merkle tree itself.
+\item \textbf{Durable execution and checkpoint-and-interrupt.}
+Workflow engines and durable-execution frameworks checkpoint state
+and resume after interruptions. The Bridge Contract's resume record
+and restart recovery are in the same family, but add the
+session-governance invariants (authority lock, queue integrity,
+answer binding) that workflow engines do not specify.
+\item \textbf{AgentRFC.} AgentRFC (arXiv:2603.23801) is named here
+as related prior art on agent protocol composition; it was not read
+for this paper and no claim is made about its contents.
+\end{itemize}
+
+\subsection{Non-duplication statement}
+
+Each protocol above leaves a bridge obligation uncovered: AGTP has
+transport headers but no bridge execution during detach; GAR assumes a
+GEC as sole event source (see Definition~\ref{def:gecless}); PACE describes relay-level
+reconnection (\S 4.5) but not the detach window; HEM specifies human escalation for a
+governed object but not a detached client; A2A and MCP operate above the
+session layer. Herdr is a product and AgentThread an analysis, neither a
+specification. The ``Why this obligation is out of <draft>'s scope''
+paragraphs in \S\ref{sec:rw-agtp}, \S\ref{sec:rw-gar},
+\S\ref{sec:rw-hem}, \S\ref{sec:rw-pace} and the Agent Audit Trail
+subsection argue that this is structural (a scope mismatch), not
+historical (a gap that a future revision might fill): a future
+revision of any of these drafts that owned the Bridge Contract's
+obligations would be expanding its scope, not closing a gap inside
+it. That argument is what makes the non-duplication claim robust to
+future revisions of the cited drafts.
+
+\paragraph{Comparison table.}
+Table~\ref{tab:comparison} states, for each cited source, what the Bridge
+Contract adds and whether that addition is necessary (no other draft
+provides it) or a design choice (the draft could have been extended to
+provide it). What each source requires and leaves open is in the
+subsections above, and the obligation-by-obligation comparison, with its
+method, is the matrix in Section~\ref{sec:mapping}. Every entry is pinned to
+the version listed in \texttt{paper/sources/MANIFEST.md}.
+
+\begin{table}[htbp]
+\centering
+\caption{What the Bridge Contract adds to each cited source, and whether
+the addition is necessary or a design choice.}
+\label{tab:comparison}
+\footnotesize
+\begin{tabularx}{\columnwidth}{l X X}
+\toprule
+\textbf{Draft} & \textbf{Bridge Contract adds} & \textbf{Necessary?} \\
+\midrule
+AGTP-09 &
+A bridge-side state machine, the resume record bound to a chain
+position (I1, I4), and the challenge-response re-attach that uses it. &
+Necessary (scope, §\ref{sec:rw-agtp}): AGTP-09 is a transport narrow waist; bridge execution during detach is a layer above it. \\
+AGTP standard-methods-01 (\S 8.7) &
+The challenge-response re-attach that does not require a prior SUSPEND,
+and that pins the prefix the client last saw. &
+Necessary (scope, §\ref{sec:rw-agtp}): the companion draft is reported to list a RESUME method for a suspended session (not read); the contract resumes one that was detached without a SUSPEND, which is a different layer. \\
+AGTP-SESSION-00 &
+$T_{\text{detach}}$, $T_{\text{total}}$, $T_{\text{human}}$ and the
+detach/re-attach state machine. &
+Necessary (scope, §\ref{sec:rw-agtp}): AGTP-SESSION governs session establishment, not bridge execution during the detach window. \\
+AGTP-BINDINGS-00 &
+Invariant I8, which makes the bridge reject any re-attach the transport
+reports as a replay. &
+Design choice: the binding could in principle extend to specify the
+bridge-layer consequence; the contract states it directly. \\
+GAR-08 &
+The GEC-less deployment profile (Definition~\ref{def:gecless}) and the
+bridge as the event source for that case, emitting in GAR shape. &
+Necessary (scope, §\ref{sec:rw-gar}): GAR is an audit architecture premised on a GEC; the GEC-less emitter is a deployment profile, not a GAR concern. \\
+HEM-07 &
+The tool-call queue (I2, I13), the answer binding (I14), and the
+challenge-response re-attach. &
+Necessary (scope, §\ref{sec:rw-hem}): HEM is the human side of a GAR-governed session; the client side and a non-GEC bridge component are out of HEM's scope. \\
+PACE-00 &
+The resume record $R$ (Definition~\ref{def:rt}) and the
+challenge-response re-attach that pins the prefix the client last saw. &
+Necessary (scope, §\ref{sec:rw-pace}): PACE is resumption over MOQT; bridge governance during absence is a different layer. \\
+Agent Audit Trail-01 &
+The challenge-response re-attach pinned to the prefix (I4) and the
+tool-call queue with its timers (I2, I13). &
+Necessary (scope, §\ref{sec:rw-audit-trail}): the audit trail is a record format and chain; bridge execution and re-attach proof are session-protocol concerns. \\
+Herdr 0.9.5 &
+A specification with conformance criteria. &
+Design choice: a product could publish its format as a de-facto
+standard; the contract chooses to specify the bridge obligations
+abstractly. \\
+AgentThread (arXiv:2606.28690) &
+A specification of one class of those obligations, at the bridge layer. &
+Necessary: AgentThread is an analysis framework, not a specification. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The table reads each cited draft at the version listed in
+\texttt{paper/sources/MANIFEST.md}. The ``Necessary'' column marks an
+addition that no cited draft provides; ``Design choice'' marks one that
+could in principle have been added to an existing draft but is stated
+here for clarity.

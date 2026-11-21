@@ -1,0 +1,77 @@
+% BACKMATTER:VERSION:START
+\section*{Version Statement}
+
+This is version~0.10.2 of the manuscript, dated
+2026-11-21, prepared for Zenodo
+deposit as a preprint.
+% BACKMATTER:VERSION:END
+
+\section*{Data availability}
+\addcontentsline{toc}{section}{Data availability}
+
+This document is a normative specification; no empirical data about deployments is
+used; the measurements in Section~\ref{sec:conformance} are synthetic. The evidence is executable and is deposited with the paper in a
+single Zenodo record: the PDF and an archive of the source tree at the
+release tagged \texttt{v0.10.2}. The archive contains the conformance suite and Hypothesis
+properties (T1--T158), the mutation check, the test vectors and their runner,
+the Rust crate, the TLA+ model with its TLC configurations, and the event
+schemas. The same tree is published at
+\url{https://github.com/strebulaev-articles/articles.bridge_contract_for_agent_session_governance.public};
+the Zenodo record is the citable snapshot of tag \texttt{v0.10.2}. The paper text is released under
+CC-BY-4.0 and the code under the MIT licence (files \texttt{LICENSE} and
+\texttt{LICENSE-CODE}).
+
+The \texttt{paper/sources/} directory of the archive holds the source
+texts that were read for the bibliography and the mapping tables, with a
+manifest (\texttt{paper/sources/MANIFEST.md}) listing the URL and the
+SHA-256 of each version cited. Those source texts are the IETF
+Internet-Drafts, the arXiv preprint, and the Herdr documentation and
+licence; they are reproduced here only as the working copies that were
+verified by hash, and they remain the property of their respective
+authors under their respective licences (the IETF Trust's provisions for
+Internet-Drafts, the arXiv non-exclusive licence, the Apache-2.0
+licence for Herdr). They are not deposited under the CC-BY-4.0 or MIT
+terms that cover the rest of this archive.
+
+To reproduce the reported results from the archive, run in
+\texttt{paper/supplementary}: \texttt{python3 -I -m pytest
+conformance\_suite.py -q}, \texttt{python3 -I mutation\_check.py},
+\texttt{python3 -I run\_vectors.py -{}-check-paper
+../sections/generated\_vectors.tex}, and \texttt{cargo test} in
+\texttt{rust-bridge}. The model-checking commands and configurations
+are in \texttt{formal-spec/README.md}.
+
+\section*{AI use}
+\addcontentsline{toc}{section}{AI use}
+
+AI tools were used during the preparation of this manuscript for
+grammatical correction and technical formatting (sentence structure for
+academic tone, formatting of the bibliographic references), for code
+generation, and for review of the text and the citations. The
+supplementary code (conformance suite, mutation check, vector runner,
+Rust crate, TLA+ model and event schemas) was written with AI
+assistance. The bibliography was checked against the cited sources by
+the human author, who read each cited draft at the version recorded in
+\texttt{paper/sources/MANIFEST.md} and verified the cited section
+numbers against the text. One entry (the companion
+\cite{I-D.hood-agtp-standard-methods} vocabulary, which expired on
+2026-10-18) is cited on the strength of an automated retrieval that
+confirmed the draft's title and section structure but did not yield a
+hashable byte stream; this limitation is recorded in the manifest, and
+rows in the comparison table (Table~\ref{tab:comparison}) that depend
+on that entry are marked accordingly. AI was not employed for
+literature synthesis, data analysis, or the generation of the core
+ideas, hypotheses, and scientific conclusions. The human author
+retains full responsibility for the content; they reviewed the edited
+text to ensure terminological precision and performed bibliographic
+verification of the entries the manifest records.
+
+\section*{Competing interests}
+\addcontentsline{toc}{section}{Competing interests}
+
+The author develops Termenbox, the proprietary, free-to-use, self-hosted web terminal for
+AI coding agents to which the contract was mapped (Section~\ref{sec:impl}
+and the mapping in Section~\ref{sec:mapping}) and which may adopt the
+specification: adoption is intended and not scheduled. The specification is written to be implementation-agnostic;
+the interest is disclosed so that readers can weigh the Termenbox findings
+accordingly.

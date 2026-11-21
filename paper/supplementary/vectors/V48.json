@@ -1,0 +1,28 @@
+{
+  "id": "V48",
+  "title": "Wire: delivered then completed — forwarding acknowledgement chain",
+  "covers": ["I12", "I13"],
+  "session": {
+    "session_id": "sess-48",
+    "principal_id": "user-frank",
+    "authority_scope": ["exec:shell"],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {"do": "escalate"},
+    {"do": "tool_call", "tool": "shell:ls", "key": "k1", "permission": "exec:shell", "content": {"cmd": "ls"}},
+    {"do": "answer", "key": "k1", "answer": "approve"},
+    {"do": "resolve"},
+    {"do": "delivered", "key": "k1"},
+    {"do": "completed", "key": "k1"}
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED", "HUMAN_PENDING", "TOOL_CALL_QUEUED",
+      "TOOL_CALL_ANSWERED", "HUMAN_RESOLVED", "TOOL_CALL_DRAINED",
+      "TOOL_CALL_DELIVERED", "TOOL_CALL_COMPLETED"
+    ],
+    "cell": ["Att", "None"],
+    "scope_version": 0
+  }
+}

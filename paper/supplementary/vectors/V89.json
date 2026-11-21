@@ -1,0 +1,47 @@
+{
+  "id": "V89",
+  "title": "Checkpoint emitted when the time threshold is reached",
+  "covers": [
+    "I-CHECKPOINT"
+  ],
+  "config": {
+    "n_checkpoint": 999999,
+    "t_checkpoint": 100
+  },
+  "session": {
+    "session_id": "sess-89",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "requires": [
+    "checkpoint"
+  ],
+  "actions": [
+    {
+      "do": "escalate"
+    },
+    {
+      "do": "advance",
+      "seconds": 100
+    },
+    {
+      "do": "tick"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "HUMAN_PENDING",
+      "CHECKPOINT"
+    ],
+    "cell": [
+      "Att",
+      "Pend"
+    ],
+    "scope_version": 0
+  }
+}

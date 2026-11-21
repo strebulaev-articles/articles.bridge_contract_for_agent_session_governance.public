@@ -1,0 +1,56 @@
+{
+  "id": "V102",
+  "title": "Recovery repairs a registered public key that differs from the one in the log",
+  "covers": [
+    "I11",
+    "I12",
+    "recovery",
+    "registry-log"
+  ],
+  "session": {
+    "session_id": "sess-102",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "tamper_registry",
+      "client": "ck-1",
+      "how": "other-key"
+    },
+    {
+      "do": "restart"
+    },
+    {
+      "do": "reattach"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "BRIDGE_RECOVERED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "quarantined": false,
+    "registry": [
+      "ck-1"
+    ]
+  }
+}

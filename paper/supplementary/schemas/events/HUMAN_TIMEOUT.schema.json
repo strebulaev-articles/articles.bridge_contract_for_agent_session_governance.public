@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/HUMAN_TIMEOUT.schema.json",
+  "title": "HUMAN_TIMEOUT payload",
+  "x-invariants": "L2",
+  "description": "T_human expired.",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "enum": [
+        "human_timeout"
+      ],
+      "description": "Reason code."
+    }
+  },
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false
+}

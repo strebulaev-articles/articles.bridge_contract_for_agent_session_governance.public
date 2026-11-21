@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/TOOL_CALL_COMPLETED.schema.json",
+  "title": "TOOL_CALL_COMPLETED payload",
+  "x-invariants": "I13",
+  "description": "The runtime reported that a forwarded call finished.",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string"
+    },
+    "result_hash": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "key"
+  ],
+  "additionalProperties": false
+}

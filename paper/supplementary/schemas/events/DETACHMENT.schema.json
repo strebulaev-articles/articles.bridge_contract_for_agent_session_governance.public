@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/DETACHMENT.schema.json",
+  "title": "DETACHMENT payload",
+  "x-invariants": "I1",
+  "description": "Last connected client left, or the bridge restarted.",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "enum": [
+        "client_disconnect",
+        "bridge_restart",
+        "key_revoked"
+      ],
+      "description": "Reason code."
+    }
+  },
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,66 @@
+{
+  "id": "V71",
+  "title": "A revoked key stays revoked across a restart",
+  "covers": [
+    "I11-REVOKE",
+    "B.4",
+    "I12"
+  ],
+  "session": {
+    "session_id": "sess-71",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "rotation"
+    },
+    {
+      "do": "restart"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1",
+      "error": true
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "KEY_REVOKED",
+      "BRIDGE_RECOVERED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_REJECTED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-2"
+    ],
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": false
+  }
+}

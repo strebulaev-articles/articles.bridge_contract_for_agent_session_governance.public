@@ -1,0 +1,48 @@
+{
+  "id": "V106",
+  "title": "A client registration signed by another holder of the key id is refused and the stranger cannot join",
+  "covers": [
+    "I11",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-106",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2",
+      "proof": "forged",
+      "error": true,
+      "reason": "bad_signature"
+    },
+    {
+      "do": "join",
+      "client": "ck-2",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "RESUME_REJECTED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1"
+    ],
+    "last_event_payload": {
+      "reason": "unknown_key"
+    }
+  }
+}

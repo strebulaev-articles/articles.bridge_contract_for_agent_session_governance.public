@@ -1,0 +1,72 @@
+{
+  "id": "V72",
+  "title": "Key exhaustion and the recovery key are rebuilt from the log after restarts",
+  "covers": [
+    "I11-REVOKE",
+    "B.4",
+    "I12"
+  ],
+  "session": {
+    "session_id": "sess-72",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise"
+    },
+    {
+      "do": "restart"
+    },
+    {
+      "do": "escalate",
+      "error": true
+    },
+    {
+      "do": "operator_add_key",
+      "client": "ck-2"
+    },
+    {
+      "do": "restart"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "KEY_REVOKED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "BRIDGE_RECOVERED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "OPERATOR_ADD_KEY",
+      "BRIDGE_RECOVERED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-2"
+    ],
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": false
+  }
+}

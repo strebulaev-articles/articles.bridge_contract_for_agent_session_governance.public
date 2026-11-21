@@ -1,0 +1,52 @@
+{
+  "id": "V86",
+  "title": "Keyless challenges cannot evict the nonce a genuine client holds",
+  "covers": [
+    "I11",
+    "I11f"
+  ],
+  "session": {
+    "session_id": "sess-86",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "challenge",
+      "as": "genuine"
+    },
+    {
+      "do": "challenge",
+      "times": 15
+    },
+    {
+      "do": "challenge",
+      "error": true
+    },
+    {
+      "do": "reattach",
+      "nonce": "genuine"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0
+  }
+}

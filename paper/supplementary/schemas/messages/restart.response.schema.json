@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/restart.response.schema.json",
+  "title": "Wire response: restart",
+  "type": "object",
+  "properties": {
+    "status": {
+      "const": "restarted"
+    },
+    "session_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "session_id"
+  ],
+  "additionalProperties": false
+}

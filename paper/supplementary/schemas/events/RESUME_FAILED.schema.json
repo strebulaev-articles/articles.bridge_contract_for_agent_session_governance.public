@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/RESUME_FAILED.schema.json",
+  "title": "RESUME_FAILED payload",
+  "x-invariants": "I5",
+  "description": "Chain verification failed during re-attach. The session is quarantined: its cell is unchanged, it accepts no client operation and no timer acts on it.",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "enum": [
+        "chain"
+      ],
+      "description": "Reason code."
+    }
+  },
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false
+}

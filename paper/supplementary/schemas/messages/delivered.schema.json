@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/delivered.schema.json",
+  "title": "Wire op: delivered",
+  "type": "object",
+  "properties": {
+    "op": {
+      "const": "delivered"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "key": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "op",
+    "session_id",
+    "key"
+  ],
+  "additionalProperties": false
+}

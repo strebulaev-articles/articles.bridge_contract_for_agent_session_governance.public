@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/HUMAN_RESOLVED.schema.json",
+  "title": "HUMAN_RESOLVED payload",
+  "x-invariants": "I13",
+  "description": "Human resolution; valid_until bounds the approval validity (I13) when present.",
+  "type": "object",
+  "properties": {
+    "valid_until": {
+      "type": "number"
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}

@@ -1,0 +1,52 @@
+{
+  "id": "V130",
+  "title": "A bare terminate is refused on a key-exhausted session; only the operator's signed termination ends it",
+  "covers": [
+    "I11-REVOKE",
+    "I6",
+    "key-exhausted-terminate"
+  ],
+  "session": {
+    "session_id": "sess-130",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "revoke",
+      "client": "ck-1"
+    },
+    {
+      "do": "terminate",
+      "error": true,
+      "wire_reason": "key_exhausted",
+      "then_cell": [
+        "Att",
+        "None"
+      ]
+    },
+    {
+      "do": "operator_terminate"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "KEY_REVOKED",
+      "OPERATOR_TERMINATION",
+      "TERMINATION"
+    ],
+    "cell": [
+      "Terminated"
+    ],
+    "scope_version": 0,
+    "key_exhausted": true,
+    "revoked": [
+      "ck-1"
+    ]
+  }
+}

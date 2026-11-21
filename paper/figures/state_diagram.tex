@@ -1,0 +1,36 @@
+% Derived view of named states (Table of cells in the appendix). Drawn from
+% the transition table of the product machine; keep the two in step.
+\begin{tikzpicture}[
+  font=\footnotesize,
+  st/.style={draw, rounded corners=3pt, thick, minimum width=2.6cm,
+             minimum height=0.9cm, align=center, font=\footnotesize\bfseries},
+  ed/.style={-{Stealth[length=2.2mm]}, thick},
+  lb/.style={font=\scriptsize, fill=white, inner sep=1pt, align=center},
+]
+\node[st, fill=blue!8]   (att)  at (0,0)     {ATTACHED};
+\node[st, fill=purple!8] (pend) at (8,0)     {PENDING\_HUMAN};
+\node[st, fill=gray!20]  (term) at (14,-2.6) {TERMINATED};
+\node[st, fill=yellow!20](det)  at (0,-5.2)  {DETACHED};
+\node[st, fill=green!10] (res)  at (8,-5.2)  {RESUMING};
+
+\draw[ed] (att) -- node[lb] {last client\\disconnects} (det);
+\draw[ed] ([yshift=4pt]att.east) -- node[lb, above=1pt] {escalation} ([yshift=4pt]pend.west);
+\draw[ed] ([yshift=-4pt]pend.west) -- node[lb, below=1pt] {human resolves (attached)} ([yshift=-4pt]att.east);
+\draw[ed] ([yshift=4pt]det.east) -- node[lb, above=1pt] {re-attach request} ([yshift=4pt]res.west);
+\draw[ed] ([yshift=-4pt]res.west) -- node[lb, below=1pt] {client leaves during verification} ([yshift=-4pt]det.east);
+\draw[ed] (res.north west) -- node[lb, pos=0.16, xshift=-4pt] {verified,\\no escalation} (att.south east);
+\draw[ed, {Stealth[length=2.2mm]}-{Stealth[length=2.2mm]}] (det.north east) -- node[lb, pos=0.16, xshift=4pt] {escalation /\\resolution\\while detached} (pend.south west);
+\draw[ed] ([xshift=-4pt]pend.south) -- node[lb, left=1pt] {re-attach request,\\escalation pending} ([xshift=-4pt]res.north);
+\draw[ed] ([xshift=4pt]res.north) -- node[lb, right=1pt] {verified,\\escalation pending} ([xshift=4pt]pend.south);
+\draw[ed] (pend.east) -- node[lb, pos=0.45, above right] {$T_{\mathrm{human}}$\\exceeded} (term.north west);
+\draw[ed] (det.south) -- ++(0,-3.6) -| (term.south);
+\node[lb, anchor=south] at (3.3,-9.25) {$T_{\mathrm{detach}}$ or $T_{\mathrm{total}}$ exceeded};
+
+\draw[ed] (att.north west) to[out=120, in=60, looseness=5]
+  node[lb, above] {join, add key} (att.north east);
+% Quarantine self-loop on RESUMING: drawn on the right side of RESUMING
+% so it does not visually overlap the $T_{\mathrm{detach}}$ arrow that
+% runs from DETACHED down and across to TERMINATED.
+\draw[ed] (res.north east) to[out=60, in=120, looseness=8]
+  node[lb, right=2pt, align=left] {verification fails:\\quarantine (rule~Q)} (res.north west);
+\end{tikzpicture}

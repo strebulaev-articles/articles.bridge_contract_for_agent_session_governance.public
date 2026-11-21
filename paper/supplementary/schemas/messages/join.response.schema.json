@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/join.response.schema.json",
+  "title": "Wire response: join",
+  "type": "object",
+  "properties": {
+    "status": {
+      "const": "joined"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "required": [
+    "status",
+    "session_id",
+    "events"
+  ],
+  "additionalProperties": false
+}

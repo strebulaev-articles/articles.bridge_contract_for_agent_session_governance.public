@@ -1,0 +1,27 @@
+{
+  "id": "V52",
+  "title": "Checkpoint emitted by the event threshold, with a tool call queued",
+  "requires": ["checkpoint"],
+  "covers": ["I-CHECKPOINT"],
+  "session": {
+    "session_id": "sess-52",
+    "principal_id": "user-alice",
+    "authority_scope": ["read:docs", "exec:shell"],
+    "client_key_id": "ck-1"
+  },
+  "config": {
+    "n_checkpoint": 3,
+    "t_checkpoint": 999999
+  },
+  "actions": [
+    {"do": "escalate"},
+    {"do": "tool_call", "tool": "shell:ls", "key": "k1", "permission": "exec:shell", "content": {"cmd": "ls"}}
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED", "HUMAN_PENDING", "TOOL_CALL_QUEUED", "CHECKPOINT"
+    ],
+    "cell": ["Att", "Pend"],
+    "scope_version": 0
+  }
+}

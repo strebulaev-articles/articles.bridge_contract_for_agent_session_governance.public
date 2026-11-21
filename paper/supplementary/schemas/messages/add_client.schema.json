@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/add_client.schema.json",
+  "title": "Wire op: add_client",
+  "type": "object",
+  "properties": {
+    "op": {
+      "const": "add_client"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "via_key_id": {
+      "type": "string"
+    },
+    "new_key_id": {
+      "type": "string"
+    },
+    "scheme": {
+      "type": "string"
+    },
+    "new_public_key": {
+      "type": "string",
+      "pattern": "^[0-9a-f]+$"
+    },
+    "nonce": {
+      "type": "string",
+      "description": "Challenge nonce, single use."
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[0-9a-f]+$",
+      "description": "Signature by via_key_id over canonical JSON of [\"bc/v1/add-client\", session_id, via_key_id, new_key_id, scheme, new_public_key, nonce]."
+    }
+  },
+  "required": [
+    "op",
+    "session_id",
+    "via_key_id",
+    "new_key_id",
+    "scheme",
+    "new_public_key",
+    "nonce",
+    "signature"
+  ],
+  "additionalProperties": false
+}

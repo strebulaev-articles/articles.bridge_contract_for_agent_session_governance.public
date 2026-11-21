@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/challenge.schema.json",
+  "title": "Wire op: challenge",
+  "type": "object",
+  "properties": {
+    "op": {
+      "const": "challenge"
+    },
+    "session_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "op",
+    "session_id"
+  ],
+  "additionalProperties": false
+}

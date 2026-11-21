@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/DETACH_TIMEOUT.schema.json",
+  "title": "DETACH_TIMEOUT payload",
+  "x-invariants": "L1",
+  "description": "T_detach expired while detached, or the time spent detached over all episodes reached T_total.",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "enum": [
+        "detach_timeout",
+        "detach_total_timeout"
+      ],
+      "description": "Reason code."
+    }
+  },
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false
+}

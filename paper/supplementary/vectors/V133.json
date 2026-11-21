@@ -1,0 +1,62 @@
+{
+  "id": "V133",
+  "title": "A re-attach with a nonce issued for another session is refused and the owner then re-attaches",
+  "covers": [
+    "I11",
+    "I15",
+    "registry-scope"
+  ],
+  "session": {
+    "session_id": "sess-133",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "attach_other",
+      "session_id": "sess-133b",
+      "client": "ck-1"
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1",
+      "nonce": "other-session",
+      "from_session": "sess-133b",
+      "error": true
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_REJECTED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1"
+    ],
+    "other_events": {
+      "sess-133b": [
+        "ATTACHED"
+      ]
+    }
+  }
+}

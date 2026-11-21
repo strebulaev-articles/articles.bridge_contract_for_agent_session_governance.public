@@ -1,0 +1,49 @@
+{
+  "id": "V128",
+  "title": "After a refused re-attach on an attached session, join is the way in",
+  "covers": [
+    "I11",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-128",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2",
+      "error": true
+    },
+    {
+      "do": "join",
+      "client": "ck-2"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "RESUME_REJECTED",
+      "CLIENT_JOINED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1",
+      "ck-2"
+    ]
+  }
+}

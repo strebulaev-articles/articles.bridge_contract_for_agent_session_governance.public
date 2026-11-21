@@ -1,0 +1,531 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/message.schema.json",
+  "title": "Bridge Contract client-bridge wire message (envelope)",
+  "description": "Envelope for all client->bridge requests. The `op` field selects the op-type; the op-specific fields are validated by the per-op schemas in messages/<op>.schema.json. Responses use `status` instead of `op`; see messages/<op>.response.schema.json and messages/error.schema.json.",
+  "type": "object",
+  "properties": {
+    "op": {
+      "enum": [
+        "attach",
+        "add_client",
+        "challenge",
+        "reattach",
+        "join",
+        "disconnect",
+        "escalate",
+        "resolve",
+        "submit_tool_call",
+        "answer_tool_call",
+        "delivered",
+        "completed",
+        "narrow",
+        "extend",
+        "revoke",
+        "add_key",
+        "operator_terminate",
+        "terminate",
+        "tick",
+        "restart"
+      ],
+      "description": "The op-type; selects the op-specific fields."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "The session the request targets. Absent only for `restart` (bridge-level) and `tick` without a session (all sessions)."
+    }
+  },
+  "required": [
+    "op"
+  ],
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "attach"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "principal": {},
+          "scope": {},
+          "lineage": {},
+          "key_id": {},
+          "scheme": {},
+          "public_key": {},
+          "grant": {},
+          "signature": {}
+        },
+        "required": [
+          "session_id",
+          "principal",
+          "scope",
+          "lineage",
+          "key_id",
+          "scheme",
+          "public_key",
+          "grant",
+          "signature"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "add_client"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "via_key_id": {},
+          "new_key_id": {},
+          "scheme": {},
+          "new_public_key": {},
+          "nonce": {},
+          "signature": {}
+        },
+        "required": [
+          "session_id",
+          "via_key_id",
+          "new_key_id",
+          "scheme",
+          "new_public_key",
+          "nonce",
+          "signature"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "challenge"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {}
+        },
+        "required": [
+          "session_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "reattach"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "key_id": {},
+          "nonce": {},
+          "seq": {},
+          "hash": {},
+          "signature": {}
+        },
+        "required": [
+          "session_id",
+          "key_id",
+          "nonce",
+          "seq",
+          "hash",
+          "signature"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "join"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "key_id": {},
+          "nonce": {},
+          "seq": {},
+          "hash": {},
+          "signature": {}
+        },
+        "required": [
+          "session_id",
+          "key_id",
+          "nonce",
+          "seq",
+          "hash",
+          "signature"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "disconnect"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "key_id": {},
+          "reason": {}
+        },
+        "required": [
+          "session_id",
+          "reason"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "escalate"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "trigger": {}
+        },
+        "required": [
+          "session_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "resolve"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {}
+        },
+        "required": [
+          "session_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "submit_tool_call"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "tool": {},
+          "key": {},
+          "permission": {},
+          "content": {}
+        },
+        "required": [
+          "session_id",
+          "tool",
+          "content"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "answer_tool_call"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "key": {},
+          "shown_hash": {},
+          "decision": {}
+        },
+        "required": [
+          "session_id",
+          "key",
+          "shown_hash",
+          "decision"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "delivered"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "key": {}
+        },
+        "required": [
+          "session_id",
+          "key"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "completed"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "key": {},
+          "result_hash": {}
+        },
+        "required": [
+          "session_id",
+          "key"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "narrow"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "new_scope": {}
+        },
+        "required": [
+          "session_id",
+          "new_scope"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "extend"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "new_scope": {},
+          "source": {}
+        },
+        "required": [
+          "session_id",
+          "new_scope",
+          "source"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "revoke"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "key_id": {},
+          "reason": {},
+          "signature": {},
+          "requested_by": {}
+        },
+        "required": [
+          "session_id",
+          "key_id",
+          "reason"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "add_key"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "key_id": {},
+          "scheme": {},
+          "public_key": {},
+          "signature": {}
+        },
+        "required": [
+          "session_id",
+          "key_id",
+          "scheme",
+          "public_key"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "operator_terminate"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "reason": {},
+          "signature": {}
+        },
+        "required": [
+          "session_id",
+          "reason"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "terminate"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {},
+          "reason": {}
+        },
+        "required": [
+          "session_id",
+          "reason"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "tick"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {
+          "session_id": {}
+        },
+        "required": []
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "op": {
+            "const": "restart"
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "then": {
+        "properties": {},
+        "required": []
+      }
+    }
+  ]
+}

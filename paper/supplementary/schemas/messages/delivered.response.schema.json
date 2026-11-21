@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/delivered.response.schema.json",
+  "title": "Wire response: delivered",
+  "type": "object",
+  "properties": {
+    "status": {
+      "const": "delivered"
+    },
+    "session_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "session_id"
+  ],
+  "additionalProperties": false
+}

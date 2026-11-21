@@ -1,0 +1,23 @@
+{
+  "id": "V100",
+  "title": "Attach with a grant made for another bridge is refused as grant_invalid",
+  "covers": [
+    "I-GRANT",
+    "attach-possession"
+  ],
+  "session": {
+    "session_id": "sess-100",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1",
+    "grant": "other-bridge"
+  },
+  "expect": {
+    "attach_refused": true,
+    "attach_reason": "grant_invalid"
+  },
+  "actions": []
+}

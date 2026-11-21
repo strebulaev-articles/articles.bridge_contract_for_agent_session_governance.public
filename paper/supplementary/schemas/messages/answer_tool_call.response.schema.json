@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/answer_tool_call.response.schema.json",
+  "title": "Wire response: answer_tool_call",
+  "type": "object",
+  "properties": {
+    "status": {
+      "const": "answered"
+    },
+    "session_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "session_id"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,28 @@
+{
+  "id": "V53",
+  "title": "Checkpoint emitted by the time threshold on a tick",
+  "requires": ["checkpoint"],
+  "covers": ["I-CHECKPOINT"],
+  "session": {
+    "session_id": "sess-53",
+    "principal_id": "user-alice",
+    "authority_scope": ["read:docs"],
+    "client_key_id": "ck-1"
+  },
+  "config": {
+    "n_checkpoint": 999999,
+    "t_checkpoint": 100
+  },
+  "actions": [
+    {"do": "escalate"},
+    {"do": "advance", "seconds": 100},
+    {"do": "tick"}
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED", "HUMAN_PENDING", "CHECKPOINT"
+    ],
+    "cell": ["Att", "Pend"],
+    "scope_version": 0
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "id": "V69",
+  "title": "A client's revocation request is recorded and revokes nothing",
+  "covers": [
+    "I11-REVOKE",
+    "B.4"
+  ],
+  "session": {
+    "session_id": "sess-69",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "rotation",
+      "requested_by": "ck-1",
+      "signed": false
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "KEY_REVOCATION_REQUESTED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1"
+    ],
+    "revoked": [],
+    "key_exhausted": false,
+    "last_event_payload": {
+      "key_id": "ck-1",
+      "requested_by": "ck-1"
+    }
+  }
+}

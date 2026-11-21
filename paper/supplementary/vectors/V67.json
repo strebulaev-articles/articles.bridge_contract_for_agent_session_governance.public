@@ -1,0 +1,66 @@
+{
+  "id": "V67",
+  "title": "OPERATOR_ADD_KEY recovers a key exhausted session; the revoked key stays revoked",
+  "covers": [
+    "I11-REVOKE",
+    "B.4"
+  ],
+  "session": {
+    "session_id": "sess-67",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise"
+    },
+    {
+      "do": "operator_add_key",
+      "client": "ck-2"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2"
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "KEY_REVOKED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "OPERATOR_ADD_KEY",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_REJECTED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0,
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": false,
+    "last_event_payload": {
+      "reason": "revoked_key"
+    }
+  }
+}

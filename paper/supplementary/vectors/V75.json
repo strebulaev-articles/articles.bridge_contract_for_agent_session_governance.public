@@ -1,0 +1,44 @@
+{
+  "id": "V75",
+  "title": "A revocation signed by the operator is accepted and logged",
+  "covers": [
+    "I-OPERATOR",
+    "B.4",
+    "I11-REVOKE"
+  ],
+  "session": {
+    "session_id": "sess-75",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "rotation",
+      "sig": "ok"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "KEY_REVOKED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1"
+    ],
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": true
+  }
+}

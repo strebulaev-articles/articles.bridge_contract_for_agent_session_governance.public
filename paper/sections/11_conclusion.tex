@@ -1,0 +1,60 @@
+\section{Conclusion}
+% ================================================================================
+
+This document has specified the Bridge Contract, a tuple
+$BC = (S, E, R, C)$ that fixes the obligations of a bridge component
+during client detach, human unavailability, and session
+resume. The contract specifies one class of the obligations that
+AgentThread \cite{zheng2026formal} reports unassigned across protocols,
+here at the intersection of AGTP's transport scope, GAR's audit scope,
+and PACE's resumption scope; it does not show that class to be complete. The contract is
+positioned as a complement to---not a replacement for---AGTP, GAR,
+and PACE: AGTP defines the transport headers the bridge populates;
+GAR defines the audit record shape the bridge emits into (under the
+GEC-less deployment profile of Definition~\ref{def:gecless} when no
+GEC is present); PACE defines the re-attach mechanism for which the
+bridge keeps a resume record. The contract comprises a
+product state machine (Attachment $\times$ Human $\times$ Lifecycle, with
+the state names kept only as a derived view), core and extended
+conformance invariants I1--I15 including a challenge-response re-attach
+with proof of possession over a single-use nonce, answer binding, several
+clients per principal, durable append and crash recovery, a statement of
+what the bridge can see, and a safety argument, explicit axioms and lemmas,
+liveness properties dependent on derived timeouts, and a conformance test
+suite of executable tests (example-based, property-based, and
+deterministic edge-case).
+
+The criterion of validity is independent implementability: if two
+developers, reading this specification, can produce bridges whose logs
+agree on the same input trace --- the same committed event kinds and the
+same final cell for the vectors V01--V134 --- the specification is
+independently implementable (relative to the vectors V01--V134). The Bridge Contract does not claim on-the-wire
+interoperability between bridges (the suite is a self-test, not an
+interop harness; see Section~\ref{sec:limitations}). The evidence
+delivered with this document falls short of that criterion and supports
+a weaker claim. TLC finds no invariant violation in the product model,
+key lifecycle included, on bounded configurations (two sessions $\times$ two principals
+$\times$ two permissions, and a deeper single-session run). I4, I5 and I14
+are flag abstractions in the model, the I6 state invariant and the I11(f)
+no-eviction property are not meaningfully checked as configured, and I8 is
+checked by tests only (see the limitations register). The
+two-session run never fires Disconnect, Resolve, Submit or Drain, so
+the detach paths are checked only in single-session runs. The model
+also rejects every one of its deliberately broken variants. The Python
+reference bridge passes its tests, and each of the invariants I1--I15
+has a mutant that the suite kills, and no mutant survives. The
+language-neutral vectors pass on the Python bridge and (except V52--V54, V88 and V89) on a Rust crate
+written by the same author after it, from the text but sharing comments,
+error texts and the generated key format with the Python code. Both implementations have one
+author, so their agreement shows that one reading of the specification
+is consistent, not that the text is unambiguous; the vectors fix
+several choices the text leaves open (Rust README). The criterion is
+met only when a bridge written by someone else passes the vectors. That
+is the next step. Mapping the contract onto a product runtime
+(Termenbox, same author, closed source; as reported by the author on 2026-10-28, a release of the crate is vendored there and the server is not yet wired to it) has already changed the contract: the
+resume token held by the client, the single attached client, answer
+binding, the coverage limits and the timer derivation were revised as a
+result. That is a finding about the draft, not independent
+confirmation.
+
+% ================================================================================

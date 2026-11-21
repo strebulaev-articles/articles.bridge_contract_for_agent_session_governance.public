@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/RECOVERY_FAILED.schema.json",
+  "title": "RECOVERY_FAILED payload",
+  "x-invariants": "I12",
+  "description": "Recovery failed. The session is quarantined: no TERMINATION is emitted, the cell is unchanged and an operator decides.",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "description": "Free-form diagnostic."
+    }
+  },
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false
+}

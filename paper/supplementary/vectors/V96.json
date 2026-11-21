@@ -1,0 +1,54 @@
+{
+  "id": "V96",
+  "title": "A second session that reuses the key id cannot re-attach to the first session with its own key",
+  "covers": [
+    "I11",
+    "I15",
+    "registry-scope"
+  ],
+  "session": {
+    "session_id": "sess-96",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "attach_other",
+      "session_id": "sess-96b",
+      "client": "ck-1"
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1",
+      "proof": "other-session-key",
+      "from_session": "sess-96b",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_REJECTED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [],
+    "other_events": {
+      "sess-96b": [
+        "ATTACHED"
+      ]
+    }
+  }
+}

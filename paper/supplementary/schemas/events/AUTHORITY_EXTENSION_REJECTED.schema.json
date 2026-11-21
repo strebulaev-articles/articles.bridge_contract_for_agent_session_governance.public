@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/AUTHORITY_EXTENSION_REJECTED.schema.json",
+  "title": "AUTHORITY_EXTENSION_REJECTED payload",
+  "x-invariants": "I3",
+  "description": "An attempt to widen Authority-Scope, requested through the bridge or observed.",
+  "type": "object",
+  "properties": {
+    "proposed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "current": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "cell": {
+      "type": "string",
+      "enum": [
+        "Att/None",
+        "Att/Pend",
+        "Det/None",
+        "Det/Pend",
+        "Res/None",
+        "Res/Pend"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "requested",
+        "observed"
+      ]
+    }
+  },
+  "required": [
+    "proposed",
+    "current",
+    "cell",
+    "source"
+  ],
+  "additionalProperties": false
+}

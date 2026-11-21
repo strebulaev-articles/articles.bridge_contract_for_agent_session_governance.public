@@ -1,0 +1,159 @@
+{
+  "schema_version": "1.0",
+  "sources": [
+    {
+      "edition": "09",
+      "key": "I-D.hood-agtp",
+      "media_type": "text/plain",
+      "normalized_hash": "2c6082c9a71ea309402a9c07c474601631ac7a0d10e3c838b8f3be42e3b0fc2d",
+      "normalizer": {
+        "name": "plain-text",
+        "version": "1"
+      },
+      "origin": "https://www.ietf.org/archive/id/draft-hood-independent-agtp-09.txt",
+      "raw_hash": "3c033c5920b2d70c19531d9608397ff52ce907f62f013dfa4d6c972bff447c41",
+      "retrieved": "2026-10-25T00:00:00Z",
+      "terms": "Third-party text, terms not assessed; see paper/sources/NOTICE.md"
+    },
+    {
+      "edition": "00",
+      "key": "I-D.hood-agtp-session",
+      "media_type": "text/plain",
+      "normalized_hash": "2d263d712dbd556bfdf7aaf033c931043ea7129a4e6e9658ab904403fcd9acaf",
+      "normalizer": {
+        "name": "plain-text",
+        "version": "1"
+      },
+      "origin": "https://www.ietf.org/archive/id/draft-hood-agtp-session-00.txt",
+      "raw_hash": "29bcd0d5983ea5c4e786b5a462f1af059a8b9fe3c7e8852a528be13c069c002b",
+      "retrieved": "2026-10-25T00:00:00Z",
+      "terms": "Third-party text, terms not assessed; see paper/sources/NOTICE.md"
+    },
+    {
+      "edition": "00",
+      "key": "I-D.hood-agtp-bindings",
+      "media_type": "text/plain",
+      "normalized_hash": "10fdc9a56c2e1c75c828b9de5db49f60250ee3edce992e1220442fa230620502",
+      "normalizer": {
+        "name": "plain-text",
+        "version": "1"
+      },
+      "origin": "https://www.ietf.org/archive/id/draft-hood-agtp-bindings-00.txt",
+      "raw_hash": "a5564aa64ec6da89ae22b165550b532045d20609c679554154d0657895106877",
+      "retrieved": "2026-10-25T00:00:00Z",
+      "terms": "Third-party text, terms not assessed; see paper/sources/NOTICE.md"
+    },
+    {
+      "edition": "08",
+      "key": "I-D.sato-soos-gar",
+      "media_type": "text/plain",
+      "normalized_hash": "1783c290fb5ee94e8a3a372d46d9a123226c9bf769767211f1c04aaa975a2b53",
+      "normalizer": {
+        "name": "plain-text",
+        "version": "1"
+      },
+      "origin": "https://www.ietf.org/archive/id/draft-sato-soos-gar-08.txt",
+      "raw_hash": "ecdcc56048358b32b690e5f025767bdb37ab62698d451655ef685e7e67b002ef",
+      "retrieved": "2026-10-25T00:00:00Z",
+      "terms": "Third-party text, terms not assessed; see paper/sources/NOTICE.md"
+    },
+    {
+      "edition": "07",
+      "key": "I-D.sato-soos-hem",
+      "media_type": "text/plain",
+      "normalized_hash": "268c0f8c6b8ba892e0eb8a9722f2e1bb5d073f43de1e9a575745fc30a6cff4f5",
+      "normalizer": {
+        "name": "plain-text",
+        "version": "1"
+      },
+      "origin": "https://www.ietf.org/archive/id/draft-sato-soos-hem-07.txt",
+      "raw_hash": "65bddc8b93cd0c27e282dabd03de32e4152894022fc7c023c821d2eafc3c5c97",
+      "retrieved": "2026-10-25T00:00:00Z",
+      "terms": "Third-party text, terms not assessed; see paper/sources/NOTICE.md"
+    },
+    {
+      "edition": "00",
+      "key": "I-D.nandakumar-agentproto-moq-pace",
+      "media_type": "text/plain",
+      "normalized_hash": "f78984a1cbe8e41fcab46a4a0ea800945a94a3b0c73b349539b3fe036825ccfe",
+      "normalizer": {
+        "name": "plain-text",
+        "version": "1"
+      },
+      "origin": "https://www.ietf.org/archive/id/draft-nandakumar-agentproto-moq-pace-00.txt",
+      "raw_hash": "356af3e266f246bf8bd712f8e98015b93bf1fbfeae715918e28dc1608c98da52",
+      "retrieved": "2026-10-25T00:00:00Z",
+      "terms": "Third-party text, terms not assessed; see paper/sources/NOTICE.md"
+    },
+    {
+      "edition": "01",
+      "key": "I-D.sharif-agent-audit-trail",
+      "media_type": "text/plain",
+      "normalized_hash": "113266ec8cc19399106863d44fc23de2c0a4af60d694e71bee6a4fd894a789ef",
+      "normalizer": {
+        "name": "plain-text",
+        "version": "1"
+      },
+      "origin": "https://www.ietf.org/archive/id/draft-sharif-agent-audit-trail-01.txt",
+      "raw_hash": "34ccfa1c5b19d6e1a47478347337a8f9b6feab5e330037938ed32ca9d90c9fad",
+      "retrieved": "2026-10-25T00:00:00Z",
+      "terms": "Third-party text, terms not assessed; see paper/sources/NOTICE.md"
+    },
+    {
+      "edition": "01",
+      "key": "I-D.mih-sato-agent-accountability-composition",
+      "media_type": "text/plain",
+      "normalized_hash": "e0f51869ed8ecf050a212be53ff3e5b7f217a1f22dc2633d1368305ff21374c9",
+      "normalizer": {
+        "name": "plain-text",
+        "version": "1"
+      },
+      "origin": "https://www.ietf.org/archive/id/draft-mih-sato-agent-accountability-composition-01.txt",
+      "raw_hash": "44da33757a2cb6534885a5d1791f3cd8b1f1cfbc2e51d3a9b12c33a72aedfdc9",
+      "retrieved": "2026-10-25T00:00:00Z",
+      "terms": "Third-party text, terms not assessed; see paper/sources/NOTICE.md"
+    },
+    {
+      "edition": "06",
+      "key": "I-D.sokolov-rats-aep-composition",
+      "media_type": "text/plain",
+      "normalized_hash": "3056838da08dc4276708b11faa6f8aee2b7eecfad1b57bcc13ed28ef030ebc4e",
+      "normalizer": {
+        "name": "plain-text",
+        "version": "1"
+      },
+      "origin": "https://www.ietf.org/archive/id/draft-sokolov-rats-aep-composition-06.txt",
+      "raw_hash": "311123dea40b598478d1fe8e898db204044f2eb8332a0d6c292795f914f44d4c",
+      "retrieved": "2026-10-25T00:00:00Z",
+      "terms": "Third-party text, terms not assessed; see paper/sources/NOTICE.md"
+    },
+    {
+      "edition": "v1",
+      "key": "zheng2026formal",
+      "media_type": "application/pdf",
+      "normalized_hash": "2213e856ef19a379b220d4eaab72b4a07f37c18c17129b0441678e1ba18b063b",
+      "normalizer": {
+        "name": "pdftotext",
+        "version": "1"
+      },
+      "origin": "http://arxiv.org/abs/2606.28690v1",
+      "raw_hash": "8db4a739a4edaeccb81a81cbf759260187e35fbf9e823150199d7a1e5dfb4d8d",
+      "retrieved": "2026-10-25T00:00:00Z",
+      "terms": "Third-party text, terms not assessed; see paper/sources/NOTICE.md"
+    },
+    {
+      "edition": "0.9.5",
+      "key": "herdr-product",
+      "media_type": "text/html",
+      "normalized_hash": "c9b193834fddd71d5928183dfec7e1978ac418757030ddd7e296158ced0d3ee5",
+      "normalizer": {
+        "name": "html-text",
+        "version": "1"
+      },
+      "origin": "https://herdr.dev/docs/session-state/",
+      "raw_hash": "ad98fac05b1f4eb513bbb25808d1d714168b3c7fcfa8a4ba304fdb376e7e8fef",
+      "retrieved": "2026-10-28T00:00:00Z",
+      "terms": "Third-party text, terms not assessed; see paper/sources/NOTICE.md"
+    }
+  ]
+}

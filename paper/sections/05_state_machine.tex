@@ -1,0 +1,1554 @@
+\section{State Machine and Invariants}
+\label{sec:state-machine}
+% ================================================================================
+
+\subsection{Product state space}\label{sec:product-model}
+
+The state of a session is a point in the product of orthogonal
+dimensions:
+\begin{itemize}[leftmargin=2em]
+\item \emph{attachment} $a \in \{\textsc{Att}, \textsc{Det},
+\textsc{Res}\}$: at least one client is attached, none is, or none is
+and a re-attaching client is being verified. It is derived from the
+\emph{client set} below;
+\item \emph{human} $h \in \{\textsc{None}, \textsc{Pend}\}$: no
+escalation is outstanding, or the agent is waiting on a human;
+\item \emph{lifecycle} $\ell \in \{\textsc{Active},
+\textsc{Terminated}\}$.
+\end{itemize}
+\paragraph{Client set.} A session has a set $K(s)$ of \emph{registered
+client keys}, all bound to the session's \texttt{Owner-ID}: the key
+registered at attach, and any key added later by \texttt{CLIENT\_ADDED}.
+Its \emph{client set} $C(s) \subseteq K(s)$ is the set of registered keys
+that currently have a connected transport (a client is identified by its
+key). The attachment is a function of the client set:
+$a=\textsc{Att}$ iff $|C| \geq 1$; $a=\textsc{Det}$ iff $|C| = 0$ and
+no re-attach is being verified; $a=\textsc{Res}$ iff $|C| = 0$ and a
+re-attach request has been accepted and is being verified. A principal
+typically has several certified devices, often attached at once;
+a second device is a second \emph{join} of the same session, not a
+resume. Authority changes (narrowing, I3, I10) apply to the session as a
+whole, never to one client. Sharing a session between \emph{different}
+principals is out of scope (Section~\ref{sec:scope}).
+
+Every combination of $a$ and $h$ is reachable while the lifecycle is
+\textsc{Active}; every terminated session is in the single cell
+$\bot$ regardless of $a$ and $h$.
+
+\paragraph{Side predicates.}
+The side predicates \texttt{quarantined} and \texttt{key\_exhausted} are
+defined over the committed log, alongside the product machine:
+\begin{description}[leftmargin=2em]
+\item[\texttt{quarantined}$(s)$] (rule~Q): true when the log
+contains a \texttt{RESUME\_FAILED} or \texttt{RECOVERY\_FAILED}
+event for session $s$, and no subsequent \texttt{TERMINATION}. The
+session is frozen; only an operator-issued termination (ending in
+\texttt{TERMINATION}) is permitted.
+\item[\texttt{key\_exhausted}$(s)$] (I11-REVOKE): true when every
+key in $K(s)$ has a \texttt{KEY\_REVOKED} event in the log, and no
+subsequent \texttt{OPERATOR\_ADD\_KEY}. No client operation is
+accepted; only \texttt{OPERATOR\_ADD\_KEY} (clears the predicate) and
+\texttt{OPERATOR\_TERMINATION} (the signed operator form of
+\texttt{TERMINATION}, which follows it) are permitted, but the timers keep
+running (see Key exhaustion). This predicate is
+\emph{not} rule~Q: rule~Q is for storage corruption;
+\texttt{key\_exhausted} is for deliberate revocation and has a
+recovery path.
+\end{description}
+Both predicates survive a restart (they are derived from the log,
+I12). Neither is a cell of the product machine $Q$.
+
+\begin{definition}[Bridge State Machine]\label{def:sm}
+The Bridge Contract state machine is the labelled transition system
+$M = (Q, \Sigma, \delta, \lambda, q_0, F)$ where
+\begin{itemize}[leftmargin=2em]
+\item $Q = (\{\textsc{Att}, \textsc{Det}, \textsc{Res}\} \times
+\{\textsc{None}, \textsc{Pend}\}) \cup \{\bot\}$;
+\item $\Sigma$ is the set of \emph{inputs} to the bridge: transport
+connects and disconnects, re-attach, join and key-addition requests, the
+agent's escalation, the human's resolution, the outcome of hash-chain
+verification and of recovery, expiry of $T_{\text{detach}}$,
+$T_{\text{total}}$ and $T_{\text{human}}$, clean end or abort, and bridge
+restart. They are the conditions in the Precondition column of
+Table~\ref{tab:transitions}; the Mandatory Governance Events $E$ of
+Definition~\ref{def:bc} are the bridge's outputs, not members of $\Sigma$;
+\item $\delta : Q \times \Sigma \rightharpoonup Q$ is the partial
+transition function defined by Table~\ref{tab:transitions};
+\item $\lambda : Q \times \Sigma \rightharpoonup E^{*}$ gives the events
+emitted, in order, before the cell changes (the Events column of
+Table~\ref{tab:transitions}, I7);
+\item $q_0 = (\textsc{Att}, \textsc{None})$;
+\item $F = \{\bot\}$.
+\end{itemize}
+This product machine is the \emph{normative} state model. The
+implementation-level notion of a ``state'' used in the rest of this
+document is always a cell of $Q$.
+\end{definition}
+
+\paragraph{Derived view of named states.} For exposition, and for
+compatibility with common usage, the cells are folded into
+names: ATTACHED $=(\textsc{Att},\textsc{None})$; DETACHED
+$=(\textsc{Det},\textsc{None})$; PENDING\_HUMAN $=(\textsc{Att},
+\textsc{Pend})$ or $(\textsc{Det},\textsc{Pend})$; RESUMING
+$=(\textsc{Res},\textsc{None})$ or $(\textsc{Res},\textsc{Pend})$;
+TERMINATED $=\bot$. Figure~\ref{fig:state-machine} shows this view. The
+fold is lossy: it hides whether the client is attached while a human is
+pending, which is exactly what determines whether queued tool calls may
+drain and whether the detach timeout is running. The derived names are
+written in plain capitals; the genesis event of the same spelling is
+written \texttt{ATTACHED}. Where the view and
+Table~\ref{tab:transitions} disagree, the table is authoritative.
+
+\begin{figure}[t]
+\centering
+\resizebox{\columnwidth}{!}{\input{figures/state_diagram.tex}}
+\caption{Derived view of named states of the Bridge Contract state machine.
+Arrows are allowed transitions; each MUST emit a governance event before
+mutating state (Invariant I7). A clean end or abort leads to TERMINATED from
+every state, and a successful bridge restart leads to DETACHED; neither is
+drawn. A failed verification or recovery quarantines the session and does not
+terminate it. The normative model is the product machine of
+Definition~\ref{def:sm}.}\label{fig:state-machine}
+\end{figure}
+
+In Table~\ref{tab:transitions}, $a$ and $h$ are placeholders for any
+value of that dimension unless a value is stated; ``events'' lists the
+events emitted, in order, before the cell changes (I7). The table lists
+the transitions that change a cell, together with the join and re-attach
+transitions that leave it as it is. Events that leave every cell
+unchanged (tool-call events, \texttt{KEY\_REVOKED},
+\texttt{OPERATOR\_ADD\_KEY}, narrowing, \texttt{AUTHORITY\_EXTENSION\_REJECTED})
+are defined by the invariants (I2, I3, I10, I11-REVOKE, I13, I14), not by
+a row of the table.
+
+\begin{table}[htbp]
+\centering
+\caption{Allowed transitions over the product machine.}
+\label{tab:transitions}
+\footnotesize
+\begin{tabularx}{\columnwidth}{l X X}
+\toprule
+\textbf{Transition} & \textbf{Precondition} & \textbf{Events} \\
+\midrule
+$(\textsc{Att},h) \to (\textsc{Det},h)$ & Transport disconnect of the
+last connected client ($|C|=1$). & \texttt{DETACHMENT},
+\texttt{RESUME\_PREPARED}. \\
+$(\textsc{Att},h) \to (\textsc{Att},h)$ & Transport disconnect of one
+client while others remain ($|C|\geq 2$). & \texttt{CLIENT\_LEFT}. \\
+$(\textsc{Det},h) \to (\textsc{Det},h)$ & Idempotent disconnect (also of a
+client that is not in $C$). & None. \\
+$(\textsc{Att},h) \to (\textsc{Att},h)$ & Join: an authentic request
+(I11) from a registered key, with a live unused nonce and a prefix of the
+chain (I4, I9); $C := C \cup \{k\}$. & \texttt{CLIENT\_JOINED}; the
+events after the acknowledged prefix are replayed to the joiner. \\
+$(\textsc{Att},h) \to (\textsc{Att},h)$ & A registered client adds a
+further key for the principal. & \texttt{CLIENT\_ADDED}. \\
+$(a,\textsc{None}) \to (a,\textsc{Pend})$ & Agent escalates to a
+human. & \texttt{HUMAN\_PENDING}; tool queue initialised. \\
+$(a,\textsc{Pend}) \to (a,\textsc{Pend})$ & Second escalation while
+one is pending: escalations coalesce. & \texttt{HUMAN\_PENDING}, recorded
+for audit; the human dimension and $T_{\text{human}}$ (measured from the
+first escalation) are unchanged. \\
+$(a,\textsc{Pend}) \to (a,\textsc{None})$ & Human resolves. &
+\texttt{HUMAN\_RESOLVED}, which ends every coalesced escalation at once.
+The queue drains only once $a=\textsc{Att}$ (rule~D below). \\
+$(\textsc{Det},h) \to (\textsc{Res},h)$ & Re-attach request that is
+signed under a registered client key, uses a live unused nonce, and
+names a prefix of the chain (I4, I9, I11). & \texttt{RESUME\_STARTED}. \\
+$(a,h) \to (a,h)$, $a \neq \textsc{Res}$ & Re-attach or join request
+with a bad signature or unknown key, a consumed, expired or unknown
+nonce, a prefix the chain does not contain, or a reported 0-RTT replay
+(I4, I8, I9, I11). & \texttt{RESUME\_REJECTED}; no state change. \\
+$(\textsc{Att},h) \to (\textsc{Att},h)$ & Re-attach request, authentic
+(I11) but made while the session is attached: join is the only way into an
+attached session. & \texttt{RESUME\_REJECTED} (\texttt{already\_attached});
+no state change, the nonce is spent. \\
+$(\textsc{Res},h) \to (\textsc{Res},h)$ & Any further request while one is
+being verified. & \texttt{RESUME\_REJECTED} (\texttt{resume\_in\_progress});
+no state change. \\
+$(\textsc{Res},h) \to (\textsc{Att},h)$ & Hash-chain verification
+succeeds. & \texttt{RESUME\_VERIFIED}; then the queue drains (rule~D). \\
+$(\textsc{Res},h) \to (\textsc{Det},h)$ & The re-attaching client
+disconnects during verification. & \texttt{DETACHMENT}, \texttt{RESUME\_PREPARED}. \\
+$(\textsc{Res},h) \to (\textsc{Res},h)$, quarantined & Hash-chain
+verification fails (I5). & \texttt{RESUME\_FAILED}; no cell change; the
+session is quarantined (rule~Q below). \\
+$(\textsc{Det},h) \to \bot$ & $T_{\text{detach}}$ exceeded, or the time
+spent detached over all episodes reached $T_{\text{total}}$. &
+\texttt{DETACH\_TIMEOUT}, \texttt{TERMINATION}. \\
+$(a,\textsc{Pend}) \to \bot$ & $T_{\text{human}}$ exceeded. &
+\texttt{HUMAN\_TIMEOUT}, \texttt{TERMINATION}. \\
+$(a,h) \to \bot$ & Clean session end or abort. & \texttt{TERMINATION}. \\
+$(a,h) \to (\textsc{Det},h)$ & Bridge restart; recovery succeeds
+(Section~\ref{sec:recovery}). & \texttt{BRIDGE\_RECOVERED},
+\texttt{DETACHMENT}, \texttt{RESUME\_PREPARED}. \\
+$(a,h) \to (a,h)$, quarantined & Bridge restart; recovery fails
+(Section~\ref{sec:recovery}). & \texttt{RECOVERY\_FAILED}; no cell
+change; the session is quarantined (rule~Q below). \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Rule D (queue drain).} Queued tool calls drain, in arrival
+order, whenever the session is in $(\textsc{Att},\textsc{None})$ with a
+non-empty queue: that is, on \texttt{HUMAN\_RESOLVED} while attached, or
+on \texttt{RESUME\_VERIFIED} when no escalation is outstanding. A human
+who resolves while the client is detached or re-attaching leaves the
+queue in place; it drains when the client is back. This is the
+conservative reading of G1: the bridge cannot know that a queued call
+is client-independent. Each call is re-validated at drain against the current scope, its own
+lifetime and approval (I13) and its answer (I14); a call that fails is
+not forwarded.
+
+\paragraph{Forwarding acknowledgement.} A drained call passes through
+stages that the log records separately: \emph{committed}
+(\texttt{TOOL\_CALL\_DRAINED} is durable, I12), \emph{delivered} (the
+runtime acknowledges receipt, \texttt{TOOL\_CALL\_DELIVERED}) and
+\emph{completed} (the runtime reports the result,
+\texttt{TOOL\_CALL\_COMPLETED}). The bridge forwards a call only after
+its drain is committed, so a crash can leave a call committed but not
+delivered. Such a call stays \emph{unacknowledged}: whenever the session is
+in $(\textsc{Att},\textsc{None})$ and a bridge instance has not yet
+forwarded an unacknowledged call, it forwards the call again with the
+same idempotency key (I13), without a second drain event. A call that is
+delivered is never forwarded again. Delivery is therefore at-least-once
+with deduplication by the runtime; exactly-once execution is the runtime's
+responsibility.
+
+\paragraph{Calls outside an escalation (G1) --- conformance profiles.}
+Rule D and I2 govern calls
+that arrive while $h=\textsc{Pend}$. A call that arrives with
+$h=\textsc{None}$ while $a\neq\textsc{Att}$ has no escalation to wait for,
+and the contract gives the deployment a choice among the
+\emph{conformance profiles} \texttt{refuse}, \texttt{queue} and
+\texttt{forward}, fixed by configuration
+and the same for every session of the deployment. The deployment
+documents which profile it uses and, for the \texttt{forward} profile,
+who may configure the forward allowlist (an operator role named in the
+deployment documentation).
+\begin{description}[leftmargin=2em]
+\item[\texttt{refuse} (mandatory default).] The bridge refuses the call: it is not
+queued, not forwarded and not recorded as a queued call, and the error
+reaches the runtime. This profile is mandatory: every conformant
+bridge MUST implement it, and it is the default if the deployment does
+not name one. Every other statement in
+this section assumes this profile unless it says otherwise.
+\item[\texttt{queue} (optional).] The bridge queues the call
+(\texttt{TOOL\_CALL\_QUEUED} with \texttt{held} set). It is held until a
+human answers it (I14) and the session is in $(\textsc{Att},\textsc{None})$,
+and is then forwarded under rule~D. A held call that is still unanswered
+at drain is not rejected as unanswered; it waits and expires after
+$T_{\text{call}}$ (I13). Held calls do not depend on an escalation, so
+$T_{\text{approve}}$ does not apply to them.
+\item[\texttt{forward} (optional).] The operator lists permissions that may run
+without the client. A call whose permission is on that list and in the
+current scope is recorded as queued, answered (source
+\texttt{operator\_policy}) and drained in one committed batch, and
+forwarded after the batch is durable (I12). Any other call is refused as
+under \texttt{refuse}.
+\end{description}
+No profile changes I2: while $h=\textsc{Pend}$ every call is queued or
+rejected under rule~D, whatever the profile. The \texttt{forward} profile
+is the operator-defined exception to rule~D that a deployment opts into;
+the bridge cannot tell on its own which calls are client-independent.
+
+\paragraph{Rule Q (quarantine).} A session whose log cannot be vouched
+for is \emph{quarantined}, not terminated. This applies when the hash
+chain fails to verify after a re-attach was accepted
+(\texttt{RESUME\_FAILED}), and when recovery after a restart finds the
+chain broken
+(\texttt{RECOVERY\_FAILED}); the cause is the storage or an attacker on it,
+not the client, so ending the session would punish the wrong party and
+destroy the evidence. The bridge MUST record the failure if it can still
+append, MUST NOT emit \texttt{TERMINATION}, and MUST then refuse every
+client operation on the session (attach, join, challenge, escalation,
+tool call, authority change), run no timer on it and emit no further event
+for it, except an operator's explicit termination (\texttt{TERMINATION}). The
+departures of the reference bridges from this rule are listed in the
+limitations register: an operator key addition is accepted on a quarantined,
+key\_exhausted session, and the Python bridge can append a
+\texttt{CHECKPOINT} to a quarantined session. The session's
+event log MUST be preserved read-only for forensic review: the bridge
+MUST NOT append, truncate, or rewrite any record of a quarantined
+session except the failure event that rule~Q itself permits and any
+later \texttt{TERMINATION} the operator issues. The session
+keeps the cell it had; quarantine is not a cell of the product machine,
+and a restart does not lift it (the failure event is in the log; if it
+could not be appended, recovery finds the broken chain again). Release
+from quarantine is an operator action outside the contract; the only
+action the contract permits on a quarantined session is operator
+\texttt{TERMINATION}. Chain
+verification follows authentication (I11), so a presenter without a
+registered key cannot cause a quarantine. Quarantine is defence in depth
+for a violated A1 (it freezes a session whose chain no longer verifies);
+the guarantee of the safety argument rests on A1 and does not include it.
+
+\subsection{Conformance Invariants}
+
+\begin{invariant}[I1 --- Resume Preparedness]\label{inv:I1}
+For every transition into a cell with $a=\textsc{Det}$ caused by a
+disconnect (of the last connected client from $(\textsc{Att},h)$, or of
+the re-attaching client from $(\textsc{Res},h)$), the bridge
+MUST emit \texttt{DETACHMENT} followed by \texttt{RESUME\_PREPARED}
+\emph{before} the cell changes.
+\end{invariant}
+
+\paragraph{Termination effects.}
+On \texttt{TERMINATION}, the session enters $\bot$ (I6). The
+following effects are normative:
+\begin{itemize}[leftmargin=2em]
+\item The tool-call queue is discarded; queued calls are not
+forwarded. The runtime MUST be notified that the session is
+terminated and SHOULD clean up any in-flight work.
+\item In-flight tool calls (calls the bridge forwarded before
+termination but whose \texttt{TOOL\_CALL\_COMPLETED} was not
+emitted) are not tracked further; the runtime is responsible for
+their disposition.
+\item No timer runs on a terminated session; no further events are
+emitted; no client operation is accepted (I6).
+\item The event log is retained for audit (A1); the deployment
+SHOULD apply its retention policy (Section~\ref{sec:limitations}).
+\end{itemize}
+
+\begin{invariant}[I2 --- Tool Call Suspension]\label{inv:I2}
+While $h=\textsc{Pend}$, every tool call that the runtime submits to the
+bridge for approval or forwarding MUST be either queued (with \texttt{TOOL\_CALL\_QUEUED} emitted) or rejected.
+The bridge MUST NOT forward any tool call to the agent runtime for
+execution while $h=\textsc{Pend}$. In-flight tool calls initiated
+before \texttt{HUMAN\_PENDING} are not retracted; their completion is
+audited as \texttt{TOOL\_CALL\_COMPLETED} (the separate completion event
+of the forwarding acknowledgement, rule~D).
+I2 covers what the runtime submits to the bridge; execution that the
+bridge does not mediate is outside the contract (Section~\ref{sec:coverage}).
+\end{invariant}
+
+\begin{invariant}[I3 --- Authority Lock]\label{inv:I3}
+In every cell, any attempt to widen \texttt{Authority-Scope} (any
+proposed scope containing a permission that the current scope lacks)
+MUST be rejected and MUST emit \texttt{AUTHORITY\_EXTENSION\_REJECTED};
+the scope the bridge holds is unchanged. The scope of a session may only
+narrow (I10). Widening requires a new attach with a freshly granted
+scope, which is a new session. I3 has two parts:
+\begin{description}[leftmargin=2em]
+\item[Enforced.] A change requested \emph{through the bridge} is refused
+before it takes effect.
+\item[Observed.] A change that the runtime announces \emph{itself} (for
+example an Agent Client Protocol (ACP) agent switching its own mode; see
+Section~\ref{sec:rw-agtp-thread} for the ACP disambiguation) has already happened when
+the bridge learns of it. The bridge MUST emit
+\texttt{AUTHORITY\_EXTENSION\_REJECTED} with source \texttt{observed}
+and keep its record unchanged, and SHOULD instruct the runtime to revert
+to the recorded scope. I3 does not claim that the bridge prevents a
+runtime-initiated widening, only that it never records one as granted and
+always reports it.
+\end{description}
+\end{invariant}
+
+\begin{invariant}[I4 --- Prefix consistency]\label{inv:I4}
+A re-attach or join request carries the pair $(\mathit{seq}, \mathit{hash})$ of
+the last event the client acknowledged, taken from the event stream the
+client observed, not from any artefact issued at detach. The bridge
+MUST accept the request only if $\mathit{seq}$ does not exceed the
+sequence number of the last committed event and $\mathit{hash}$ equals
+the hash of the event with sequence number $\mathit{seq}$ in the bridge's
+chain: that is, the client's history is a \emph{prefix} of the bridge's
+chain. Any other pair (a different hash at that sequence, or a sequence
+the chain has not reached) MUST be rejected with
+\texttt{RESUME\_REJECTED} (reason \texttt{prefix\_mismatch}). Rejection
+leaves the session in its current cell; it does not terminate the
+session. On acceptance the bridge MUST deliver every committed event
+after $\mathit{seq}$ to the client (the re-attaching or joining client),
+including those that changed the
+authority scope or the human dimension while the client was away; the
+client reconciles its view from this replay.
+\end{invariant}
+
+\begin{invariant}[I5 --- Hash Chain Integrity]\label{inv:I5}
+Every Governance Event MUST carry a \texttt{prev\_hash} field equal
+to the SHA-256 of the canonical JSON of the immediately preceding
+event in the same session. The genesis event's \texttt{prev\_hash}
+MUST be the empty string.
+
+I5 detects an insertion, deletion, rewrite or reordering of events in
+the middle of the log. It does not detect the removal or rewrite of the
+last events: a log cut back to an earlier event, or whose final event is
+replaced, is again a valid chain. Detecting that requires the head
+(sequence and hash) to be committed outside the log, as an
+I-CHECKPOINT anchor does.
+\end{invariant}
+
+\begin{invariant}[I6 --- Terminality]\label{inv:I6}
+The cell $\bot$ is terminal. Any subsequent operation that would
+mutate state MUST raise an error. This covers every operation, including
+attach, disconnect, join, add a client key, escalate, re-attach, submit
+tool call, attempt authority extension, narrowing, human resolution, a
+tool-call answer and the operator's key operations.
+\end{invariant}
+
+\begin{invariant}[I7 --- Event-before-Mutation]\label{inv:I7}
+For every transition, the corresponding governance events MUST be
+emitted and appended to the event log \emph{before} the cell is
+changed. This ensures that the audit trail records the intent to
+transition before the transition takes effect. Together with I12 this
+ordering survives a bridge crash.
+\end{invariant}
+
+\subsection{Assumptions and Axioms}\label{sec:axioms}
+
+The safety argument in Section~\ref{sec:safety-argument} rests on the
+following assumptions, stated as axioms. A bridge implementation
+operating in violation of any axiom is out of scope of this
+specification.
+
+\begin{description}[leftmargin=2em]
+\item[A1 --- Reliable storage.] A record that has been committed under
+I12 is not lost, reordered, or mutated by the storage medium or by the
+bridge itself. (Mid-log tampering is detected by I5; truncation or
+rewriting of the last events is not, without an external head.)
+Rule~Q is defence in depth for a violated A1 and is not part of the
+guarantee that rests on A1.
+\item[A2 --- Monotonic sequence by construction.] The bridge's
+sequence-number generator returns a strictly increasing value
+on each call, including across restarts (it is recovered from the
+log). Production of sequence numbers is monotonic by construction;
+acceptance of client-claimed sequences is governed by I4.
+\item[A3 --- SHA-256 collision resistance.] SHA-256 is collision
+resistant under the assumed adversary. \texttt{prev\_hash} chaining
+and the prefix check of I4 rely on this. The signature scheme of I11 is
+assumed to be existentially unforgeable, and nonces are drawn from a
+cryptographically secure source.
+\item[A4 --- Trusted bridge.] The bridge is non-Byzantine: it does not
+deliberately suppress governance events, forge events,
+or lie about its state. (Byzantine bridge mitigations
+are deployment-level, see \S\ref{sec:scope}.)
+\item[A5 --- Serialised event emission per session.] Concurrent
+event emission per session is serialised by the bridge's internal
+locking. Concurrent sessions are independent. Because the dimensions of
+the product machine are orthogonal, serialised events from different
+dimensions (e.g., \texttt{DETACHMENT} and \texttt{HUMAN\_PENDING})
+commute on the cell they reach.
+\item[A6 --- Clocks.] While the bridge runs, timeouts use a monotonic
+clock; wall-clock skew does not affect them. Across a restart, elapsed
+time is taken from the timestamps of committed events, so a timeout may
+fire late by at most the wall-clock error of the host. A host clock that
+reads earlier than the last committed timestamp is treated as reading
+that timestamp: no time is counted until the clock passes it, and
+committed timestamps never decrease. Downtime counts toward
+$T_{\text{human}}$, which is measured from the original
+\texttt{HUMAN\_PENDING}, and toward $T_{\text{total}}$, but not toward
+$T_{\text{detach}}$, which restarts at the recovered detachment
+(Section~\ref{sec:recovery}). Fair scheduling
+is assumed: the timeout check is eventually invoked (see
+Appendix~\ref{app:formal-limitations}).
+\item[A7 --- Key custody.] The private keys of registered clients are
+not disclosed to the adversary, and the registry of client public keys
+survives restarts (it is rebuilt from the log, I12). Compromise of a
+client key is a deployment-level concern. The contract provides
+operator-signed revocation (I11-REVOKE): a lost or compromised device
+key can be revoked by the operator, after which it is no longer
+accepted for re-attach or join. Soft revocation (\texttt{rotation})
+keeps active connections; hard revocation (\texttt{compromise})
+removes the key from the client set and detaches the session if that was
+the last connected client. When all keys are revoked, the session enters
+\texttt{key\_exhausted} (not rule~Q); the operator can add a new key
+or terminate, and otherwise a detached session ends after the detachment
+bound. Before revocation, a lost device stays authorised
+until the session ends, which in the persistent profile can be
+days; revocation is the operator's recovery path.
+\end{description}
+
+\subsection{Deployment requirements}
+\label{sec:deployment-requirements}
+
+The axioms above state what the contract assumes of the bridge and the
+storage. A conformant deployment must additionally provide what
+Table~\ref{tab:deployment-requirements} lists; the table makes explicit
+what the baseline MUSTs leave to the operator.
+
+\begin{table}[htbp]
+\centering
+\caption{Assumptions and deployment requirements.}
+\label{tab:deployment-requirements}
+\footnotesize
+\begin{tabularx}{\columnwidth}{l X}
+\toprule
+\textbf{Requirement} & \textbf{What the deployment must provide} \\
+\midrule
+Append-only storage &
+A storage medium that, once a record is committed under I12, does not
+lose, reorder, or mutate it (A1). Mid-log tampering is detected by I5;
+truncation of the tail is detected only against a head held outside the
+log, and, if required, by I-SIGN-EVENT and I-CHECKPOINT. \\
+Trusted bridge &
+A non-Byzantine bridge (A4): one that does not deliberately suppress
+governance events, forge events, or lie about its state. Byzantine-bridge
+mitigations are deployment-level (external transparency logs). \\
+Client-key custody &
+The principal holds the private keys of every registered client key
+(A7); the contract provides operator-signed revocation (I11-REVOKE)
+for lost or compromised keys. Soft revocation (\texttt{rotation})
+keeps active connections; hard (\texttt{compromise}) removes the key
+from the client set and detaches the session if it was the last
+connected client. When
+all keys are revoked, the session enters \texttt{key\_exhausted};
+the operator adds a new key or terminates, and otherwise a detached
+session ends after the detachment bound. \\
+Human-resolution and answer channel &
+An authenticated channel for \texttt{HUMAN\_RESOLVED},
+\texttt{TOOL\_CALL\_ANSWERED} and a clean end of session. The deployment
+documents who may emit them and under which key. The contract does not
+specify the channel; the bridge trusts whatever the deployment feeds it. \\
+Runtime idempotency contract &
+The runtime deduplicates forwarded calls by idempotency key. The key
+scope is the session. The deployment states a retention bound for
+spent keys. A second submission of the same key with different content
+is rejected: this is a MUST while the first call is queued (I13,
+reason \texttt{duplicate\_key}); for a key already spent, the same
+rejection is a SHOULD that holds within the deployment's retention
+bound, and beyond that bound the contract states no requirement.
+\texttt{DELIVERED}
+means receipt, not execution; exactly-once external effects are not
+guaranteed. \\
+Runtime routes execution and authority through the bridge &
+Where the deployment wants the bridge to enforce (rather than observe)
+authority, the runtime routes every authority change and every
+tool-call submission through the bridge. Execution the bridge does not
+mediate is outside the contract (Section~\ref{sec:coverage}). \\
+Log access authorisation and retention &
+The deployment documents who may read the event log and the replay, and
+the bridge enforces a retention bound after which the log is archived or
+destroyed (Section~\ref{sec:limitations}). \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Lemmas}\label{sec:lemmas}
+
+The following lemmas are immediate consequences of the invariants and
+axioms. Their proofs are short and are provided for completeness.
+
+\begin{lemma}[Audit ordering]\label{lem:atomicity}
+I5 $+$ I7 $+$ I12 $\Rightarrow$ no externally observable change of cell
+exists without its governing events already committed in the log, and
+the log alone determines the cell that recovery rebuilds.
+\end{lemma}
+
+\begin{proof}[Sketch.]
+I7 requires the events to be appended before the cell changes, and I12
+requires the append to be durable before the change and before any
+acknowledgement to the client. I5 links each event to its predecessor.
+Therefore any cell visible to a client, or recoverable after a crash,
+is preceded by a verifiable committed event. A crash between the append
+and the change leaves the log ahead of the cell; recovery
+(Section~\ref{sec:recovery}) resolves this in favour of the log. The
+lemma asserts ordering, not atomicity: it does not claim that append and
+change occur indivisibly. \qedhere
+\end{proof}
+
+\begin{lemma}[No authority drift]\label{lem:no-drift}
+I3 $+$ I10 $\Rightarrow$ in every cell, at every point of an execution,
+the authority scope that the bridge holds for a session is a subset of
+its scope at attach. (The runtime's effective authority equals it only
+for changes requested through the bridge; see I3, observed.)
+\end{lemma}
+
+\begin{proof}[Sketch.]
+The scope is changed only by an accepted narrowing (I10); every
+widening attempt is rejected without changing it (I3). By induction
+over the transitions, the scope after each step is a subset of the scope
+before it, hence of the scope at attach. \qedhere
+\end{proof}
+
+\begin{lemma}[Resume recoverability]\label{lem:recover}
+I1 $+$ I4 $+$ I5 $+$ I11 $\Rightarrow$ on an authenticated re-attach,
+the client is brought to the bridge's current state by a verifiable
+replay of the events it has not seen.
+\end{lemma}
+
+\begin{proof}[Sketch.]
+I1 forces \texttt{RESUME\_PREPARED} to be emitted and stored before the
+cell changes to $a=\textsc{Det}$, so the resume point is recorded
+durably. I11 ensures the presenter holds a registered client key and
+answers a fresh nonce, so the request is neither forged nor replayed
+(modulo the pre-registration replay of Table~\ref{tab:limitations}). I4
+ensures that the $(\mathit{seq}, \mathit{hash})$ the client presents lies
+on the bridge's chain, and I5 ensures that every event after it carries
+the \texttt{prev\_hash} of its predecessor, so the client can verify the
+replay against the hash it already holds. Hence the client's resulting
+view is a causally consistent extension of what it had acknowledged.
+\qedhere
+\end{proof}
+
+\begin{lemma}[Terminality]\label{lem:terminality}
+I6 $\Rightarrow$ after $\bot$, no further state mutation is
+possible for the session.
+\end{lemma}
+
+\begin{proof}[Sketch.]
+The lemma restates I6: I6 forbids every state-mutating operation on a
+session in $\bot$, and $\bot$ has no outgoing transition in
+Table~\ref{tab:transitions} ($F=\{\bot\}$). \qedhere
+\end{proof}
+
+\subsection{Liveness properties}\label{sec:liveness}
+
+The Bridge Contract's liveness properties depend on the timeouts
+defined in \S\ref{sec:timeouts}. Without timeouts the contract
+satisfies safety but not liveness: a session could remain in a cell
+with $a=\textsc{Det}$ or $h=\textsc{Pend}$ indefinitely. The following
+liveness properties hold \emph{conditionally on the bridge's timer
+mechanism being scheduled fairly} (Axiom A6; see
+Appendix~\ref{app:formal-limitations} for the fairness limitation in the
+formal model). Without a fairness assumption on the scheduler, L1 and L2
+do not hold: a scheduler that indefinitely postpones the timeout check
+would leave the session in such a cell forever, which does not violate
+any safety invariant but violates liveness.
+
+\begin{description}[leftmargin=2em]
+\item[L1.] \emph{(conditional on fair scheduling, A6)} For every
+session that enters a cell with $a=\textsc{Det}$, either the client
+re-attaches successfully (through $a=\textsc{Res}$ to
+$a=\textsc{Att}$), or the session reaches $\bot$ within
+$T_{\text{detach}}$ of that detachment, or it is quarantined (the exception
+discussed after L2). A \texttt{key\_exhausted} session is no exception: its
+timers keep running, so unless the operator adds a key it reaches $\bot$
+within $T_{\text{detach}}$ as well. Over the whole session, the time
+spent in cells with $a=\textsc{Det}$, summed over all detachments and
+including time during which the bridge was down, never exceeds
+$T_{\text{total}}$: once it has used up $T_{\text{total}}$, a session in
+$a=\textsc{Det}$ reaches $\bot$ even if no single detachment has lasted
+$T_{\text{detach}}$ (the model checks that it then leaves $a=\textsc{Det}$,
+by a re-attach in progress, or ends, or is quarantined; \texttt{CapEnds}).
+A re-attach does not depend on any artefact issued
+at detach (I4, I11), so no secondary expiry can terminate the session
+earlier.
+\item[L2.] \emph{(conditional on fair scheduling, A6)} For every session
+that enters a cell with $h=\textsc{Pend}$, either the human resolves
+(the session moves to $h=\textsc{None}$) or the session reaches
+$\bot$ within $T_{\text{human}}$ of the first escalation, or earlier if
+the detach timeout fires first, or the session is quarantined. The
+human timer of a \texttt{key\_exhausted} session keeps running. While $a=\textsc{Det}$ the detach
+timer runs (it is stopped in $a=\textsc{Res}$), so a human wait never outlasts the detachment the deployment
+tolerates; while the client is attached the wait may be longer than
+$T_{\text{detach}}$ if $T_{\text{human}}$ is.
+\end{description}
+
+L1 and L2 together imply that no active session that is not quarantined
+remains in a transient cell indefinitely (under fair scheduling), with one
+reservation about a \texttt{key\_exhausted} session: while a client is
+still connected on a softly revoked key the cell is $a=\textsc{Att}$ and no
+detach timer runs, until the transport is lost or the operator acts (the
+hazard of rotating the only key is described under Key exhaustion).
+$\bot$ is the only
+cell in which a session may persist without bound, apart from
+$(\textsc{Att},\textsc{None})$, which has no timer and is stable by design,
+and from a quarantined session, which is frozen by rule~Q until an operator
+acts. A re-attach
+cannot hold the session in $a=\textsc{Res}$ without bound, because a
+client disconnect during verification returns it to $a=\textsc{Det}$ and
+verification itself is a finite computation over the log. A re-attach that
+is started and abandoned repeatedly is a limit of this bound: time in
+$a=\textsc{Res}$ and $a=\textsc{Att}$ is not counted by $T_{\text{total}}$,
+so $T_{\text{total}}$ does not bound such a cycle. One exception
+holds in the reference bridges and the model and is listed in the
+limitations register: a soft revocation of the only key while it is being
+verified makes the session \texttt{key\_exhausted} in $a=\textsc{Res}$, the
+completion is refused, and no detach timer runs there, so the session stays
+in $a=\textsc{Res}$ until the transport of the re-attaching client is lost,
+a human timer fires or the operator acts.
+
+\subsection{Timeouts}\label{sec:timeouts}
+
+The state machine depends on the timers of Table~\ref{tab:timers}.
+$T_{\text{human}}$, $T_{\text{call}}$ and $T_{\text{total}}$ default from
+$T_{\text{detach}}$; $T_{\text{approve}}$ and $T_{\text{nonce}}$ do not
+(Table~\ref{tab:timer-profiles}). The
+applicability of $T_{\text{detach}}$ and $T_{\text{human}}$ to each cell
+is:
+
+\begin{center}
+\small
+\begin{tabular}{l l l}
+\toprule
+\textbf{Cell} & $T_{\text{detach}}$ & $T_{\text{human}}$ \\
+\midrule
+$(\textsc{Att},\textsc{None})$ & --- & --- \\
+$(\textsc{Att},\textsc{Pend})$ & --- & running \\
+$(\textsc{Det},\textsc{None})$ & running & --- \\
+$(\textsc{Det},\textsc{Pend})$ & running & running \\
+$(\textsc{Res},\textsc{None})$ & stopped & --- \\
+$(\textsc{Res},\textsc{Pend})$ & stopped & running \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{table}[htbp]
+\centering
+\caption{The timers: start event, clock source, pause/reset
+behaviour, survival across a bridge restart, expiry event and
+interactions. Defaults and bounds are listed in
+Table~\ref{tab:timer-profiles}.}
+\label{tab:timers}
+\scriptsize
+\begin{tabularx}{\columnwidth}{l X X X X X}
+\toprule
+\textbf{Timer} & \textbf{Starts on} & \textbf{Clock} & \textbf{Pause / reset} & \textbf{Survives restart?} & \textbf{Expiry event} \\
+\midrule
+$T_{\text{detach}}$ &
+The \texttt{DETACHMENT} that begins a detachment; not restarted by later events while detached. &
+Monotonic while running; across a restart, elapsed time is taken from committed event timestamps (A6). &
+Stopped while $a=\textsc{Res}$; a return from $a=\textsc{Res}$ to $a=\textsc{Det}$ is a new \texttt{DETACHMENT} and starts a fresh interval ($T_{\text{total}}$ keeps counting the time spent detached, so that time is bounded over the cycle; a re-attach started and abandoned repeatedly is not bounded by $T_{\text{total}}$, which does not count time in $a=\textsc{Res}$); reset to a fresh interval by a bridge restart while detached (recovery rule~2). &
+The interval is reset (the restart begins a new detachment). &
+\texttt{DETACH\_TIMEOUT}, \texttt{TERMINATION}. \\
+$T_{\text{total}}$ &
+The first \texttt{DETACHMENT} of the session; summed over every away interval. &
+Computed from committed event timestamps; never held as an in-memory timer. &
+Never reset; time in $a=\textsc{Res}$ and $a=\textsc{Att}$ is not counted; bridge downtime while detached is counted. &
+Yes --- downtime is part of the away interval. &
+\texttt{DETACH\_TIMEOUT}, \texttt{TERMINATION}. \\
+$T_{\text{human}}$ &
+The first \texttt{HUMAN\_PENDING} of the current escalation; a second escalation while one is pending does not restart it. &
+Monotonic while running; across a restart, elapsed time is taken from the original \texttt{HUMAN\_PENDING} (A6). &
+Running while $h=\textsc{Pend}$; stopped when $h=\textsc{None}$; bridge downtime while $h=\textsc{Pend}$ counts toward it. &
+Yes --- measured from the original \texttt{HUMAN\_PENDING}; an elapsed timeout is applied after recovery. &
+\texttt{HUMAN\_TIMEOUT}, then \texttt{TERMINATION}. \\
+$T_{\text{call}}$ &
+The \texttt{TOOL\_CALL\_QUEUED} event of the call. &
+Monotonic. &
+Not paused; expires even if the queue is held under the \texttt{queue} profile. The call is removed on expiry. &
+Yes (queued in the log); a call whose $T_{\text{call}}$ elapsed during downtime is expired at recovery. &
+\texttt{TOOL\_CALL\_EXPIRED}; the call is not forwarded. \\
+$T_{\text{approve}}$ &
+The \texttt{HUMAN\_RESOLVED} event of the escalation. &
+Monotonic. &
+Not paused; runs even while the client is away. An approval that lapses is void at the next drain. &
+Yes (queued in the log). &
+\texttt{TOOL\_CALL\_EXPIRED} on every call of the lapsed escalation at the next drain (the reference bridges keep one expiry per session, so a later approval revives a lapsed one: limitations register). \\
+$T_{\text{nonce}}$ &
+The bridge issues a challenge and returns a nonce. &
+Monotonic; the bridge's own clock. &
+Not paused; the nonce is volatile and is void after a restart. &
+No --- outstanding nonces are void; the client asks for a fresh challenge. &
+The nonce is rejected on next use with \texttt{RESUME\_REJECTED} (reason \texttt{nonce\_expired}). \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Derivation of the timers.} The timers are not independent:
+\[
+T_{\text{call}} \;\leq\; T_{\text{human}}
+\qquad\text{and}\qquad
+T_{\text{detach}} \;\leq\; T_{\text{total}}
+\qquad (\text{MUST}),
+\]
+and $T_{\text{human}}$ defaults to $T_{\text{detach}}$,
+$T_{\text{call}}$ to $T_{\text{human}}$ and $T_{\text{total}}$ to four
+times $T_{\text{detach}}$. $T_{\text{call}} \leq T_{\text{human}}$ is a configuration simplification:
+a call may not outlive the longest wait the session tolerates (under the
+\texttt{queue} profile a held call has no escalation, but is bounded the
+same way). The cap is useless if it is below a single detachment.
+$T_{\text{human}} \leq T_{\text{detach}}$ is a recommendation that the
+profiles follow, not a configuration bound: it constrains a session only
+where the client is away, and there the detach timer enforces it without
+help, because a detached session ends at $T_{\text{detach}}$ whatever the
+human timer says. With the client attached, an escalation may wait longer
+than $T_{\text{detach}}$ if the deployment sets $T_{\text{human}}$ so. When
+the client then detaches, the wait is bounded by the time that remains of
+$T_{\text{human}}$ and by $T_{\text{detach}}$ from the detachment,
+whichever ends first. Independent defaults (for example 24~h and 1~h) that
+did not follow from $T_{\text{detach}}$ would end work that a mobile owner
+expects to survive a long detach. A deployment chooses one
+\emph{profile}:
+
+\begin{table}[htbp]
+\centering
+\caption{Timer profiles. Defaults are informative; operators MAY set
+the timers to any non-negative values that satisfy the bounds above (the
+value 0 is degenerate: a nonce expires on issue, a detachment ends at
+once).}
+\label{tab:timer-profiles}
+\footnotesize
+\begin{tabular}{l r r r r r r}
+\toprule
+\textbf{Profile} & \makebox[1.4cm]{$T_{\text{detach}}$} & \makebox[1.4cm]{$T_{\text{human}}$} &
+\makebox[1.2cm]{$T_{\text{call}}$} & \makebox[1.4cm]{$T_{\text{total}}$} & \makebox[1.3cm]{$T_{\text{approve}}$} &
+\makebox[1.1cm]{$T_{\text{nonce}}$} \\
+\midrule
+interactive-short (default) & 30 min & 30 min & 30 min & 2 h & 15 min & 60 s \\
+persistent & 7 days & 7 days & 7 days & 28 days & 15 min & 60 s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent $T_{\text{approve}}$ (I13) is a freshness bound on an approval,
+not a liveness bound on the session, and is deliberately independent: in
+the persistent profile an approval given while the client is away still
+expires after 15 minutes and the call is rejected at drain, so the agent
+must ask again. A deployment that wants approvals to outlive a detachment
+raises $T_{\text{approve}}$ and accepts the weaker freshness.
+
+\paragraph{Interaction.} In $(\textsc{Det},\textsc{Pend})$ both timers
+run and whichever fires first terminates the session; the cumulative cap
+$T_{\text{total}}$ runs in the same cells and ends the session if it is
+reached first. Because a detached session ends at $T_{\text{detach}}$
+regardless, holding it open for a longer $T_{\text{human}}$ would serve
+no purpose. A deployment that must wait on a human for longer while the
+client is away MUST raise $T_{\text{detach}}$ (and $T_{\text{total}}$)
+accordingly.
+
+\paragraph{Conflict resolution (both timeouts fire simultaneously).}
+If both timeouts expire in the same tick in
+$(\textsc{Det},\textsc{Pend})$, the bridge MUST:
+\begin{enumerate}[leftmargin=2em]
+\item Emit \texttt{HUMAN\_TIMEOUT} (the human-side timeout event);
+\item Emit \texttt{DETACH\_TIMEOUT} (the detach-side timeout event,
+to preserve audit completeness --- suppressing it would lose
+information about which timeouts fired, contradicting the
+event-completeness rationale of Table~\ref{tab:event-completeness});
+\item Emit \texttt{TERMINATION} with reason field
+\texttt{human\_timeout+detach\_timeout (simultaneous)};
+\item Transition to $\bot$.
+\end{enumerate}
+The order of (1) and (2) is not normative; both MUST be emitted
+before (3). The choice of \texttt{human\_timeout} as the leading
+reason-token in (3) follows a default priority rule, not an
+alphabetical one: the human escalation is the semantically more salient event for
+audit consumers. The bridge
+SHOULD apply this default consistently across all simultaneous-timeout
+cases; operators MAY override the default priority via configuration
+(e.g., to prefer \texttt{detach\_timeout} in deployments where
+detach is the more salient signal). An override is a deployment
+configuration, not a contract violation.
+
+\paragraph{Edge cases (normative).}
+\begin{enumerate}[leftmargin=2em]
+\item \emph{Timer expiry in the same tick as an incoming request.}
+If a timer expires in the same tick as an incoming request that would
+move the session out of the timed cell (for example, $T_{\text{detach}}$
+expiring in the same tick as a re-attach request that names a valid
+prefix), the bridge MUST process the request first. If the request
+succeeds (e.g., \texttt{RESUME\_STARTED}), the timer is no longer
+applicable to the new cell and is not fired. If the request fails
+(e.g., \texttt{RESUME\_REJECTED}), the timer fires in the same tick
+and the session transitions accordingly. The reference bridges do not yet
+meet this rule: they evaluate the timers before the request, so a re-attach
+in that tick is answered \texttt{terminated} (limitations register).
+\item \emph{The same idempotency key arriving with different content.}
+A second tool call submitted with an idempotency key that is already
+queued MUST NOT be queued, regardless of whether the content matches
+or differs from the first submission; the caller is answered with the
+reason \texttt{duplicate\_key}. The first submission's content
+and hash are retained; the second is discarded and commits no event, so
+the log does not record the second submission (limitations register).
+\end{enumerate}
+
+\paragraph{Configuration.} Default values are informative.
+Operators MAY set the timers to any values $\geq 0$ that satisfy the
+bounds above. A timeout of $0$ means ``immediate termination on entry to the cell''; this is
+useful for testing and for deployments that prefer fail-fast.
+With $T_{\text{detach}} = 0$: on entry to a cell with $a=\textsc{Det}$,
+the bridge MUST still emit \texttt{DETACHMENT} +
+\texttt{RESUME\_PREPARED} (per I1) before transitioning to $\bot$ with
+\texttt{DETACH\_TIMEOUT} + \texttt{TERMINATION}.
+
+\subsection{Bridge restart and recovery}\label{sec:recovery}
+
+When the bridge process restarts with live sessions, it MUST recover
+each session from its durable event log (I12) before accepting any
+client message for it. The rules are:
+
+\begin{enumerate}[leftmargin=2em]
+\item \textbf{Replay.} Read the committed log from genesis (or from the
+latest verified checkpoint, I-CHECKPOINT), verify the hash chain (I5),
+and rebuild the cell, the scope and \texttt{scope\_version}, the
+registry of client keys, the tool queue, the idempotency keys, and the
+timer anchors. A trailing record
+that is not fully durable is discarded; by I12 it has no externally
+visible effect.
+\item \textbf{Transports are gone.} Every client transport was lost with
+the process, so every recovered active session has an empty client set
+and $a=\textsc{Det}$; the registered keys $K$ are rebuilt from the log,
+with the scheme tag and public key each event records, and the key registry
+in storage is repaired from them: the log is the source of truth, so a key
+missing from the registry is written back, an entry the log does not record
+(a crash between the registry write and the event commit leaves one) is
+dropped, and an entry whose scheme or public key differs from the log is
+replaced. \texttt{BRIDGE\_RECOVERED} names the key ids repaired.
+The bridge MUST emit \texttt{BRIDGE\_RECOVERED}, then \texttt{DETACHMENT}
+(reason \texttt{bridge\_restart}) and \texttt{RESUME\_PREPARED} (the
+resume record of the new detachment), before the cell changes.
+$T_{\text{detach}}$ restarts at the new \texttt{DETACHMENT}; the
+cumulative cap $T_{\text{total}}$ does not (a restart while detached
+continues the away interval, downtime included). Challenge
+nonces are volatile and are void after a restart: a client that holds
+one simply requests another (I11).
+\item \textbf{Elapsed timeouts.} $T_{\text{human}}$ is measured from the
+original \texttt{HUMAN\_PENDING} (A6). If it has already elapsed, the
+bridge MUST terminate the session after recovery with
+\texttt{HUMAN\_TIMEOUT} and \texttt{TERMINATION}. Likewise, if the
+cumulative cap $T_{\text{total}}$ has already been reached (downtime
+included), the reference bridge terminates the session after recovery with
+\texttt{DETACH\_TIMEOUT} and \texttt{TERMINATION}; $T_{\text{detach}}$
+itself has just restarted and cannot have elapsed.
+\item \textbf{Recovery failure.} If the chain does not verify, the
+bridge MUST NOT resume the session and leaves the key registry as it is.
+The bridge quarantines the session (rule~Q): it
+emits \texttt{RECOVERY\_FAILED} if it can still append, emits no
+\texttt{TERMINATION}, and leaves the session to an operator.
+A log that cannot be replayed at all (no \texttt{ATTACHED} event first, or
+one without the fields the session is built from) quarantines its own
+session in memory, appends nothing to it, and does not stop the recovery
+of the other sessions. A chain
+failure found during a re-attach is handled the same way, because the
+cause is the same and is not attributable to the client.
+\item \textbf{In-flight tool calls.} A call whose drain was committed
+but whose delivery the runtime did not acknowledge before the crash
+(\texttt{TOOL\_CALL\_DELIVERED}) is forwarded again, with the same
+idempotency key (I13), when the session is back in
+$(\textsc{Att},\textsc{None})$ (rule~D); it is not drained twice. A call
+that was queued but not drained is subject to the usual drain checks. The
+runtime deduplicates by key. Delivery is therefore at-least-once with
+deduplication, never silently lost, and a call that was committed as
+drained is never dropped silently either.
+\end{enumerate}
+
+Bridge availability (replication, failover to another host) is a
+deployment concern beyond this rule: the rules above hold for any bridge
+instance that has the durable log and the registered client keys.
+
+\subsection{Additional invariants}\label{sec:additional-invariants}
+
+The following invariants are conditioned on deployment-specific
+concerns or strengthen the core set $\{I_1, \ldots, I_7\}$. They are
+stated here to make normative requirements that would otherwise live
+in \S\ref{sec:limitations} live instead in the specification.
+
+\subsubsection{Event signing (Invariants I-SIGN-EVENT and I-SIGN-JWKS)}\label{sec:invariants-signing}
+
+\begin{invariant}[I-SIGN-EVENT --- Event signing in GEC-less deployments (SHOULD)]
+\label{inv:isign-sign}
+In a GEC-less deployment (Definition~\ref{def:gecless}), the bridge
+SHOULD sign each emitted event with an operator key whose JWKS
+endpoint is published through an out-of-band channel bound to the
+operator's deployment identity (per GAR \S 6.1).
+In a GEC-present deployment, the bridge forwards unsigned events to
+the GEC for signing; I-SIGN-EVENT is vacuous.
+\end{invariant}
+
+\begin{invariant}[I-SIGN-JWKS --- JWKS endpoint source restriction (MUST)]
+\label{inv:isign-jwks}
+The bridge MUST NOT accept a JWKS endpoint learned from
+session-supplied metadata. The JWKS endpoint used by the bridge for
+event signing (or for forwarding to the GEC) MUST be configured via
+an out-of-band channel bound to the operator's deployment identity.
+A JWKS endpoint learned from the client or from session-supplied
+metadata is not a trust anchor.
+\end{invariant}
+
+I-SIGN-EVENT is SHOULD (not MUST) because event signing requires
+operator key management infrastructure that may not be available in
+testing or small deployments. Operators who omit signing accept
+that downstream consumers cannot verify event provenance without an
+out-of-band trust channel. I-SIGN-JWKS is MUST because accepting
+session-supplied JWKS endpoints would allow the client (or an
+adversary) to substitute a different signing key, breaking the
+trust model; this is not optional regardless of deployment size.
+
+\subsubsection{QUIC 0-RTT replay (Invariant I8)}\label{sec:invariants-quic}
+
+\begin{invariant}[I8 --- QUIC 0-RTT replay rejection]\label{inv:I8}
+The bridge MUST NOT accept a client re-attach whose underlying
+transport is a replayed QUIC 0-RTT session. Replay detection is
+governed by AGTP-SESSION \S 10.5, which forbids establishing a session in
+0-RTT data, and by the replay-safety profile of AGTP-BINDINGS \S 4.6, which
+restricts early data to safe idempotent methods \cite{I-D.hood-agtp-bindings};
+the bridge defers to the transport layer for replay identification and rejects the re-attach (with
+\texttt{RESUME\_REJECTED}) if the transport reports a replay.
+\end{invariant}
+
+I8 is conditioned on the transport layer's replay detection. In
+deployments that do not use QUIC 0-RTT, I8 is vacuous. In deployments
+that do, the bridge's responsibility is to \emph{honour} the
+transport's replay verdict, not to perform replay detection itself.
+
+\subsubsection{Challenge nonce lifetime (Invariant I9)}
+\label{sec:invariants-ttl}
+
+\begin{invariant}[I9 --- Challenge nonce lifetime]\label{inv:I9}
+A challenge nonce (I11) is valid for $T_{\text{nonce}}$ after the bridge
+issued it, measured on the bridge's monotonic clock (A6). A re-attach
+that presents a nonce older than $T_{\text{nonce}}$ MUST be rejected
+with \texttt{RESUME\_REJECTED} (reason \texttt{nonce\_expired}). The
+rejection does not change the cell and does not terminate the session:
+only a timeout ($T_{\text{detach}}$, $T_{\text{total}}$ or, while an
+escalation is pending, $T_{\text{human}}$) ends a detached session. \emph{Default:}
+$T_{\text{nonce}} = 60$~seconds. \emph{Configurable:} yes,
+per-deployment.
+\end{invariant}
+
+A design that bounds the lifetime of a resume token issued at detach,
+and terminates the session when it expires, cannot serve a client that vanished abruptly: the token is minted when
+the client is already gone and has nowhere to be delivered. The
+challenge is instead minted when the client asks for it, so its
+lifetime can be short without ever stranding the client; I9 bounds the
+window in which a captured nonce and signature could be replayed, and
+nothing else.
+
+\subsubsection{Authority scope versioning (Invariant I10)}
+\label{sec:invariants-scope-version}
+
+\begin{invariant}[I10 --- Authority scope versioning]\label{inv:I10}
+The session's authority scope carries a monotonically increasing
+\texttt{scope\_version} counter, incremented on each successful
+narrowing (i.e., each \texttt{AUTHORITY\_NARROWED} event), in every
+cell. The counter starts at 0 at attach. Each
+\texttt{AUTHORITY\_NARROWED} event MUST include
+\texttt{new\_version} = \texttt{previous\_version} + 1 and a scope that
+is a strict subset of the current scope. A duplicate or out-of-order
+narrowing, or one whose proposed scope equals the current scope, MUST be
+rejected with \texttt{AUTHORITY\_NARROWING\_REJECTED}; a proposal that
+widens the scope is governed by I3 and is rejected with
+\texttt{AUTHORITY\_EXTENSION\_REJECTED}. A proposal that is not a strict
+subset of the current scope is therefore rejected: if it contains any
+permission the current scope lacks, including a partial overlap that also
+drops permissions, it is an extension and is rejected as above. A scope change that happened
+while the client was away is not a reason to refuse its re-attach: it is
+part of the replay that I4 requires, and the client reconciles to the
+new scope.
+\end{invariant}
+
+I10 gives auditors a monotonic history of authority scope changes per
+session. Regulators can trace the scope trajectory from attach
+(version 0) through any narrowings (versions 1, 2, \ldots) to the
+current state. With I3 it makes the authority of a session
+non-increasing for its entire life.
+
+\subsubsection{Challenge-response resume (Invariant I11)}
+\label{sec:invariants-token-auth}
+
+\begin{invariant}[I11 --- Authenticated single-use challenge]\label{inv:I11}
+\begin{enumerate}[leftmargin=2em,label=(\alph*)]
+\item \emph{Key binding.} The client registers a public key at attach;
+the key is recorded in the genesis \texttt{ATTACHED} event and bound to
+\texttt{Owner-ID}.
+\item \emph{Challenge.} To re-attach, the client first requests a
+challenge. The bridge returns a fresh nonce of at least 128 bits from a
+cryptographically secure source, bound to the session, valid for
+$T_{\text{nonce}}$ (I9) and usable once. Issuing a challenge is not a
+governance event and changes no state. The bridge SHOULD return a uniform rejection
+to unauthenticated callers (e.g., for an unknown session ID) so
+that the \texttt{challenge} op does not confirm session existence
+or lifecycle state. Nonces are not durable (Section~\ref{sec:recovery}).
+\item \emph{Proof of possession.} The re-attach request carries
+$(\mathit{nonce}, \mathit{seq}, \mathit{hash})$ and a signature, under
+a registered client key, over the tuple of Appendix~\ref{app:wire-format}
+(signature scope), which binds the operation (re-attach or join), the
+session, the key id, the nonce and the prefix. The request is authentic
+iff the signature verifies for the operation received. A request that
+names a key id the session does not register is answered as one whose
+signature does not verify (\texttt{bad\_signature}), so the answer does not
+list the registered key ids; the log records \texttt{unknown\_key}.
+\item \emph{Single use.} A nonce is consumed by the first authentic
+request that presents it, whether that request is then accepted or
+rejected for a later reason; a consumed nonce is never accepted again.
+A request that is not authentic does not consume the nonce. A request
+refused with \texttt{resume\_in\_progress} or \texttt{already\_attached} is
+authentic and so spends its nonce: a second device that meets a re-attach
+in progress asks for a new challenge. Both reasons are given only after the
+signature verifies, so neither tells an unauthenticated caller anything
+about the attachment.
+\item \emph{No state-changing rejection.} A request that fails (c), (d),
+I9, I8, I11-REVOKE or I4 MUST be answered with \texttt{RESUME\_REJECTED} and MUST NOT
+change the cell. Through the re-attach path, only a failure of hash-chain
+verification after acceptance (\texttt{RESUME\_FAILED}), which quarantines
+the session (rule~Q), or a timeout, which terminates it, changes the
+session's standing.
+\item \emph{Bounded issue, no eviction.} The bridge keeps at most a
+fixed number of live nonces per session (the reference bridges use 16), where
+live means unspent and unexpired. Issuing a challenge MUST NOT
+invalidate a live nonce: when the limit is reached the bridge discards
+spent and expired records to make room and, if none exists, refuses the
+challenge. A nonce a genuine client already holds therefore stays valid
+whatever other callers request. The \texttt{challenge} op is
+unauthenticated, so the limit also bounds what a caller without a key can
+do; the refusal reveals only that the session cannot issue a nonce now,
+and the rejection of a re-attach request is unchanged (the uniform rejection
+of (b)).
+\item \emph{Bounded logging of unauthenticated failures.} A failure
+before authentication (\texttt{transport\_replay}, \texttt{unknown\_key},
+\texttt{bad\_signature}) is recorded as \texttt{RESUME\_REJECTED} only
+until the session has recorded a fixed number of such failures since its
+last authentic request (the reference bridges use 16); further ones are
+refused in the same way and not recorded. A request whose signature
+verifies restores the allowance, and every failure of such a request is
+recorded. A replay of a captured authentic request also verifies, so
+whoever holds its bytes, not only the holder of the key, can restore the
+allowance: the limit bounds the failures before authentication between two
+verifying requests, not the log as a whole (Residual denial, below). The limit is held in
+memory, so a restart restores it; the number of unauthenticated records
+a session can gain is bounded by the limit for each period between
+restarts and authentic requests.
+\end{enumerate}
+\end{invariant}
+
+The verifier checks in this order: (1) key and signature, then
+(2) revocation (I11-REVOKE), then (3) nonce (unknown, consumed,
+expired), then (4) prefix (I4), so that an
+unauthenticated party learns nothing about the state of nonces or of the
+chain beyond a rejection. I11 ensures that knowing the session
+identifier is not enough and that a captured request that was accepted
+cannot be replayed (its nonce is spent, and an unspent nonce expires after
+$T_{\text{nonce}}$). It does not cover a request that was refused before
+authentication: its nonce stays live, and if the key it names is registered
+within $T_{\text{nonce}}$ (\texttt{CLIENT\_ADDED},
+\texttt{OPERATOR\_ADD\_KEY}), a replay of the captured bytes is accepted.
+Both reference bridges and the TLA+ model behave so; it is listed in the
+limitations register (Table~\ref{tab:limitations}), with the fix that is
+planned and not yet made. A rejected request does not change the cell, so a
+party without a key cannot terminate a session by presenting bad requests;
+it can still end a detached session by holding the live-nonce limit
+(Residual denial, below). Theft of a client key is out of scope (A7).
+
+\paragraph{Residual denial.} Item (f) stops a caller without a key from
+invalidating a nonce, and item (g) bounds the failures before
+authentication that it can have recorded between two verifying requests.
+Neither bounds the log as a whole: a caller that holds the bytes of one
+captured authentic request can replay it, each replay verifies, is
+recorded (\texttt{nonce\_used}) and restores the allowance of (g), so the
+log grows linearly in the caller's effort (Appendix~\ref{app:attacker},
+Limits). Nor do they stop it from using up the live-nonce limit: while the limit is
+held by its nonces, a client that needs a new challenge is refused until
+one expires, up to $T_{\text{nonce}}$ later, and the caller must keep
+asking at that rate to keep the limit held. A client that already holds a
+nonce is not affected. A detached client that needs a challenge is, and if
+the caller keeps the limit held until $T_{\text{detach}}$ elapses, the
+session ends with \texttt{DETACH\_TIMEOUT}: a party that knows only the
+session identifier can terminate a detached session this way. L1 is
+therefore a bound on how long a session stays detached, not an
+availability property. A deployment that needs more than this authenticates
+or rate-limits the transport in front of \texttt{challenge} (for example
+per source address); the contract has no identity to limit by before a
+signature.
+
+\paragraph{Outsider.} In this document an \emph{outsider} is a party that
+observes and modifies the traffic between a client and the bridge, knows
+the session identifier, and has seen earlier challenges and requests, but
+holds no registered private key of the session (A7). I11 states that an
+outsider cannot have a re-attach request accepted, and cannot spend a
+nonce, except with a probability that is negligible under the assumptions
+of A3 on the signature scheme and on the nonce source; the reference
+bridges and the model do not yet meet this for a request that was refused
+before its key was registered (above). I11-REVOKE extends
+the refusal to a party that holds a key revoked before the request: its
+signature verifies, and the request is refused as \texttt{revoked\_key}.
+The model has an explicit attacker (Appendix~\ref{app:attacker}): it observes
+the log and the wire, replays and reorders, submits with keys it does not
+hold and never obtains a client key. TLC checks, in the attacker
+configuration, that every request accepted on entering $a=\textsc{Res}$ or
+on a join carries a signature that an honest client produced for that key,
+nonce and prefix verdict (\texttt{NoForgery}), so the attacker cannot build
+an acceptable signature of its own. The property admits the replay of an
+honest signature whose nonce is still live, and the model reaches one: an
+honest request for a key not yet registered is refused without spending
+its nonce, and after the key is added the attacker presents the observed
+signature and joins. The stronger property, that every accepted request was
+presented by an honest client, is not checked. The unforgeability of the signature scheme is assumed
+(UF, stated there) and the statement about concrete signatures rests on the
+tests and mutants of the reference implementations.
+
+\paragraph{Relayed requests.} The signed message of a re-attach covers
+the operation, the session, the key, the nonce and the prefix, and no
+identifier of the transport channel. A party that relays a genuine client's signature,
+obtained for a nonce the bridge issued, is therefore not distinguishable
+from the client at the contract level. Protection rests on the client
+signing only nonces it requested from the bridge it means to reach, and
+on the transport authenticating the bridge to the client. A deployment
+that needs more can bind the signature to a channel identifier (for
+example a TLS exporter value); this document does not specify that
+binding.
+
+\paragraph{Extension I11-REVOKE (key lifecycle).}
+A key that has been revoked (recorded in the log with
+\texttt{KEY\_REVOKED}) MUST NOT be accepted for re-attach or join,
+even if the signature verifies. The rejection is
+\texttt{RESUME\_REJECTED} (reason \texttt{revoked\_key}); the cell
+does not change, and the nonce is spent (I11d). The verifier checks
+revocation after key/signature verification and before the nonce
+check, so an unauthenticated party learns nothing about nonce state.
+Spending the nonce is a deliberate trade: leaving it live on a
+revoked-key attempt would tell the holder of a revoked key that the
+nonce is still outstanding (an oracle), at the price that such a holder,
+who has a valid signature, can burn the outstanding nonce and force the
+legitimate client to request another; this costs one round trip and
+grants no access.
+
+Revocation is operator-signed (Section~\ref{sec:invariants-token-auth}): the \texttt{KEY\_REVOKED}
+event carries an Ed25519 signature under the operator key over
+\texttt{["bc/v1/revoke", bridge\_id, sid, key\_id, reason, seq, head]},
+and the bridge MUST verify it before committing the event (reason
+\texttt{operator\_signature\_invalid}; nothing is committed). A client
+may \emph{request} revocation (\texttt{KEY\_REVOCATION\_REQUESTED},
+informational), but only a revocation with a verifying operator signature
+is executed. The same holds for \texttt{OPERATOR\_ADD\_KEY}
+(\texttt{["bc/v1/add-key", bridge\_id, sid, key\_id, scheme, public\_key,
+seq, head]}) and \texttt{OPERATOR\_TERMINATION}
+(\texttt{["bc/v1/terminate", bridge\_id, sid, reason, seq, head]}). The
+bridge identity and the log position bind a signature to one bridge and
+one moment: \texttt{seq} and \texttt{head} are the sequence number and the
+hash of the last committed event of the session when the operator signs,
+and the bridge verifies against the current last event, so a signature
+verifies only while nothing has been committed after the position it names.
+A captured operator action cannot be replayed at another bridge or later in
+the session's life; if the log has moved, the operator signs again. The
+bridge checks them against the operator key that
+verifies scope grants; which key that is, and how it is protected, is
+the deployment's.
+
+\textbf{Soft vs hard revocation.} The \texttt{reason} field
+distinguishes the two:
+\begin{description}[leftmargin=2em]
+\item[\texttt{rotation} (soft).] The key is revoked for new
+re-attach and join, but already-attached connections using this key are
+not disconnected and the key stays in $C(s)$ until its transport leaves
+(I15(e)). Used for rotation (\texttt{CLIENT\_ADDED} $\to$
+overlap $\to$ \texttt{KEY\_REVOKED}).
+\item[\texttt{compromise} (hard).] The key is revoked for all
+purposes. A connection using this key leaves $C(s)$ at once (I15(e)); if
+it was the only connected client, or the key whose re-attach was being
+verified, the session is forcibly detached (\texttt{DETACHMENT} +
+\texttt{RESUME\_PREPARED}). Used for compromise response.
+\end{description}
+
+\textbf{Key exhaustion.} When the last active (unrevoked) key in $K(s)$ is
+revoked, the session enters a \texttt{key\_exhausted} state: a side
+predicate on the session, not a cell of the product machine and not
+rule~Q. The session keeps its current cell and accepts no client
+operation. The timers keep running: $T_{\text{detach}}$,
+$T_{\text{human}}$ and the cumulative cap $T_{\text{total}}$ are
+evaluated as in any session, a restart treats the session like any other
+(it is recovered as detached and $T_{\text{detach}}$ restarts), and the
+loss of a client's transport detaches it. Only these operations are
+permitted: \texttt{OPERATOR\_ADD\_KEY} (adds a new key, clears
+\texttt{key\_exhausted}) and \texttt{OPERATOR\_TERMINATION}
+(transitions to $\bot$). A termination without the operator's signature
+(the unsigned \texttt{terminate} of the transport binding) is refused on an
+exhausted session and commits nothing; a quarantined session is still ended
+by it. Unless the operator adds a key, an exhausted
+session that is detached therefore terminates after the detachment bound
+($T_{\text{detach}}$ of the detachment, or $T_{\text{total}}$); one that
+stays in $a=\textsc{Att}$ on a softly revoked key does not (see the hazard
+below); once
+the session has terminated, adding a key or terminating it changes
+nothing. This is distinct from rule~Q (storage
+corruption): key exhaustion is a deliberate action by an authorised
+party, and it has a recovery path.
+
+\textbf{Deployment hazard: rotating the only key.} A soft revocation
+of the only registered key reaches \texttt{key\_exhausted} just as a
+hard one does, but leaves the revoked key connected: the session stays
+in $a=\textsc{Att}$, accepts no client operation, and runs no detach
+timer. It ends only when the transport of that client is lost (the
+session is then detached and $T_{\text{detach}}$ applies) or the operator
+acts, so the runtime behind it may keep executing meanwhile. The
+recommended operator procedure is to rotate by adding the new key first
+(\texttt{CLIENT\_ADDED}, then \texttt{KEY\_REVOKED} of the old key), so
+that the registry never holds zero active keys. A hard revocation of
+the only key detaches the client, so the exhausted session is detached
+and ends by timeout unless a key is added in time.
+
+\subsubsection{Durable append (Invariant I12)}
+\label{sec:invariants-durable}
+
+\begin{invariant}[I12 --- Durable append]\label{inv:I12}
+An event is \emph{committed} when it is durable on the medium assumed
+by A1 (e.g., after \texttt{fsync} or an equivalent barrier). The bridge
+MUST NOT change the cell, forward a message to the agent runtime, or
+acknowledge any client request that depends on an event until that event
+is committed.
+\end{invariant}
+
+I12 is what gives I7 its meaning in a process that can crash. It is
+checked by the recovery rules of Section~\ref{sec:recovery}.
+
+\subsubsection{Queue integrity and approval freshness (Invariant I13)}
+\label{sec:invariants-queue}
+
+\begin{invariant}[I13 --- Queue integrity and approval freshness]\label{inv:I13}
+Every queued tool call carries an \emph{idempotency key}, unique within
+the session, which MUST be forwarded to the runtime with the call. The
+key is supplied by the runtime when it can and generated by the bridge
+otherwise; a call that is forwarded again after a restart reuses the
+key it was queued with, never a new one. The
+queue has a maximum size ($Q_{\max}$, default 64) and each queued call a
+lifetime ($T_{\text{call}}$, default $T_{\text{human}}$, with
+$T_{\text{call}} \leq T_{\text{human}}$ as a
+MUST, Section~\ref{sec:timeouts}). A call arriving at a full
+queue MUST be rejected with \texttt{TOOL\_CALL\_REJECTED}; a call whose
+key is already queued MUST NOT be queued twice; an expired call MUST be
+removed with \texttt{TOOL\_CALL\_EXPIRED}. A human approval
+(\texttt{HUMAN\_RESOLVED}) is valid for $T_{\text{approve}}$ (default
+15 minutes) from its emission; a call held under the detached-call
+policy (rule~D, calls outside an escalation) has no escalation approval
+and relies on its own answer (I14) and $T_{\text{call}}$. When the queue drains (rule~D), every
+call MUST be re-validated against the \emph{current} authority scope and
+approval, and against its answer (I14); a call that requires a permission the scope no longer
+contains, or whose approval has expired, MUST NOT be forwarded and is
+audited with \texttt{TOOL\_CALL\_REJECTED} or \texttt{TOOL\_CALL\_EXPIRED}
+respectively.
+\end{invariant}
+
+I13 prevents a long detach from replaying stale or over-privileged side
+effects (for example, a queued \texttt{git push} that was approved
+hours earlier). A rejected-at-drain call is not retried; the agent must
+re-escalate.
+
+\subsubsection{Answer binding (Invariant I14)}
+\label{sec:invariants-answer}
+
+\begin{invariant}[I14 --- Answer binding]\label{inv:I14}\label{inv:answer_binding}
+Let $h(x)$ be the SHA-256 of the canonical JSON of $x$. Every queued tool
+call records $h_q = h(\{\mathit{tool}, \mathit{permission},
+\mathit{content}\})$ in \texttt{TOOL\_CALL\_QUEUED}, where \emph{content}
+is what the human is shown to decide on that call (arguments and any
+explanation), taken as null when the runtime supplies none; the tool name
+and the permission are hashed in every case, so the hash does not depend on
+what the runtime chose to put in \emph{content}. The event retains the
+tool, the permission and the content as hashed. A human decision on a call is
+recorded as \texttt{TOOL\_CALL\_ANSWERED} carrying the call's key, the
+decision (approve or deny) and $h_a$, the hash of the call (tool, permission
+and content) the human's client displayed when the human decided. The first answer to a
+call is final; a second one MUST be refused. When the queue drains
+(rule~D), a call MUST be forwarded only if it has an approving answer
+with $h_a = h_q$, and the request the bridge forwards MUST be the tool,
+permission and content the bridge hashed at queue time, taken from the
+retained record (the bridge MUST NOT synthesise, substitute or alter the
+call between queue and forward). Otherwise it MUST NOT be forwarded and is audited with
+\texttt{TOOL\_CALL\_REJECTED} and the reason \texttt{unanswered},
+\texttt{denied} or \texttt{answer\_mismatch}. The
+\texttt{TOOL\_CALL\_DRAINED} event repeats $h_q$ together with the
+retained tool, permission and content, so a forward repeated after a restart
+sends the same request.
+\end{invariant}
+
+I14 binds the bridge's forwarded request to the hash recorded at
+queue time and the hash reported in the answer. A view
+that is reset, re-rendered or compacted after a resume cannot silently
+change what was approved: if the client now displays something else, its
+answer carries a different hash and the call is not forwarded. I14
+protects against content drift by an honest client whose rendering
+differs from what the bridge recorded; it does not protect against a
+malicious client that reports whatever hash it was given (the bridge has
+no independent view of what the client displayed). The
+approval of I13 (\texttt{HUMAN\_RESOLVED}) says that the escalation is
+over and how long answers stay fresh; I14 says what each answer was an
+answer to. The two anchors are independent and a drain needs both: a call
+is forwarded only if its own answer matches (I14) and the approval of its
+escalation has not lapsed (I13). With the persistent profile an approval
+given while the client is away is void $T_{\text{approve}}$ after the
+human gave it, so a client that returns later finds the call expired
+(\texttt{approval\_ttl}) and the agent must re-escalate; this is
+deliberate. I14 does not say that the content is a faithful description
+of the action the runtime will perform: that is outside what a bridge can
+see (Section~\ref{sec:coverage}).
+
+\subsubsection{Client set (Invariant I15)}
+\label{sec:invariants-client-set}
+
+\begin{invariant}[I15 --- Client set coherence]\label{inv:I15}
+\begin{enumerate}[leftmargin=2em,label=(\alph*)]
+\item \emph{Derivation.} $C(s) \subseteq K(s)$, and the attachment is
+the function of $C(s)$ defined in Section~\ref{sec:product-model}:
+$a=\textsc{Att}$ iff $|C|\geq 1$ (outside a verification in progress).
+\item \emph{Departure.} The transport disconnect of a client while
+$|C| \geq 2$ MUST emit \texttt{CLIENT\_LEFT} and MUST NOT change the cell,
+emit \texttt{DETACHMENT} or start $T_{\text{detach}}$. Only the
+departure of the last connected client detaches the session (I1).
+\item \emph{Joining.} After attach (whose key is the first member of $C$), a key enters $C$ only through an authentic request
+that passes I9, I11 and I4 (a join while $a=\textsc{Att}$, a re-attach
+while $a=\textsc{Det}$). A re-attach request while $a=\textsc{Att}$ is
+refused with \texttt{already\_attached}, so a proof made for a re-attach
+never causes a join. A key not in $K$ is never accepted.
+\item \emph{Registration.} A key enters $K$ only at attach, through
+\texttt{CLIENT\_ADDED} or through the operator-signed
+\texttt{OPERATOR\_ADD\_KEY} (on a \texttt{key\_exhausted} session, in any
+cell). \texttt{CLIENT\_ADDED} is authorised by a client in $C$ by a signature
+under its own registered key over the new key, the session and a
+bridge-issued single-use nonce, under its own domain tag (Appendix~\ref{app:wire-format});
+a request without such a signature, with one made for another operation,
+key or session, or with a spent, unknown or expired nonce is refused with
+a named reason and commits nothing. Knowing the key id of a connected
+client is therefore not authority. \texttt{CLIENT\_ADDED} is impossible while
+$a \neq \textsc{Att}$. The new key is bound to the same
+\texttt{Owner-ID}.
+\item \emph{Revocation (I11-REVOKE).} Revoked keys remain in $K(s)$
+with \texttt{revoked\_at} and \texttt{reason} markers; they are
+never deleted. A key revoked for \texttt{compromise} (hard) leaves
+$C(s)$ at once. A key revoked for \texttt{rotation} (soft) stays in
+$C(s)$ for as long as its transport is connected and leaves it when the
+transport does; it cannot join or re-attach. A key enters the revoked
+state via \texttt{KEY\_REVOKED} (operator-signed, see the
+revocation paragraph of Section~\ref{sec:invariants-token-auth}) and
+never returns to the active state.
+\end{enumerate}
+\end{invariant}
+
+I15 is what makes ``attached'' mean the same thing for a phone and a
+laptop: the session is detached only when nobody is connected, a scope
+narrowed from one device reaches every other device through the replay of
+its next join or re-attach (I4), and no device can be added by someone who
+is not already trusted by an attached one. With I11-REVOKE, a hard-revoked key is no longer in $C(s)$ even if its
+transport is still connected (hard revocation removes it, and detaches the
+session if it was the last connected client), whereas a
+soft-revoked key stays in $C(s)$ until its transport leaves; the session
+is detached only when no key in $C(s)$ has a connected transport.
+
+\subsubsection{Checkpoint anchoring (Invariant I-CHECKPOINT)}
+\label{sec:invariants-checkpoint}
+
+\begin{invariant}[I-CHECKPOINT --- Checkpoint anchoring (SHOULD)]\label{inv:icheckpoint}
+The bridge SHOULD emit a \texttt{CHECKPOINT} event at least every $N$
+events (default 1000) or every $T_{\text{cp}}$ (default 5 minutes),
+whichever comes first. The event carries the Merkle root (Appendix~\ref{app:merkle})
+over the hashes of all preceding events of the session, the tree size, and
+a signature under the operator key. The bridge SHOULD submit the
+checkpoint to an external append-only transparency log (e.g., SCITT)
+and record the receipt in the event payload.
+\end{invariant}
+
+Checkpoints let an auditor detect a bridge that rewrites history after
+the fact, which the hash chain alone cannot (A4), provided the receipt is
+anchored in an external log (a SHOULD); without it the operator key can
+sign a rewritten log afresh. They also let recovery and
+re-attach verify only the chain suffix after the latest verified
+checkpoint, giving verification cost $O(m)$ in the suffix length $m$
+rather than $O(n)$ in the whole log. The $O(n)$ full-chain verification
+remains the fallback.
+
+\subsection{Product model and derived view}\label{sec:mece-status}
+
+The product machine of Definition~\ref{def:sm} is mutually exclusive and
+collectively exhaustive over the dimensions it names: every
+configuration of a live session is exactly one of the active cells
+or $\bot$, and the human and attachment dimensions are independent. In
+particular there is no artificial transition that merely changes which
+dimension is salient. The names of the derived view are
+retained because they make the gap classes G1--G4 of
+Definition~\ref{def:gap} visible at a glance, but they are a lossy fold
+and are not normative. Appendix~\ref{app:product-model} gives the
+mapping.
+
+\subsection{Safety argument}\label{sec:safety-argument}
+
+The following is a \emph{safety argument}, not a formal theorem. A
+formal theorem would require a proof (by induction, model checking, or
+both) that $\forall \tau: \mathrm{Safe}(\tau)$ holds under the
+invariants and axioms, for the predicate $\mathrm{Safe}(\tau)$ over
+execution traces $\tau$ defined below. The
+present argument is informal and goes property by property, not by a
+full induction over the trace length;
+the conformance suite in Section~\ref{sec:conformance} provides
+executable evidence for the invariants in a controlled test setting,
+but does not constitute a formal proof.
+
+Let $\tau$ be an execution trace of a bridge $B$. Define
+$\mathrm{Safe}(\tau) = \mathrm{Audited}(\tau) \wedge
+\mathrm{NoDrift}(\tau) \wedge \mathrm{NoLoss}(\tau)$, one conjunct for
+each of the conclusions (a), (b) and (c) of Safety Argument~1:
+\begin{description}[leftmargin=2em]
+\item[$\mathrm{Audited}(\tau)$.] Every step of $\tau$ that changes the
+cell also commits events whose \texttt{prev\_hash} links them to the
+previous committed event (I5, I7, I12).
+\item[$\mathrm{NoDrift}(\tau)$.] No step of $\tau$ widens the scope
+that the bridge holds (I3, I10).
+\item[$\mathrm{NoLoss}(\tau)$.] Every event committed before a detach, a
+restart or a re-attach is replayed to the re-attaching presenter or is
+recoverable from the committed log (I1, I4, I5, I11), for a log whose
+last events the bridge has not truncated or rewritten (A1, A4; I5 does not
+detect that).
+\end{description}
+TLC checks these conjuncts on bounded configurations, and not all
+equally. $\mathrm{NoDrift}$ is checked directly: I3 and I10 are TLC state
+invariants and step properties. In $\mathrm{Audited}$ the step property
+of I7 (a cell change commits new events) is checked, while the hash
+link is a corruption flag in the model (I5). In $\mathrm{NoLoss}$, I1 is a
+TLC state invariant, while the prefix check is a flag (I4) and the proof of
+possession is a possession predicate against an attacker that holds no client
+key (I11). Table~\ref{tab:invariant-independence} records the
+status of each invariant.
+
+\begin{quote}
+\textbf{Safety Argument 1} (no unaudited state transition, no
+authority drift, no lost events). Let $B$ be a bridge implementation
+that satisfies Invariants I1--I7, I10, I11 and I12 under Axioms A1--A7. Then
+no execution of $B$ produces (a) an unaudited state transition,
+(b) an authority extension granted in any cell, or (c) a lost event during
+detach--resume--reattach or across a restart, for a committed log whose
+last events have not been truncated or rewritten (A1, A4).
+\end{quote}
+
+\emph{Argument.} The argument takes each conclusion from the invariants
+and lemmas it names; it is not a complete induction over the trace length.
+
+\emph{Base case.} The genesis event is emitted with
+\texttt{prev\_hash} = $\epsilon$ (empty string), satisfying I5, and is
+committed before the cell is set to $(\textsc{Att},\textsc{None})$,
+satisfying I7 and I12. No authority extension occurs at attach, satisfying
+I3. No detach has occurred, so I1 is vacuously satisfied. The tool queue
+is empty, so I2 is vacuously satisfied.
+
+\emph{Per-property argument.} Assume the invariants hold. It does not
+split into the kinds of step (timeout termination, drain and forward,
+operator actions, client departure, quarantine by rule~Q), and those step
+kinds are not covered by it; they rest on the invariants' own statements, on
+the tests and mutants, and on TLC on bounded configurations.
+
+\emph{(a) Unaudited state transition.} By Lemma~\ref{lem:atomicity}
+(I5 $+$ I7 $+$ I12), the events are committed before the cell changes
+and carry a valid \texttt{prev\_hash} linking them to step $k$'s last
+event. Hence the transition is audited.
+
+\emph{(b) Authority extension.} By Lemma~\ref{lem:no-drift}
+(I3 $+$ I10), a widening attempt in any cell is rejected, emits
+\texttt{AUTHORITY\_EXTENSION\_REJECTED}, and does not mutate the scope
+the bridge holds. Hence no authority extension is granted; one that the
+runtime performs on its own is reported, not prevented.
+
+\emph{(c) Lost event during detach--resume--reattach.} By
+Lemma~\ref{lem:recover} (I1 $+$ I4 $+$ I5 $+$ I11), on detach,
+\texttt{RESUME\_PREPARED} is committed before the cell changes. On
+re-attach, only a presenter that holds a registered key and answers a
+live, unused nonce is admitted (modulo the pre-registration replay of
+Table~\ref{tab:limitations}), and only for a history that is a prefix
+of the chain (I4, I11); every later event is replayed to it. On success,
+the bridge enters $a=\textsc{Res}$ and re-verifies the hash chain. By I5, any edit or reordering of the chain before its last events is
+detected; removal or rewriting of the last events is not (Section~\ref{sec:limitations}). Across a restart, the cell is rebuilt from the committed log
+(Section~\ref{sec:recovery}), so no committed event is lost, provided
+the committed log has not been cut back or had its last events rewritten
+(A1, A4). $\square$
+
+\begin{remark}
+The argument above is informal. The invariants it relies on are checked
+by TLC on bounded configurations (Appendix~\ref{app:formal}) to the
+extent recorded in Table~\ref{tab:invariant-independence}: some are
+checked as TLC state invariants or step properties, some are abstracted
+in the model (I4, I5 and I14 hold only as flag abstractions there; I11 is
+checked against an attacker, with the scheme's unforgeability assumed);
+I11-REVOKE is checked in part (the state invariant \texttt{IRev} and
+step properties; the operator signature and the wire form only by tests),
+and I8 is tests-only. For I6 and for the no-eviction rule of I11 (f) the
+TLC checks are vacuous as configured, so these rest on the tests and
+mutants. The reference suite, its
+mutants and the shared vectors (Section~\ref{sec:conformance})
+exercise the invariants in a controlled test setting. The invariants
+are the author's statement of what the bridge must preserve, derived from
+the design; the STRIDE-lite threat model (Section~\ref{sec:threat-model}) is
+a second enumeration by the same author, and no hazard analysis from the
+operator's side backs the set. Consistency with the stated invariants
+therefore does not show that the set is complete for an operator's safety.
+A full formal
+proof requires a proof of $\mathrm{Safe}(\tau)$ for every trace of
+the unbounded product machine, and Coq/Isabelle mechanisation;
+these are targets for a future revision.
+\end{remark}
+
+% ================================================================================

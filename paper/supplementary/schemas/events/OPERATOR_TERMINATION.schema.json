@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/OPERATOR_TERMINATION.schema.json",
+  "title": "OPERATOR_TERMINATION payload",
+  "x-invariants": "I11-REVOKE, I6",
+  "description": "Operator terminates a key_exhausted session.",
+  "type": "object",
+  "properties": {
+    "reason": {"type": "string"},
+    "signature": {"type": "string", "description": "Ed25519 operator signature over [session_id, reason]."}
+  },
+  "required": ["reason", "signature"],
+  "additionalProperties": false
+}

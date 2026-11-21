@@ -1,0 +1,552 @@
+\section{Bridge Contract Specification}
+\label{sec:spec}
+
+The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be
+interpreted as described in BCP~14~\cite{bradner1997key,leiba2017rfc} when,
+and only when, they appear in all capitals.
+% ================================================================================
+
+\begin{definition}[Bridge Contract]\label{def:bc}
+A \emph{Bridge Contract} is a tuple $BC = (S, E, R, C)$ where
+\begin{itemize}[leftmargin=2em]
+\item $S$ is a \emph{Session Identity Descriptor};
+\item $E$ is the set of \emph{Mandatory Governance Events} the bridge
+must emit under specified conditions;
+\item $R$ is a \emph{Resume Record} the bridge must durably produce
+on client detach, and the re-attach protocol that uses the chain, not a
+client-held artefact, to resume;
+\item $C$ is the set of \emph{Conformance Criteria} (invariants) against
+which any implementation can be independently verified: the core
+invariants I1--I7 and the extended MUST invariants I8 (QUIC 0-RTT replay), I9 (challenge
+nonce lifetime), I10 (authority scope versioning), I11 (authenticated
+single-use challenge) with its normative extension I11-REVOKE (key
+revocation, \S\ref{sec:invariants-token-auth}), I12 (durable append), I13 (queue integrity
+and approval freshness), I14 (answer binding), I15 (client set), I-GRANT (attach authorisation), I-OPERATOR (operator
+signature on revocation, key addition and termination), and I-SIGN-JWKS
+(JWKS source restriction), as
+defined in \S\ref{sec:additional-invariants}. I-SIGN-EVENT (event
+signing in GEC-less deployments) and I-CHECKPOINT (checkpoint
+anchoring) are SHOULD.
+\end{itemize}
+\end{definition}
+
+\subsection{Session Identity Descriptor ($S$)}
+
+\begin{definition}[Session Identity Descriptor]\label{def:sid}
+A Session Identity Descriptor $S$ is a tuple
+\[
+S = (\mathit{sid},\ \mathit{pid},\ \mathit{scope},\ \mathit{lineage})
+\]
+where $\mathit{sid}$ is a session identifier (matching AGTP's
+\texttt{Session-ID} header), $\mathit{pid}$ is the principal identifier
+(matching AGTP's \texttt{Owner-ID}), $\mathit{scope}$ is the
+authority scope (matching AGTP's \texttt{Authority-Scope}), and
+$\mathit{lineage}$ is the task lineage (a sequence of task identifiers
+rooted in the originating task). At attach the client also registers
+a public key, recorded with its scheme tag in the genesis
+\texttt{ATTACHED} event and bound to $\mathit{pid}$ (I11). The principal
+may register further keys (\texttt{CLIENT\_ADDED}, which records the key
+the same way); the session thus has a set of registered keys and a set of
+connected clients (I15). Key identifiers are scoped to a session: the
+registry maps a session identifier and a key identifier to a key, a key
+identifier already registered in a session is never registered again in
+it, and a second session that uses the same identifier for another key
+neither replaces nor can use the first session's key. The descriptor also exposes an
+\emph{authority hash}: the SHA-256 of the canonical JSON (RFC~8785~\cite{rundgren2020json}) of the
+object with members \texttt{principal}, \texttt{scope} and
+\texttt{lineage}, as lowercase hexadecimal truncated to its first 16
+characters (64 bits). It is an identifier carried in events so that a
+reader can tell which authority a record refers to; no invariant depends
+on it, and it is not a commitment against a determined adversary.
+\end{definition}
+
+\paragraph{Authorisation boundary.}
+The contract guarantees key possession at attach (I11): the client
+proves it holds the private key corresponding to the registered
+public key, by a signature with that key over the attach tuple
+(Appendix~\ref{app:wire-format}); a missing or invalid proof is refused
+with the reason \texttt{possession\_invalid}, nothing is committed and no
+key is registered. Key possession is not authorisation: the initial scope
+at attach MUST be granted by a trusted authority outside the
+contract (e.g., an operator-signed scope grant, or an AGTP identity
+document that the bridge verifies). The \texttt{attach} request
+carries the grant. The grant is opaque to the contract: the bridge
+MUST present the session identity, the client key and the grant to the
+deployment's grant verifier, MUST NOT commit \texttt{ATTACHED} unless the
+verifier accepts, and a bridge with no verifier configured MUST refuse
+every attach (reason \texttt{grant\_invalid}; nothing is committed and no
+key is registered). The grant MUST bind the identity of the bridge it is presented
+to, the session identifier, the principal, the scope, the lineage and
+the client key (its identifier, scheme tag and public key) under its own
+domain tag, so that it cannot be replayed for another session, scope,
+key or bridge, and so that a party that sees a grant cannot attach the
+same session with another public key under the granted key identifier. A client-asserted scope without a verifying grant is not a valid
+initial scope. I3 and I10
+lock relative to the granted scope, not relative to a
+client-asserted scope. Authorisation of the principal identity is
+similarly a deployment concern, like the human-approval channel
+(Table~\ref{tab:deployment-requirements}): the deployment MUST
+document how the principal identity is established and by which
+authority.
+
+\paragraph{Scope semantics.}
+Scope is a set of opaque permission identifiers (e.g.,
+\texttt{read:docs}, \texttt{exec:shell}). The subset relation used
+by I3 and I10 is set-theoretic: $S' \subseteq S$ iff every
+permission in $S'$ is in $S$. No hierarchical or semantic
+relationship between permissions is assumed. Canonicalisation is
+lexicographic sort of the permission strings. A deployment whose scope
+has structure (for example a hierarchy of permissions) must map it to
+opaque identifiers so that its own order is the subset relation; a
+structure that cannot be mapped that way is outside this document.
+
+\subsection{Mandatory Governance Events ($E$)}
+
+The bridge MUST emit the following Governance Events under the specified
+conditions. Each event is a JSON object in a GAR-shaped
+(same canonicalisation per RFC~8785, same hash-chaining, same causal
+ordering; a field-level mapping to GAR record types is future work).
+Table~\ref{tab:events} lists them; the payload of each kind is specified
+by a JSON Schema in \texttt{supplementary/schemas/} (Section~\ref{sec:schemas}).
+
+\begin{longtable}{p{0.30\columnwidth} p{0.62\columnwidth}}
+\caption{Mandatory Governance Events ($E$).}\label{tab:events}\\
+\toprule
+\textbf{Event} & \textbf{Trigger} \\
+\midrule
+\texttt{ATTACHED} & On session attach (genesis event); carries the
+client's registered public key and its scheme tag. \\
+\texttt{DETACHMENT} & On the transport disconnect of the last connected
+client while the attachment is $\textsc{Att}$, of the re-attaching client
+while it is $\textsc{Res}$, and on bridge restart (reason
+\texttt{bridge\_restart}). \\
+\texttt{CLIENT\_JOINED} & On a join: an authentic request from a
+registered key while the attachment is $\textsc{Att}$ (I15). Carries the
+acknowledged $(\mathit{seq}, \mathit{hash})$. \\
+\texttt{CLIENT\_LEFT} & On the disconnect of one client while others
+remain connected (I15); does not change the cell. \\
+\texttt{CLIENT\_ADDED} & On registration of a further client key for the
+principal, authorised by a signature of a connected, unrevoked client
+over the new key and a single-use nonce (I15). \\
+\texttt{RESUME\_PREPARED} & Immediately after \texttt{DETACHMENT}
+and before any state mutation; once per detachment. It is the bridge's
+own resume record (Definition~\ref{def:rt}); nothing is delivered to the
+client. \\
+\texttt{RESUME\_STARTED} & On a re-attach request that is authentic
+(I11), carries a live unused nonce (I9) and names a prefix of the chain
+(I4); enters $\textsc{Res}$. Carries the acknowledged
+$(\mathit{seq}, \mathit{hash})$ and a digest of the nonce. \\
+\texttt{RESUME\_REJECTED} & On a re-attach request that fails
+authentication, presents a consumed, expired or unknown nonce, names a
+history that is not a prefix of the chain (I4), or is reported as a
+0-RTT replay (I8). Informational; does not change the cell. Carries a
+reason. \\
+\texttt{RESUME\_VERIFIED} & On successful verification of the
+hash chain during client re-attach; returns to $\textsc{Att}$. \\
+\texttt{RESUME\_FAILED} & On failed verification of the hash
+chain during client re-attach; the session is quarantined (rule~Q). \\
+\texttt{HUMAN\_PENDING} & On agent escalation to a human; sets the
+human dimension to $\textsc{Pend}$. \\
+\texttt{HUMAN\_RESOLVED} & On human resolution; sets the human dimension
+to $\textsc{None}$ and carries the approval validity (I13). The queue
+drains once attached (rule~D). \\
+\texttt{HUMAN\_TIMEOUT} & On expiry of the human timeout
+(Section~\ref{sec:timeouts}); transitions session to $\bot$ with
+reason \texttt{human\_timeout}. \\
+\texttt{DETACH\_TIMEOUT} & On expiry of the detach timeout $T_{\text{detach}}$ or of
+the cumulative cap $T_{\text{total}}$
+(Section~\ref{sec:timeouts}) while $a=\textsc{Det}$; transitions
+session to $\bot$ with reason \texttt{detach\_timeout} or
+\texttt{detach\_total\_timeout}. \\
+\texttt{AUTHORITY\_EXTENSION\_REJECTED} & On any attempt to widen
+\texttt{Authority-Scope} in any cell (I3), whether requested through the
+bridge or observed (a change the runtime announced itself); the payload
+carries the \texttt{source}. \\
+\texttt{AUTHORITY\_NARROWED} & On a successful runtime-initiated
+narrowing of \texttt{Authority-Scope} (e.g., scope drop after task
+completion). Does not affect the state machine; ordered and versioned
+under I10. \\
+\texttt{AUTHORITY\_NARROWING\_REJECTED} & On an out-of-order, duplicate,
+or non-narrowing attempt to change \texttt{Authority-Scope} (I10). \\
+\texttt{TERMINATION} & On session termination; irreversible. \\
+\texttt{TOOL\_CALL\_QUEUED} & On a tool call arriving while the
+human dimension is $\textsc{Pend}$; carries its idempotency key and the
+hash $h_q$ of the call shown to the human: its tool, permission and
+content, which the event also retains (I14). \\
+\texttt{TOOL\_CALL\_ANSWERED} & On a human decision on a queued call;
+carries the key, the decision and the hash $h_a$ of the content the
+human's client displayed (I14). Does not change the cell. \\
+\texttt{TOOL\_CALL\_DRAINED} & On draining of the tool queue (rule~D);
+one event per drained call; repeats $h_q$. \\
+\texttt{TOOL\_CALL\_DELIVERED} & On the runtime's acknowledgement of
+receipt of a drained call (forwarding acknowledgement, rule~D). Does not
+change the cell. \\
+\texttt{TOOL\_CALL\_COMPLETED} & On the runtime's report that a delivered
+call finished (forwarding acknowledgement, rule~D). Does not change the
+cell. \\
+\texttt{TOOL\_CALL\_REJECTED} & On a call refused at a full queue, or
+dropped at drain because the current scope no longer permits it (I13),
+or because it is unanswered, denied or answered with a different hash
+(I14). \\
+\texttt{TOOL\_CALL\_EXPIRED} & On a queued call that outlived
+$T_{\text{call}}$, or whose approval outlived $T_{\text{approve}}$
+(I13). \\
+\texttt{BRIDGE\_RECOVERED} & On recovery of a session after a bridge
+restart (Section~\ref{sec:recovery}). \\
+\texttt{RECOVERY\_FAILED} & On failed recovery; the session is
+quarantined (rule~Q), not terminated, and only an operator's
+\texttt{TERMINATION} may follow. \\
+\texttt{CHECKPOINT} & Periodically (SHOULD, I-CHECKPOINT); carries the
+signed Merkle root over the preceding events. \\
+\texttt{KEY\_REVOKED} & On operator-signed revocation of a registered
+client key (I11-REVOKE); carries \texttt{key\_id}, \texttt{reason}
+(\texttt{rotation} or \texttt{compromise}), \texttt{revoked\_at},
+\texttt{signature} (over the bridge, the operation and the log position; verified before commit; \texttt{operator\_signature\_invalid}). Soft revocation (\texttt{rotation}) does not
+detach active connections; hard revocation (\texttt{compromise})
+forcibly detaches. \\
+\texttt{KEY\_REVOCATION\_REQUESTED} & On a client requesting
+revocation (operator must approve); carries \texttt{key\_id},
+\texttt{requested\_by}, \texttt{reason}. Informational; does not
+change the cell. \\
+\texttt{OPERATOR\_ADD\_KEY} & On operator adding a key to a
+\texttt{key\_exhausted} session; carries \texttt{key\_id},
+\texttt{public\_key}, \texttt{signature} (verified before commit). Clears
+\texttt{key\_exhausted}. \\
+\texttt{OPERATOR\_TERMINATION} & On operator terminating a
+\texttt{key\_exhausted} session; carries \texttt{reason},
+\texttt{signature}. Transitions to $\bot$. \\
+\bottomrule
+\end{longtable}
+
+Each event carries: \texttt{kind}, \texttt{session\_id},
+\texttt{sequence} (monotonic per session), \texttt{prev\_hash}
+(SHA-256 of the canonical JSON of the previous event; empty for genesis),
+\texttt{payload}, and \texttt{timestamp}. The event's own hash
+$\mathrm{SHA\text{-}256}(\mathrm{canonical}(\mathit{event}))$ is a
+\emph{derived value} computed by the consumer; it is not a field
+of the event itself, but is referenced in I5 and by the $(\mathit{seq},
+\mathit{hash})$ pair of a re-attach request (I4).
+
+\paragraph{Role of the timestamp.}
+The \texttt{timestamp} field is \emph{informational} and is intended
+for human-readable audit displays and approximate causal ordering in
+logs. The bridge MUST NOT use wall-clock timestamps for ordering
+decisions (timeout accounting across a restart, Axiom A6, is not an
+ordering decision); ordering is determined solely by the monotonic
+\texttt{sequence} number and the \texttt{prev\_hash} chain
+(Invariant I5). Clock skew between the bridge and an audit consumer
+may produce misleading apparent ordering in the consumer's display but
+does not affect correctness.
+
+\paragraph{Event immutability and external references.}
+Governance events are immutable once emitted; their \texttt{event\_hash}
+is stable and externally referenceable. External annotations ---
+including auditor marks, routing hints, and broadcast subscriptions ---
+MAY reference \texttt{event\_hash} as a cross-reference anchor. The
+annotation and delivery protocols (auditor identity, scope, lifecycle,
+revocation, routing, broadcast) are outside the scope of this document
+and are left to future work. BC guarantees only the properties
+on which such protocols depend: (i) stable \texttt{event\_hash}
+(deterministic under SHA-256 over canonical JSON per RFC 8785); (ii)
+append-only event log (Axiom A1); (iii) cross-referenceability of any
+event by its \texttt{event\_hash} to any external system. In
+particular, an annotation layer that mutates \texttt{event\_hash} or
+post-hoc modifies the event log is non-conformant with this
+specification.
+
+\subsection{Resume Record ($R$) and the re-attach protocol}
+
+\begin{definition}[Resume Record]\label{def:rt}
+A Resume Record $R$ is the bridge's own, durable record of the resume
+point of a detachment, written by \texttt{RESUME\_PREPARED} on entry to
+a cell with $a=\textsc{Det}$. It is a tuple
+\[
+R = (\mathit{sid},\ \mathit{seq},\ \mathit{hash},\ \mathit{scope},\ \mathit{sv},\ Q,\ r)
+\]
+where $\mathit{sid}$ is the session identifier, $\mathit{seq}$ and
+$\mathit{hash}$ are the sequence number and hash of the
+\texttt{RESUME\_PREPARED} event, $\mathit{scope}$ and $\mathit{sv}$ are
+the authority scope and its version at detach (I10), $Q$ is the tuple of
+pending tool calls with their idempotency keys, and $r$ is the reason
+(e.g.\ \texttt{client\_disconnect} or \texttt{bridge\_restart}).
+\end{definition}
+
+$R$ is a record, not a credential. Resuming does not require the client
+to present it, and the bridge's acceptance never depends on it; the
+event log alone determines the state (I12). A design that hands the
+client a MACed token at detach and requires it back at re-attach
+fails for the client that most needs it: one that vanished abruptly
+holds, at best, an outdated token, because the token is minted and
+superseded while the client is gone (Section~\ref{sec:impl}, integration findings).
+Where a peer specification expects a resume token (PACE), a bridge MAY
+export $R$ as a non-authoritative snapshot; such an export plays no part
+in authentication.
+
+\paragraph{Re-attach protocol.} The client keeps the pair
+$(\mathit{seq}, \mathit{hash})$ of the last event it observed on the
+event stream. To reconnect:
+\begin{enumerate}[leftmargin=2em]
+\item the client requests a challenge; the bridge returns a fresh nonce
+valid for $T_{\text{nonce}}$ (I9, I11);
+\item the client sends $(\mathit{nonce}, \mathit{seq}, \mathit{hash})$ and
+a signature over $(\mathit{sid}, \mathit{nonce}, \mathit{seq},
+\mathit{hash})$ under a registered client key (I11);
+\item the bridge accepts iff the signature verifies, the nonce is live
+and unused, and $\mathit{hash}$ is the hash of the event at
+$\mathit{seq}$ in its chain (I4); it then emits \texttt{RESUME\_STARTED},
+verifies the chain (I5), emits \texttt{RESUME\_VERIFIED}, and replays
+every event after $\mathit{seq}$ to the client.
+\end{enumerate}
+Any failure in step~3 yields \texttt{RESUME\_REJECTED} with the reason
+and leaves the cell unchanged.
+
+\paragraph{Wire-format example.}
+
+The example below illustrates the challenge--reattach sequence; the
+full normative wire format (all op-types, the envelope, the
+signature scope, and the error reasons) is specified in
+Appendix~\ref{app:wire-format}.
+
+\begin{lstlisting}
+-> {"op": "challenge", "session_id": "sess-001"}
+<- {"status": "nonce", "session_id": "sess-001",
+    "nonce": "9c1f5e0a77d24b3e8a6f21d0c4b7e913",
+    "ttl_seconds": 60}
+
+-> {"op": "reattach", "session_id": "sess-001",
+    "key_id": "ck-7f3a",
+    "nonce": "9c1f5e0a77d24b3e8a6f21d0c4b7e913",
+    "seq": 6,
+    "hash": "a7ffc6f8bf1ed76651c14756a061d662f3f7...",
+    "signature": "q3Zk0f..."}
+<- {"status": "verified", "session_id": "sess-001",
+    "events": [ {"sequence": 7, ...}, {"sequence": 8, ...} ]}
+\end{lstlisting}
+
+\noindent The signature covers the domain-separated tuple defined once in
+Appendix~\ref{app:wire-format} (signature scope): the operation tag, the
+session, the signing key id, the nonce, the sequence number and the hash.
+A re-attach and a join therefore sign different bytes. The reference
+signature scheme is Ed25519 (hex-encoded), and a deployment may use another
+unforgeable scheme through its verifier
+(Appendix~\ref{app:wire-format}); the registry of client keys holds verification
+material only, so proof of possession is checked without a signing
+key at the bridge. A rejected request is answered with
+\texttt{\{"status": "rejected", "session\_id": ..., "reason": ...\}}.
+See Appendix~\ref{app:wire-format} for the full set of op-types,
+the envelope, and the error reasons.
+
+\subsection{Conformance Criteria ($C$)}
+
+Conformance with this specification requires satisfaction of every
+invariant in $C$ (Definition~\ref{def:bc}): the core invariants
+I1--I7 and the extended MUST invariants stated in
+Section~\ref{sec:additional-invariants}, including I-GRANT, I-OPERATOR
+and I-SIGN-JWKS listed in Definition~\ref{def:bc}. Each of I1--I15 is mechanically
+checkable, and I-SIGN-JWKS is checked by inspection of the bridge's key
+sources; the conformance suite in Section~\ref{sec:conformance}
+provides executable tests, mutants and shared vectors for I1--I15;
+the property-based tests T8--T10 check invariants across random action
+sequences (Appendix~\ref{app:property-tests}).
+
+\paragraph{Falsifiability, overlap and checking status.}
+Table~\ref{tab:invariant-independence} records, for each invariant,
+a test that fails when it is broken, a mutant of the reference bridge
+that the suite must kill, and how far the TLA+ model checks it. The
+status column uses these values: \emph{TLC state invariant} and \emph{TLC
+step property} mean the model checker checked it within the bounds of
+Appendix~\ref{app:formal}; \emph{abstracted} means the model holds only a
+flag standing for the mechanism (for example, a verdict flag for a hash
+comparison); \emph{tests only} means the model does not
+cover it. No invariant has a mechanised proof for unbounded
+parameters; every claim in the table is a bounded check or a test.
+I1 and I7 overlap on the detach path (both require event-before-mutation
+in the ATTACHED $\to$ DETACHED transition); I4 and I5 overlap on
+ordering (both concern the integrity of the sequence/hash chain).
+A future revision may merge I1 into a specialisation of I7, and I4
+into a specialisation of I5; for this document we keep them separate
+for clarity of exposition.
+
+\begin{table}[htbp]
+\centering
+\caption{Invariants: falsifying test, killed mutant and checking status.}
+\label{tab:invariant-independence}
+\scriptsize
+\begin{tabularx}{\columnwidth}{l l X X}
+\toprule
+\textbf{Inv.} & \textbf{Tests} & \textbf{Mutant} & \textbf{Model status; notes} \\
+\midrule
+I1 & T1, T9, T48 & \texttt{I1-no-resume-prepared} & TLC state invariant. Overlaps with I7. \\
+I2 & T2, T9, T25 & \texttt{I2-forward-while-pending} & TLC state invariant and step property. \\
+I3 & T3, T12, T15, T56 & \texttt{I3-accept-widening-detached} & TLC state invariant and step property. T12: $(\textsc{Det},\textsc{Pend})$; T15: every active cell; T56: observed widening. \\
+I4 & T1, T7, T11, T52 & \texttt{I4-no-prefix-check} & Abstracted: prefix flag; replay of unseen events not modelled. T52: replay is exactly the unseen suffix. \\
+I5 & T1, T5, T9, T22 & \texttt{I5-no-prev-hash} & Abstracted: corruption flag, no hashes. Overlaps with I4. \\
+I6 & T4, T40 & \texttt{I6-ops-after-termination} & Not meaningfully TLC-checked: the state invariant \texttt{Inv.I6} is a tautology (the event count of a terminated session is at least one), and the model mutant labelled I6 is killed by another property, so the step property has no killer of its own. Tests and mutants only. \\
+I7 & T1, T11, T32, T39 & \texttt{I7-mutate-before-append} & TLC step property. Overlaps with I1. \\
+I8 & T16 & \texttt{I8-ignore-replay} & Tests only. QUIC 0-RTT; transport-reported replay flag. \\
+I9 & T13, T13b, T31 & \texttt{I9-ignore-expiry} & TLC state invariant and step property. Nonce lifetime and timer bounds. \\
+I10 & T14, T15b, T50 & \texttt{I10-version-not-incremented} & TLC state invariant and step property. \\
+I11 & T17--T19c, T13b, T35, T51, T97--T112, T126, T127, T131, T133, T141--T143, V86, V87, V90--V96, V102--V104, V109, V110, V114, V127--V129 & \texttt{Q-malformed-log-aborts-recovery}, \texttt{I11-drop-proof-check}, \texttt{I11-resume-domain-tag-dropped}, \texttt{I11-resume-key-id-dropped}, \texttt{I11-challenge-evicts-live-nonce}, \texttt{I11-challenge-leaks-state}, \texttt{registry-global-by-key-id}, \texttt{registry-recovery-leaves-differing-entries}, \texttt{registry-recovery-leaves-extra-entries}, \texttt{I11-reattach-on-attached-session-joins} & TLC state invariants and step properties: single use and spending; possession (a signature verifies only for the key, nonce and prefix verdict it names, and the attacker of Appendix~\ref{app:attacker} holds no client key); \texttt{NoForgery} checks that an accepted signature was produced by an honest client, not that an honest client presented it, so it admits a replayed honest signature with a live nonce (the pre-registration replay of Table~\ref{tab:limitations}); (f) the bound on the nonce book is checked, but the no-eviction property reads over an empty set in every configuration (\texttt{LiveLimit} is one), so no-eviction is not meaningfully TLC-checked and rests on tests and mutants; (g) a bounded record of unauthenticated failures. The unforgeability of the scheme itself is assumed (UF). \\
+I12 & T32, T33, T34, T38, T39 & \texttt{I12-forward-before-commit} & TLC step property for forwarding after commit; append failure tested only. \\
+I13 & T41--T45 & \texttt{I13-no-queue-limit} & TLC state invariant and step property. \\
+I14 & T53--T55, T129, T130, V112, V113 & \texttt{I14-hash-equality-not-checked}, \texttt{I14-hash-omits-tool-and-permission}, \texttt{I14-forwards-without-hashed-content}, \texttt{I14-queued-content-not-retained} & Abstracted: answer flag, not the hash. \\
+I15 & T47--T50, T119--T123, V105--V108 & \texttt{I15-partial-departure-detaches}, \texttt{I15-add-client-skip-verify}, \texttt{I15-add-client-nonce-not-spent}, \texttt{I15-add-client-domain-tag-dropped} & TLC state invariant and step property. Authorising a registration by signature: abstracted in the model; tests, vectors and mutants only. \\
+I11-REVOKE & T67--T76, T85--T89, T128, T132, T134--T137, V63--V74, V111, V115--V120 & \texttt{I11-REVOKE-accept-revoked-key}, \texttt{TIMERS-key-exhausted-timers-frozen}, \texttt{I11-REVOKE-key-exhausted-restart-skipped}, \texttt{I11-REVOKE-requests-unbounded} & TLC state invariant (\texttt{IRev}) and step properties: a revoked key is refused and its nonce spent, revoked keys stay registered, a hard revocation detaches a connected client and abandons a re-attach it is verifying, a key\_exhausted session serves no client operation and changes only by time, a restart or a lost transport, the operator, or a new key (its timers run: L1, L2). Abstracted: the operator signature on the revocation. Tests only: the wire form and the vectors. \\
+I-OPERATOR & T90--T96, T138--T140, V75--V85, V121--V126 & \texttt{IOPERATOR-revoke-skip-verify}, \texttt{IOPERATOR-revoke-not-bound-to-bridge}, \texttt{IOPERATOR-revoke-not-bound-to-position} & Partly TLC: OPERATOR\_ADD\_KEY is a step property (only on a key\_exhausted session; revoked keys stay revoked). Tests only: the operator signature, which the model abstracts; the reference verifier is the operator key that signs grants. \\
+I-GRANT & T77--T81, T113--T118, V55--V58, V97--V100 & \texttt{IGRANT-skip-verify}, \texttt{IGRANT-grant-omits-public-key}, \texttt{IGRANT-attach-skip-possession} & Tests only. The model does not represent attach, key registration or more than one session; the reference verifier is an operator signature. \\
+I-SIGN-JWKS & --- (inspection) & --- & Inspection only; no test, vector or mutant. \\
+I-CHECKPOINT & T63--T66, V52--V54, V88, V89 & \texttt{ICHECK-drop-checkpoint-emission}, \texttt{ICHECK-wrong-root}, \texttt{ICHECK-count-trigger-total-length}, \texttt{ICHECK-missed-deadline} & Tests only. Local emission tested, by the Python bridge only (the vectors need emission, which the Rust crate lacks); SCITT anchoring not tested. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Event completeness.}
+Table~\ref{tab:event-completeness} records the rationale for each
+event in $E$ and for the principal \emph{omitted} events. The omitted
+events are not first-class in this document; implementations MAY emit
+them as extensions, but added events MUST NOT weaken any MUST invariant.
+
+\begin{longtable}{p{0.22\columnwidth} p{0.70\columnwidth}}
+\caption{Event completeness: included and omitted events.}
+\label{tab:event-completeness}\\
+\toprule
+\textbf{Event} & \textbf{Rationale} \\
+\midrule
+\texttt{ATTACHED} & Genesis; required for hash-chain bootstrap. \\
+\texttt{CLIENT\_JOINED}, \texttt{CLIENT\_LEFT}, \texttt{CLIENT\_ADDED} &
+Required for I15: the client set, and so the attachment, is derived from
+the log; they make joins, partial departures and key registrations
+auditable without changing the cell. \\
+\texttt{DETACHMENT} & Required for I1 (departure of the last client). \\
+\texttt{RESUME\_PREPARED} & Required for I1; records the resume
+point $R$ durably before the cell changes. \\
+\texttt{RESUME\_STARTED} & Required for I7: the transition into
+$\textsc{Res}$ must be audited before verification begins. \\
+\texttt{RESUME\_REJECTED} & Required for I4, I9 and I11; makes failed
+re-attach attempts auditable without changing the cell. \\
+\texttt{RESUME\_VERIFIED} & Required for G3 (resume
+success path); marks the end of verification. \\
+\texttt{RESUME\_FAILED} & Required for G3 (resume
+failure path); records that chain verification failed after an accepted
+re-attach and that the session is quarantined (rule~Q), not terminated. \\
+\texttt{HUMAN\_PENDING} & Required for I2 (human dimension becomes
+$\textsc{Pend}$). \\
+\texttt{HUMAN\_RESOLVED} & Required for the transition out of
+$\textsc{Pend}$; carries the approval validity for I13. \\
+\texttt{HUMAN\_TIMEOUT} & Required for liveness L2 (no infinite
+pending); first-class for auditability of timeout termination. \\
+\texttt{DETACH\_TIMEOUT} & Required for liveness L1 (no infinite
+detach); first-class for auditability of timeout termination; its reason
+distinguishes $T_{\text{detach}}$ from the cumulative cap
+$T_{\text{total}}$. \\
+\texttt{AUTHORITY\_EXTENSION\_REJECTED} & Required for I3, enforced and observed. \\
+\texttt{AUTHORITY\_NARROWING\_REJECTED} & Required for I10; emitted on an out-of-order, duplicate or no-op narrowing attempt. \\
+\texttt{AUTHORITY\_NARROWED} & Required for I10; carries
+\texttt{new\_version}; first-class for audit of authority scope
+trajectory. Each successful narrowing increments
+\texttt{scope\_version}. \\
+\texttt{TERMINATION} & Required for I6. \\
+\texttt{TOOL\_CALL\_QUEUED} & Required for I2 (queue emission); records
+$h_q$ for I14. \\
+\texttt{TOOL\_CALL\_ANSWERED} & Required for I14; binds each decision to
+the content it was made on. \\
+\texttt{TOOL\_CALL\_DRAINED} & Required for audit completeness of
+queue drain; one event per drained call. \\
+\texttt{TOOL\_CALL\_DELIVERED}, \texttt{TOOL\_CALL\_COMPLETED} & Required
+for the forwarding acknowledgement (rule~D, recovery rule~5): they
+separate a call that is committed as drained from one that the runtime
+received and from one that finished, so a restart knows which calls to
+forward again. \\
+\texttt{TOOL\_CALL\_REJECTED} & Required for I13; makes refusals at a
+full queue or at drain auditable. \\
+\texttt{TOOL\_CALL\_EXPIRED} & Required for I13; makes expiry of calls
+and approvals auditable. \\
+\texttt{BRIDGE\_RECOVERED} & Required for I12 and the recovery rules;
+audits the forced detach caused by a restart. \\
+\texttt{RECOVERY\_FAILED} & Required for the recovery rules;
+records that recovery found a broken chain or a lost key registry and
+that the session is quarantined (rule~Q). \\
+\texttt{CHECKPOINT} & Required for I-CHECKPOINT (SHOULD); anchors the
+log externally. \\
+\texttt{KEY\_REVOKED} & Required for I11-REVOKE; records operator-signed
+revocation of a client key with reason and timestamp. \\
+\texttt{KEY\_REVOCATION\_REQUESTED} & Required for I11-REVOKE; makes
+client-initiated revocation requests auditable without executing them. \\
+\texttt{OPERATOR\_ADD\_KEY} & Required for I11-REVOKE; the recovery
+path from \texttt{key\_exhausted}. \\
+\texttt{OPERATOR\_TERMINATION} & Required for I11-REVOKE; the
+operator's way out of \texttt{key\_exhausted} when recovery is not
+desired. \\
+\midrule
+\multicolumn{2}{l}{\emph{Omitted (MAY be added as extensions):}} \\
+\texttt{EVENT\_REPLAY\_DETECTED} & Out of scope; replay protection is
+governed by AGTP-SESSION \S 10.5, AGTP-BINDINGS \S 4.6 and Invariant I8. \\
+\texttt{BRIDGE\_CRASH} & Not emittable by the crashing bridge; its
+effect is recorded by \texttt{BRIDGE\_RECOVERED} on restart. \\
+\texttt{PARTIAL\_DETACH} & Out of scope (see \S\ref{sec:scope}). \\
+\midrule
+\multicolumn{2}{l}{\emph{Extension points for a separate annotation / delivery protocol:}} \\
+\texttt{AUDITOR\_MARK} & Out of scope; annotation anchored to
+\texttt{event\_hash}, in a separate spec. BC guarantees
+\texttt{event\_hash} stability for cross-reference. \\
+\texttt{ROUTING\_HINT} & Out of scope; delivery layer in a separate
+spec. \\
+\texttt{BROADCAST\_SUBSCRIPTION} & Out of scope; delivery layer in
+a separate spec. \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Normative glossary.}
+Table~\ref{tab:glossary} is the single-place index for every event
+kind: the payload schema file, the condition under which the bridge
+MUST emit it, and the invariant(s) it supports. The prose in
+\S\ref{sec:state-machine} and \S\ref{sec:additional-invariants} is
+authoritative where the wording differs; this table is navigation.
+
+\begin{table}[htbp]
+\centering
+\caption{Normative glossary: event kind $\to$ payload schema $\to$
+emitted when $\to$ invariant.}
+\label{tab:glossary}
+\footnotesize
+\begin{tabularx}{\columnwidth}{l l X l}
+\toprule
+\textbf{Event} & \textbf{Schema} & \textbf{Emitted when} & \textbf{Invariant} \\
+\midrule
+\texttt{ATTACHED} & \texttt{ATTACHED.schema.json} & Session attach (genesis); carries the client's registered public key and its scheme tag. & I11, I15 \\
+\texttt{DETACHMENT} & \texttt{DETACHMENT.schema.json} & Transport disconnect of the last connected client ($a=\textsc{Att}$) or of the re-attaching client ($a=\textsc{Res}$); also on bridge restart. & I1, I12 \\
+\texttt{CLIENT\_JOINED} & \texttt{CLIENT\_JOINED.schema.json} & Authentic join request from a registered key while $a=\textsc{Att}$. & I15, I4, I11 \\
+\texttt{CLIENT\_LEFT} & \texttt{CLIENT\_LEFT.schema.json} & Disconnect of one client while others remain ($|C|\geq 2$). & I15 \\
+\texttt{CLIENT\_ADDED} & \texttt{CLIENT\_ADDED.schema.json} & Registration of a further client key, authorised by a connected client. & I15 \\
+\texttt{RESUME\_PREPARED} & \texttt{RESUME\_PREPARED.schema.json} & Immediately after \texttt{DETACHMENT}, before any state mutation; once per detachment. & I1, I12 \\
+\texttt{RESUME\_STARTED} & \texttt{RESUME\_STARTED.schema.json} & Authentic re-attach request with a live unused nonce and a valid prefix; enters $a=\textsc{Res}$. & I4, I9, I11 \\
+\texttt{RESUME\_REJECTED} & \texttt{RESUME\_REJECTED.schema.json} & Re-attach fails authentication, nonce, prefix, or is a 0-RTT replay. Informational; no state change. & I4, I8, I9, I11 \\
+\texttt{RESUME\_VERIFIED} & \texttt{RESUME\_VERIFIED.schema.json} & Hash-chain verification succeeds on re-attach; returns to $a=\textsc{Att}$. & I5, I7 \\
+\texttt{RESUME\_FAILED} & \texttt{RESUME\_FAILED.schema.json} & Hash-chain verification fails after an accepted re-attach; session quarantined (rule~Q). & I5 \\
+\texttt{HUMAN\_PENDING} & \texttt{HUMAN\_PENDING.schema.json} & Agent escalates to a human; sets $h=\textsc{Pend}$. & I2 \\
+\texttt{HUMAN\_RESOLVED} & \texttt{HUMAN\_RESOLVED.schema.json} & Human resolves; sets $h=\textsc{None}$; carries approval validity. & I13 \\
+\texttt{HUMAN\_TIMEOUT} & \texttt{HUMAN\_TIMEOUT.schema.json} & $T_{\text{human}}$ exceeded; transitions to $\bot$. & I6, L2 \\
+\texttt{DETACH\_TIMEOUT} & \texttt{DETACH\_TIMEOUT.schema.json} & $T_{\text{detach}}$ or $T_{\text{total}}$ exceeded while $a=\textsc{Det}$; transitions to $\bot$. & I6, L1 \\
+\texttt{AUTHORITY\_EXTENSION\_REJECTED} & \texttt{AUTHORITY\_EXTENSION\_REJECTED.schema.json} & Any attempt to widen \texttt{Authority-Scope}; payload carries \texttt{source} (enforced or observed). & I3 \\
+\texttt{AUTHORITY\_NARROWED} & \texttt{AUTHORITY\_NARROWED.schema.json} & Successful runtime-initiated narrowing; carries \texttt{new\_version}. & I10 \\
+\texttt{AUTHORITY\_NARROWING\_REJECTED} & \texttt{AUTHORITY\_NARROWING\_REJECTED.schema.json} & Out-of-order, duplicate, or non-narrowing scope change. & I10 \\
+\texttt{TERMINATION} & \texttt{TERMINATION.schema.json} & Session termination; irreversible. & I6 \\
+\texttt{TOOL\_CALL\_QUEUED} & \texttt{TOOL\_CALL\_QUEUED.schema.json} & Tool call arrives while $h=\textsc{Pend}$; carries idempotency key and $h_q$. & I2, I13, I14 \\
+\texttt{TOOL\_CALL\_ANSWERED} & \texttt{TOOL\_CALL\_ANSWERED.schema.json} & Human decision on a queued call; carries key, decision, $h_a$. & I14 \\
+\texttt{TOOL\_CALL\_DRAINED} & \texttt{TOOL\_CALL\_DRAINED.schema.json} & Draining of the tool queue (rule~D); one event per drained call; repeats $h_q$. & I7, I12, I13, I14 \\
+\texttt{TOOL\_CALL\_DELIVERED} & \texttt{TOOL\_CALL\_DELIVERED.schema.json} & Runtime acknowledges receipt of a drained call. & I12, I13 \\
+\texttt{TOOL\_CALL\_COMPLETED} & \texttt{TOOL\_CALL\_COMPLETED.schema.json} & Runtime reports a delivered call finished. & I2, I13 \\
+\texttt{TOOL\_CALL\_REJECTED} & \texttt{TOOL\_CALL\_REJECTED.schema.json} & Call refused at full queue, or dropped at drain (scope, unanswered, denied, hash mismatch). & I13, I14 \\
+\texttt{TOOL\_CALL\_EXPIRED} & \texttt{TOOL\_CALL\_EXPIRED.schema.json} & Queued call outlived $T_{\text{call}}$, or approval outlived $T_{\text{approve}}$. & I13 \\
+\texttt{BRIDGE\_RECOVERED} & \texttt{BRIDGE\_RECOVERED.schema.json} & Recovery of a session after a bridge restart; names the key ids whose registry entry was repaired from the log. & I12 \\
+\texttt{RECOVERY\_FAILED} & \texttt{RECOVERY\_FAILED.schema.json} & Failed recovery (broken chain); session quarantined (rule~Q). & I5, I12 \\
+\texttt{CHECKPOINT} & \texttt{CHECKPOINT.schema.json} & Periodically (SHOULD, I-CHECKPOINT); carries signed Merkle root. & I-CHECKPOINT \\
+\texttt{KEY\_REVOKED} & \texttt{KEY\_REVOKED.schema.json} & Operator-signed revocation of a client key. & I11-REVOKE \\
+\texttt{KEY\_REVOCATION\_REQUESTED} & \texttt{KEY\_REVOCATION\_REQUESTED.schema.json} & Client requests revocation (operator must approve). & I11-REVOKE \\
+\texttt{OPERATOR\_ADD\_KEY} & \texttt{OPERATOR\_ADD\_KEY.schema.json} & Operator adds key to \texttt{key\_exhausted} session. & I11-REVOKE, I15 \\
+\texttt{OPERATOR\_TERMINATION} & \texttt{OPERATOR\_TERMINATION.schema.json} & Operator terminates \texttt{key\_exhausted} session. & I11-REVOKE, I6 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ================================================================================

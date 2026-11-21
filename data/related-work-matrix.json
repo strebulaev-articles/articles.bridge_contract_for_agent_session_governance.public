@@ -1,0 +1,157 @@
+{
+  "read_on": "2026-11-10",
+  "statuses": {
+    "specified": "the source specifies a mechanism that serves the obligation",
+    "partly": "the source specifies a neighbouring mechanism that serves part of the obligation",
+    "described": "a product describes the behaviour; there is no specification to conform to",
+    "not_specified": "not specified as read: the saved text was searched and nothing was found",
+    "unverified": "a reading exists but the normative text behind it was not read; the cell is a stated limit"
+  },
+  "candidates": [
+    {
+      "id": "agtp",
+      "label": "AGTP",
+      "versions": "draft-hood-independent-agtp-09; draft-hood-agtp-session-00; draft-hood-agtp-bindings-00",
+      "files": [
+        "draft-hood-independent-agtp-09.txt",
+        "draft-hood-agtp-session-00.txt",
+        "draft-hood-agtp-bindings-00.txt"
+      ]
+    },
+    {
+      "id": "gar",
+      "label": "GAR",
+      "versions": "draft-sato-soos-gar-08",
+      "files": [
+        "draft-sato-soos-gar-08.txt"
+      ]
+    },
+    {
+      "id": "hem",
+      "label": "HEM",
+      "versions": "draft-sato-soos-hem-07",
+      "files": [
+        "draft-sato-soos-hem-07.txt"
+      ]
+    },
+    {
+      "id": "pace",
+      "label": "PACE",
+      "versions": "draft-nandakumar-agentproto-moq-pace-00",
+      "files": [
+        "draft-nandakumar-agentproto-moq-pace-00.txt"
+      ]
+    },
+    {
+      "id": "audit",
+      "label": "Audit Trail",
+      "versions": "draft-sharif-agent-audit-trail-01",
+      "files": [
+        "draft-sharif-agent-audit-trail-01.txt"
+      ]
+    },
+    {
+      "id": "herdr",
+      "label": "Herdr",
+      "versions": "documentation 0.9.5, repository commit bc8c289 (README and session-state page only)",
+      "files": [
+        "herdr-README.md",
+        "herdr-session-state.html"
+      ]
+    }
+  ],
+  "obligations": [
+    {
+      "id": "detached",
+      "label": "Detached execution"
+    },
+    {
+      "id": "queue",
+      "label": "Human-pending queue"
+    },
+    {
+      "id": "resume",
+      "label": "Resume proof"
+    },
+    {
+      "id": "audit",
+      "label": "Audit continuity"
+    },
+    {
+      "id": "drift",
+      "label": "Authority drift"
+    },
+    {
+      "id": "timers",
+      "label": "Detach and human timers"
+    },
+    {
+      "id": "answer",
+      "label": "Answer binding"
+    },
+    {
+      "id": "quarantine",
+      "label": "Quarantine"
+    },
+    {
+      "id": "restart",
+      "label": "Restart recovery"
+    }
+  ],
+  "cells": [
+    {"candidate": "agtp", "obligation": "detached", "status": "partly", "short": "SESSION 3.2", "evidence": "AGTP-SESSION 3.2: persistent sessions are designed to survive transport disconnection and platform restarts; the session identifier stays stable. Nothing says what executes or is governed while the transport is down."},
+    {"candidate": "agtp", "obligation": "queue", "status": "partly", "short": "8.2.10", "evidence": "AGTP-09 8.2.10 ESCALATE routes a task or decision to a human principal or higher-authority agent. No queue of calls held while a client is away."},
+    {"candidate": "agtp", "obligation": "resume", "status": "partly", "short": "8.2.12", "evidence": "AGTP-09 8.2.12 SUSPEND returns a single-use resumption nonce of at least 128 bits, an optional resume_by deadline and an optional stored checkpoint. The nonce is bound to no audit position, a SUSPEND must have been issued, and the RESUME message is not in AGTP-09."},
+    {"candidate": "agtp", "obligation": "audit", "status": "partly", "short": "6.5.4", "evidence": "AGTP-09 6.5.4: Audit-ID is the SHA-256 of the Attribution-Record JWS and reappears as previous_audit_id in the agent's next record, a per-agent hash chain. It is per agent, not per session, and says nothing about a detach."},
+    {"candidate": "agtp", "obligation": "drift", "status": "partly", "short": "6.5.3, 6.6", "evidence": "AGTP-09 6.5.3 and 6.6: a request outside the Authority-Scope is rejected with 262; 456 and 457 cover budget and zone. Checked per request; no check that authority did not grow while the client was away."},
+    {"candidate": "agtp", "obligation": "timers", "status": "partly", "short": "8.2.12", "evidence": "AGTP-09 8.2.12 resume_by moves an unresumed session to expired; AGTP-SESSION 3.1 session_ttl bounds a bounded session. No detach cap and no relation to a human wait."},
+    {"candidate": "agtp", "obligation": "answer", "status": "partly", "short": "8.2.11", "evidence": "AGTP-09 8.2.11 CONFIRM creates a signed attestation naming a target_id with status accepted, rejected or deferred. Not stated as single-use or bound to the exact request text."},
+    {"candidate": "agtp", "obligation": "quarantine", "status": "not_specified", "short": "", "evidence": "No occurrence of quarantine in the three AGTP texts; verification of the chain (8.2.4 INSPECT) is left to the consumer with no stated consequence."},
+    {"candidate": "agtp", "obligation": "restart", "status": "partly", "short": "SESSION 3.2", "evidence": "AGTP-SESSION 3.2 states that persistent sessions survive platform restarts; no recovery procedure or replay check is given."},
+    {"candidate": "gar", "obligation": "detached", "status": "not_specified", "short": "", "evidence": "No occurrence of detach or disconnect in GAR-08."},
+    {"candidate": "gar", "obligation": "queue", "status": "not_specified", "short": "", "evidence": "GAR-08 records HEM_ESCALATION_PENDING as a hold reason (alert text); the pending state itself is HEM's. No queue of calls."},
+    {"candidate": "gar", "obligation": "resume", "status": "not_specified", "short": "", "evidence": "No occurrence of resume in GAR-08."},
+    {"candidate": "gar", "obligation": "audit", "status": "specified", "short": "3, 6", "evidence": "GAR-08 3: the GEC is the sole source of audit truth; 6: Session Audit Record, signed; Merkle construction with domain-separated leaf and node hashes (RFC 9162 form). Premised on a GEC."},
+    {"candidate": "gar", "obligation": "drift", "status": "partly", "short": "2, 12.1", "evidence": "GAR-08 2 and 12.1: mandate_hold blocks mandate token issuance for an agent in a recovery flow (error AGENT_IN_RECOVERY) until authority is restored. A revocation gate, not detection of growth during a detach."},
+    {"candidate": "gar", "obligation": "timers", "status": "not_specified", "short": "", "evidence": "Timers in GAR-08 concern audit-access expiry and retention (6.4, 9.3), not detach or human waits."},
+    {"candidate": "gar", "obligation": "answer", "status": "not_specified", "short": "", "evidence": "Decision submission is HEM's; GAR-08 audits the outcome."},
+    {"candidate": "gar", "obligation": "quarantine", "status": "not_specified", "short": "", "evidence": "GAR-08 15: telemetry spans carrying governance attributes from unauthenticated processes MUST be quarantined and raise KERNEL_AUDIT_ANOMALY. That is quarantine of spans, not of a session whose log fails verification, so the obligation is not specified."},
+    {"candidate": "gar", "obligation": "restart", "status": "not_specified", "short": "", "evidence": "The recovery flow in GAR-08 (ALE_RECOVERY_INITIATED, 12.6) restores revoked authority; no restart of the emitter or log replay is specified."},
+    {"candidate": "hem", "obligation": "detached", "status": "not_specified", "short": "", "evidence": "No occurrence of detach or disconnect in HEM-07; its absent party is the human principal."},
+    {"candidate": "hem", "obligation": "queue", "status": "partly", "short": "4, 5, 13.1", "evidence": "HEM-07 4 and 5: HEM_PENDING; 13.1: the GEC rejects every state transition while pending. An approval queue appears only in an example (3.4.2, rest period before the queue resumes). No queue of tool calls held for a detached client."},
+    {"candidate": "hem", "obligation": "resume", "status": "not_specified", "short": "", "evidence": "The resume occurrences in HEM-07 are execution resuming after a decision (3.4.3), not a client re-attach; no proof or record."},
+    {"candidate": "hem", "obligation": "audit", "status": "partly", "short": "3.4.3", "evidence": "HEM-07 3.4.3 example: the outcome is carried in a GAR audit entry (ALE-041). The chain belongs to GAR."},
+    {"candidate": "hem", "obligation": "drift", "status": "unverified", "short": "", "evidence": "HEM-07 3.4.3 shows an expired consent_scope firing HEM-CONSENT, but only as an example. The normative trigger table was not read, so no reading is claimed."},
+    {"candidate": "hem", "obligation": "timers", "status": "specified", "short": "14.1, 14.2", "evidence": "HEM-07 14.1: per-principal timeout budget, minimum 60 s; 14.2: pre-declared disposition (escalate, suspend, terminate, or auto-approve under conditions). Timers for the human wait, not for a detach."},
+    {"candidate": "hem", "obligation": "answer", "status": "specified", "short": "12.8", "evidence": "HEM-07 12.8: decision names the hem_id, signed with Ed25519, admitted at most once (HEM_ALREADY_RESOLVED); exact action checked by joint verification with the kernel-signed request."},
+    {"candidate": "hem", "obligation": "quarantine", "status": "not_specified", "short": "", "evidence": "No occurrence of quarantine in HEM-07."},
+    {"candidate": "hem", "obligation": "restart", "status": "not_specified", "short": "", "evidence": "HEM-07 14.2: a SUSPEND disposition leaves the session in HEM_PENDING until a governance recovery process resolves it manually; no restart recovery is specified."},
+    {"candidate": "pace", "obligation": "detached", "status": "partly", "short": "4.5, 10.1", "evidence": "PACE-00 4.5: relays cache objects for a reconnecting agent; 10.1: an agent crash suspends the session pending resume. Covers the transport, not execution that continues while the client is gone."},
+    {"candidate": "pace", "obligation": "queue", "status": "not_specified", "short": "", "evidence": "PACE-00 4.6 only cancels pending operations at termination; no queue held for a human."},
+    {"candidate": "pace", "obligation": "resume", "status": "partly", "short": "4.5, Table 17", "evidence": "PACE-00 4.5: resume by reconnecting and re-subscribing; the relay delivers cached objects. The registry reserves SESSION_RESUME (0x06) with no body; no resume credential found."},
+    {"candidate": "pace", "obligation": "audit", "status": "not_specified", "short": "", "evidence": "PACE-00 5.1 names audit trails as a benefit of agent identity; no audit stream or record format."},
+    {"candidate": "pace", "obligation": "drift", "status": "partly", "short": "9.1.2", "evidence": "PACE-00 9.1.2: delegated authorization with scope narrowing on each delegation. Applies at delegation, not across a detach."},
+    {"candidate": "pace", "obligation": "timers", "status": "partly", "short": "4.6, 10.1", "evidence": "PACE-00 4.6: implicit termination by timeout after a grace period; 10.1: heartbeat miss suspends, prolonged outage closes with state checkpointed. No human-wait timer."},
+    {"candidate": "pace", "obligation": "answer", "status": "not_specified", "short": "", "evidence": "No human decision or answer message in PACE-00."},
+    {"candidate": "pace", "obligation": "quarantine", "status": "not_specified", "short": "", "evidence": "No occurrence of quarantine in PACE-00."},
+    {"candidate": "pace", "obligation": "restart", "status": "partly", "short": "4.5, 10.1", "evidence": "PACE-00 4.5: agents SHOULD publish state checkpoints for recovery after relay failure; 10.1: failover to an alternate relay. No replay check."},
+    {"candidate": "audit", "obligation": "detached", "status": "not_specified", "short": "", "evidence": "No occurrence of detach or disconnect in Audit Trail-01."},
+    {"candidate": "audit", "obligation": "queue", "status": "not_specified", "short": "", "evidence": "No occurrence of queue or pending in Audit Trail-01."},
+    {"candidate": "audit", "obligation": "resume", "status": "partly", "short": "7.7", "evidence": "Audit Trail-01 7.7: lifecycle records can log pause and resume. A record, not a proof that a client saw a chain prefix."},
+    {"candidate": "audit", "obligation": "audit", "status": "specified", "short": "4, 5.2, 6, 8.2", "evidence": "Audit Trail-01 6 and 8.2: prev_hash is SHA-256 of the JCS form of the previous record; no gaps permitted; genesis and close records (8.1, 8.3); pre-execution recording (4). 5.2: from trust level L2, records SHOULD be written by a component independent of the agent (an API gateway or reverse proxy, a sidecar or middleware, an external monitor) that SHOULD sign them with its own key; a bridge is such a recorder."},
+    {"candidate": "audit", "obligation": "drift", "status": "not_specified", "short": "", "evidence": "The scope occurrences in Audit Trail-01 concern delegation records (7.4); no authority-growth check."},
+    {"candidate": "audit", "obligation": "timers", "status": "partly", "short": "7.4", "evidence": "Audit Trail-01 has a timeout outcome and a per-action time budget (timeout_ms, 7.4); no detach or human-wait timer."},
+    {"candidate": "audit", "obligation": "answer", "status": "partly", "short": "7.3", "evidence": "Audit Trail-01 7.3: authorization_record_id links a post-execution record to the pre-execution record that authorised it. A link, not a single-use answer."},
+    {"candidate": "audit", "obligation": "quarantine", "status": "not_specified", "short": "", "evidence": "Audit Trail-01 13.4: on a chain break, flag it critical, record the location, preserve the broken chain and alert the operator. The text never uses the word quarantine and no isolation of the session is stated, so the obligation is not specified."},
+    {"candidate": "audit", "obligation": "restart", "status": "partly", "short": "8.2, 8.3", "evidence": "Audit Trail-01 8.2: a recovery record of type error documents the gap after a crash; 8.3: synthetic close for an orphaned session. No re-verification of the chain on restart."},
+    {"candidate": "herdr", "obligation": "detached", "status": "described", "short": "README, state page", "evidence": "README and session-state page: closing the client or losing SSH keeps terminals and agents running in a background server; detach and reattach is by command."},
+    {"candidate": "herdr", "obligation": "queue", "status": "partly", "short": "README", "evidence": "README: every pane is marked working, blocked or idle and the user is told when an agent needs an answer. No queue of held calls."},
+    {"candidate": "herdr", "obligation": "resume", "status": "not_specified", "short": "", "evidence": "Reattach is by running the command; no credential or position check in the pages read."},
+    {"candidate": "herdr", "obligation": "audit", "status": "not_specified", "short": "", "evidence": "No event log or audit record in the pages read."},
+    {"candidate": "herdr", "obligation": "drift", "status": "not_specified", "short": "", "evidence": "No authority model in the pages read."},
+    {"candidate": "herdr", "obligation": "timers", "status": "not_specified", "short": "", "evidence": "No detach or human-wait timer in the pages read."},
+    {"candidate": "herdr", "obligation": "answer", "status": "not_specified", "short": "", "evidence": "No answer binding in the pages read."},
+    {"candidate": "herdr", "obligation": "quarantine", "status": "not_specified", "short": "", "evidence": "A pane whose saved directory is unavailable stays in the layout with an error; no quarantine of a session whose history fails verification."},
+    {"candidate": "herdr", "obligation": "restart", "status": "described", "short": "state page", "evidence": "Session-state page: after a server restart the layout returns and supported agent sessions can be resumed; processes do not survive. session.json is named; no schema or conformance criteria."}
+  ]
+}

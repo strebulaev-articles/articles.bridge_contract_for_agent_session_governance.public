@@ -1,0 +1,46 @@
+{
+  "id": "V127",
+  "title": "A re-attach on an attached session is refused as already_attached and changes no cell",
+  "covers": [
+    "I11",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-127",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "RESUME_REJECTED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1"
+    ],
+    "last_event_payload": {
+      "reason": "already_attached"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/HUMAN_PENDING.schema.json",
+  "title": "HUMAN_PENDING payload",
+  "x-invariants": "I2",
+  "description": "The agent escalated to a human; sets the human dimension to Pend.",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "enum": [
+        "human_unavailable",
+        "tool_needs_confirmation"
+      ],
+      "description": "Reason code."
+    }
+  },
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false
+}

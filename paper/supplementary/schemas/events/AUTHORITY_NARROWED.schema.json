@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/AUTHORITY_NARROWED.schema.json",
+  "title": "AUTHORITY_NARROWED payload",
+  "x-invariants": "I10",
+  "description": "Successful narrowing; new_version = previous_version + 1.",
+  "type": "object",
+  "properties": {
+    "new_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "new_version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "new_scope",
+    "new_version"
+  ],
+  "additionalProperties": false
+}

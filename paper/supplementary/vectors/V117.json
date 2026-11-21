@@ -1,0 +1,71 @@
+{
+  "id": "V117",
+  "title": "The operator adds a key before T_detach elapses: the new key re-attaches and the timer stops",
+  "covers": [
+    "I11-REVOKE",
+    "L1",
+    "B.4"
+  ],
+  "config": {
+    "t_detach": 600
+  },
+  "session": {
+    "session_id": "sess-117",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise"
+    },
+    {
+      "do": "advance",
+      "seconds": 300
+    },
+    {
+      "do": "operator_add_key",
+      "client": "ck-2"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2"
+    },
+    {
+      "do": "advance",
+      "seconds": 5000,
+      "then_cell": [
+        "Att",
+        "None"
+      ]
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "KEY_REVOKED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "OPERATOR_ADD_KEY",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-2"
+    ],
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": false
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "V44",
+  "title": "Wire: simplest detach and reattach (no escalation)",
+  "covers": ["I1", "I4", "I5", "I11"],
+  "session": {
+    "session_id": "sess-44",
+    "principal_id": "user-bob",
+    "authority_scope": ["read:docs", "exec:shell"],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {"do": "disconnect"},
+    {"do": "reattach"}
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED", "DETACHMENT", "RESUME_PREPARED",
+      "RESUME_STARTED", "RESUME_VERIFIED"
+    ],
+    "cell": ["Att", "None"],
+    "scope_version": 0
+  }
+}

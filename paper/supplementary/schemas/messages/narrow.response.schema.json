@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/narrow.response.schema.json",
+  "title": "Wire response: narrow",
+  "type": "object",
+  "properties": {
+    "status": {
+      "const": "narrowed"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "new_version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "status",
+    "session_id",
+    "new_version"
+  ],
+  "additionalProperties": false
+}

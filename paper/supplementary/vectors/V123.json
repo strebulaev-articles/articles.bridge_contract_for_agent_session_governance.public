@@ -1,0 +1,48 @@
+{
+  "id": "V123",
+  "title": "An operator key addition signed for another bridge is refused and the session stays key exhausted",
+  "covers": [
+    "I-OPERATOR",
+    "I11-REVOKE"
+  ],
+  "session": {
+    "session_id": "sess-123",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise"
+    },
+    {
+      "do": "operator_add_key",
+      "client": "ck-2",
+      "sig": "other-bridge",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "KEY_REVOKED",
+      "DETACHMENT",
+      "RESUME_PREPARED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [],
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": true
+  }
+}

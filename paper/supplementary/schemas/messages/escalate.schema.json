@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/escalate.schema.json",
+  "title": "Wire op: escalate",
+  "type": "object",
+  "properties": {
+    "op": {
+      "const": "escalate"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "trigger": {
+      "type": "string",
+      "description": "Optional trigger description."
+    }
+  },
+  "required": [
+    "op",
+    "session_id"
+  ],
+  "additionalProperties": false
+}

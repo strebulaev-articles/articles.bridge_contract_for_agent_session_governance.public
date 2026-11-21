@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/BRIDGE_RECOVERED.schema.json",
+  "title": "BRIDGE_RECOVERED payload",
+  "x-invariants": "I12",
+  "description": "Session recovered after a bridge restart by log replay. The log is the source of truth for the key registry.",
+  "type": "object",
+  "properties": {
+    "events": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "registry_repaired": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Key ids whose registry entry recovery repaired from the log: dropped, written back or replaced."
+    }
+  },
+  "required": [
+    "events"
+  ],
+  "additionalProperties": false
+}

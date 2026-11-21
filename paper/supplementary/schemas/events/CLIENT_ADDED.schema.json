@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/CLIENT_ADDED.schema.json",
+  "title": "CLIENT_ADDED payload",
+  "x-invariants": "I15",
+  "description": "A further client key registered for the principal, with its scheme tag and public key.",
+  "type": "object",
+  "properties": {
+    "key_id": {
+      "type": "string"
+    },
+    "via": {
+      "type": "string",
+      "description": "key_id of the connected client that authorised the addition"
+    },
+    "scheme": {
+      "type": "string",
+      "enum": [
+        "ed25519",
+        "ecdsa-p256"
+      ],
+      "description": "Scheme tag of the registered public key."
+    },
+    "public_key": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64}|[0-9a-f]{130})$",
+      "description": "Hex public key: 32 bytes (ed25519) or a 65-byte SEC1 uncompressed point (ecdsa-p256)."
+    }
+  },
+  "required": [
+    "key_id",
+    "via",
+    "scheme",
+    "public_key"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,57 @@
+{
+  "id": "V66",
+  "title": "Revoking the last key by compromise detaches and leaves the session key exhausted",
+  "covers": [
+    "I11-REVOKE",
+    "B.4"
+  ],
+  "session": {
+    "session_id": "sess-66",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise"
+    },
+    {
+      "do": "escalate",
+      "error": true
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1",
+      "error": true
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "KEY_REVOKED",
+      "DETACHMENT",
+      "RESUME_PREPARED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [],
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": true
+  }
+}

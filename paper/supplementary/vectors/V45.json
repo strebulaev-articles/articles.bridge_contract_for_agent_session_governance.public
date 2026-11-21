@@ -1,0 +1,21 @@
+{
+  "id": "V45",
+  "title": "Wire: add_client then join with the new key (multi-device)",
+  "covers": ["I15", "I4", "I11"],
+  "session": {
+    "session_id": "sess-45",
+    "principal_id": "user-carol",
+    "authority_scope": ["read:docs"],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {"do": "add_client", "client": "ck-2"},
+    {"do": "join", "client": "ck-2"}
+  ],
+  "expect": {
+    "events": ["ATTACHED", "CLIENT_ADDED", "CLIENT_JOINED"],
+    "cell": ["Att", "None"],
+    "scope_version": 0,
+    "clients": ["ck-1", "ck-2"]
+  }
+}

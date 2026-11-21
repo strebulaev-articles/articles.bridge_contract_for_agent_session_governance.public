@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/CLIENT_LEFT.schema.json",
+  "title": "CLIENT_LEFT payload",
+  "x-invariants": "I15",
+  "description": "One client disconnected while others remain; the cell is unchanged.",
+  "type": "object",
+  "properties": {
+    "key_id": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "client_disconnect"
+      ],
+      "description": "Reason code."
+    }
+  },
+  "required": [
+    "key_id",
+    "reason"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/RESUME_VERIFIED.schema.json",
+  "title": "RESUME_VERIFIED payload",
+  "x-invariants": "I5",
+  "description": "Chain verified during re-attach; returns to Att.",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

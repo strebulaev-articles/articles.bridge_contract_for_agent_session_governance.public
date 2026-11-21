@@ -1,0 +1,23 @@
+{
+  "id": "V101",
+  "title": "Attach with a proof of possession made for another bridge is refused as possession_invalid",
+  "covers": [
+    "I11",
+    "attach-possession"
+  ],
+  "session": {
+    "session_id": "sess-101",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1",
+    "possession": "other-bridge"
+  },
+  "expect": {
+    "attach_refused": true,
+    "attach_reason": "possession_invalid"
+  },
+  "actions": []
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/KEY_REVOKED.schema.json",
+  "title": "KEY_REVOKED payload",
+  "x-invariants": "I11-REVOKE",
+  "description": "Operator-signed revocation of a registered client key.",
+  "type": "object",
+  "properties": {
+    "key_id": {"type": "string"},
+    "reason": {"type": "string", "enum": ["rotation", "compromise"]},
+    "revoked_at": {"type": "number"},
+    "signature": {"type": "string", "description": "Ed25519 operator signature over [session_id, key_id, reason, revoked_at]."}
+  },
+  "required": ["key_id", "reason", "revoked_at", "signature"],
+  "additionalProperties": false
+}

@@ -1,0 +1,42 @@
+{
+  "id": "V92",
+  "title": "A re-attach proof over the untagged tuple of an earlier format is refused",
+  "covers": [
+    "I11"
+  ],
+  "session": {
+    "session_id": "sess-92",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach",
+      "proof": "untagged",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_REJECTED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0,
+    "last_event_payload": {
+      "reason": "bad_signature"
+    }
+  }
+}

@@ -1,0 +1,131 @@
+# ─────────────────────────────────────────────────────────────
+# Single source of truth for manuscript metadata.
+#
+# Edit this file, then run:
+#   python scripts/generate-metadata.py
+# to regenerate CITATION.cff, .zenodo.json, the README.md citation
+# block, and the title/author/date block in paper/article.tex.
+#
+# Re-running generate-metadata.py is idempotent: it only overwrites
+# the metadata-derived fields, leaving your prose untouched.
+# ─────────────────────────────────────────────────────────────
+
+metadata_schema: 2
+
+title: "Bridge Contract for Agent Session Governance"
+
+subtitle: "Independent specification draft"
+
+manuscript_type: "Preprint"
+manuscript_kind: "perspective"
+citation_style: "numeric"
+
+# The abstract is the single source for the LaTeX abstract block, the README
+# masthead, and the Zenodo description. Edit it here, then run `make metadata`.
+abstract: |
+  Existing agent protocols --- the Agent Transfer Protocol (AGTP), the
+  Governance Audit Record (GAR) and the Protocol for Agent Communication
+  Exchange (PACE) --- define transport, audit and resumption semantics
+  for agent sessions, but, in the versions read, none defines what an intermediate bridge MUST
+  do when the client is detached and the agent keeps executing, or when
+  the human in the loop is unavailable. We argue that the reason is
+  scope rather than oversight; this rests on a reading of those drafts
+  and would weaken if one of them were extended to own these duties.
+
+  This document defines the Bridge Contract BC = (S, E, R, C): a Session
+  Identity Descriptor, Mandatory Governance Events, a Resume Record that
+  the bridge keeps for itself, and Conformance Criteria. Re-attach is a
+  challenge-response in which the client proves possession of a
+  registered key over a single-use nonce and the last event it saw,
+  and the bridge accepts only a consistent prefix. The log is
+  hash-chained, which detects edits and reordering inside it but not
+  the truncation of its last events without a head held outside the log. The normative model
+  is a product state machine of attachment, human and lifecycle, with
+  invariants I1--I15 and derived timers. The contract complements
+  AGTP, GAR and PACE and does not replace them.
+
+  Evidence: the product model is checked with TLC on bounded
+  configurations; a conformance suite (T1--T158) and a mutation check
+  in which every MUST invariant except the inspection-only I-SIGN-JWKS has
+  a killed mutant, on a Python bridge; vectors V01--V134 pass on it, and
+  all but the checkpoint-emission vectors (V52--V54, V88, V89; they need a
+  feature the crate lacks) pass on a Rust crate. Both implementations have the
+  same author; no third-party implementation exists. The evidence
+  shows the consistency of one reading of the text, not independent
+  confirmation; the limits are stated in the limitations section and
+  the limitations register, which also lists where the reference bridges
+  do not yet meet the text, among them the replay of a request refused
+  before its key was registered.
+abstract_note: |
+  This document arose from the development of Termenbox,
+  the author's proprietary, free-to-use project, a self-hosted web terminal for AI coding agents, which may adopt
+  the specification. The specification is implementation-agnostic.
+
+
+affiliations:
+  aff1:
+    name: "Independent Researcher"
+    ror: ""   # optional; canonical form: https://ror.org/02mhbdp94
+
+
+authors:
+  - name: "Sergei A. Strebulaev"
+    given: "Sergei A."
+    family: "Strebulaev"
+    orcid: "0009-0006-2710-8910"
+
+    affiliations: [aff1]
+
+    corresponding: true
+    email: ""   # optional; used for the corresponding-author footnote
+
+version: "0.10.2"
+version_label: "v0.10.2"
+date: "2026-11-21"
+# Markdown printed under the current version heading in CHANGES.md.
+release_notes: |
+  ### Changes in this release
+  - Review pass: every objection in the argument map now has a stated defense, and the costs the defenses concede are in the text: the model is not linked to the code by a refinement proof, and the invariant set has no operator-side hazard analysis behind it.
+  - Layout and publication: appendix tables that ran into the margin are narrowed, and the paper sources are published as pointers and hashes only.
+  - Signatures and wire format: re-attach, join, attach, client registration and operator proofs are signed under domain tags over RFC 8785 canonical bytes, pinned by known-answer files; operator signatures are bound to the bridge and the log position; the wire layer is served by both reference runners, with typed reasons.
+  - Key lifecycle and registry: revocation, key exhaustion (timers keep running), operator key addition and termination; the registry is scoped per session, recorded in the log and repaired from it on recovery; attach needs a grant that binds the public key and a proof of possession; a second signature scheme (ECDSA P-256) beside Ed25519.
+  - Hardening: a challenge never evicts a live nonce, unauthenticated failures are bounded, rejections for unknown, terminated and quarantined sessions are uniform, the I14 approval binds the tool, permission and content, a malformed log quarantines only its session, and NaN or negative timers are refused.
+  - Formal evidence: the TLA+ model has the key lifecycle and an explicit attacker with a bounded nonce book; TLC was rerun with every model mutant killed; an Apalache inductive check of a typed single-session model covers the state invariants and step properties; a names-level check compares the inventories of the two models (constants, variables, operators, conjunct names), not their bodies.
+  - Evidence tooling: the tests table, vector table, comparison matrix and invariant traceability matrix are generated and checked; mutant kills are attributed to tests and the mutation checks run with controls on both runners; fault-injection and verification-cost measurements; a standalone comparison section and a signature-scheme extension section.
+  - Limits stated as limits: truncation of the last log events, unsigned approvals, the live-nonce budget residual, reattach enumeration of live sessions, and the same-author caveat.
+
+
+license: "CC-BY-4.0"
+# The scaffold code is always MIT; the paper may be CC-BY-4.0 or MIT.
+license_code: "MIT"
+target_deposit: "Zenodo"
+doi: ""   # fill after deposit; leave empty for pre-deposit
+
+# Repository coordinates — used in CITATION.cff, .zenodo.json, README badge
+github_user: "strebulaev-articles"
+repo_name: "articles.bridge_contract_for_agent_session_governance"
+repo_url: "https://github.com/strebulaev-articles/articles.bridge_contract_for_agent_session_governance.public"
+
+# Comma-separated; the generator also accepts a YAML list.
+keywords: "agent, bridge contract, session governance, AGTP, GAR, PACE, conformance, session resumption, specification draft"
+
+# Legacy alias kept for older generated repos; the generator prefers `abstract`.
+description: "Bridge Contract for Agent Session Governance — independent specification draft, not submitted to the IETF."
+
+# Zenodo uses the abstract as its description. Keep a separate `description`
+# only if you need a longer, deposit-specific text; the generator prefers
+# `abstract` when both are present.
+
+# Used by .zenodo.json `references`. Each entry should be a short,
+# human-readable citation. Optional — leave empty list for a fresh repo.
+references:
+  - "Hood, C. (2026). Agent Transfer Protocol (AGTP). draft-hood-independent-agtp."
+  - "Sato, T. (2026). Governance Audit Record (GAR). draft-sato-soos-gar."
+  - "Nandakumar, S. (2026). Protocol for Agent Communication Exchange (PACE). draft-nandakumar-agentproto-moq-pace."
+  - "Zheng, S. et al. (2026). Formal Security Analysis of Agent Protocol Composition. arXiv:2606.28690."
+#  - "Perez, C. (2002). Technological Revolutions and Financial Capital."
+#  - "Anthropic (2026). An update on independent evaluators."
+
+# Zenodo communities — optional. Add only verified community identifiers;
+# the generator never invents one.
+communities: []

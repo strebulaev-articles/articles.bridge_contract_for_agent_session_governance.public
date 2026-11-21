@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/RESUME_REJECTED.schema.json",
+  "title": "RESUME_REJECTED payload",
+  "x-invariants": "I4, I8, I9, I11",
+  "description": "A re-attach request refused; informational, the cell is unchanged.",
+  "type": "object",
+  "properties": {
+    "key_id": {
+      "type": "string"
+    },
+    "seq": {
+      "type": "integer",
+      "description": "Client-claimed sequence number, as presented (may be out of range)."
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "bad_signature",
+        "nonce_expired",
+        "nonce_unknown",
+        "nonce_used",
+        "prefix_mismatch",
+        "resume_in_progress",
+        "already_attached",
+        "transport_replay",
+        "unknown_key",
+        "revoked_key"
+      ],
+      "description": "Reason code."
+    }
+  },
+  "required": [
+    "key_id",
+    "seq",
+    "reason"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/reattach.response.schema.json",
+  "title": "Wire response: reattach",
+  "type": "object",
+  "properties": {
+    "status": {
+      "const": "verified"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Committed events after seq, replayed to the client."
+    }
+  },
+  "required": [
+    "status",
+    "session_id",
+    "events"
+  ],
+  "additionalProperties": false
+}

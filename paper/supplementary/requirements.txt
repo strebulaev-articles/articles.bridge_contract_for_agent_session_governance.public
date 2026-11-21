@@ -1,0 +1,8 @@
+# Bridge Contract conformance suite and repository checks — runtime requirements (pyyaml is read by scripts/article for make validate)
+# Tested with Python 3.10.12, pytest 9.1.1, hypothesis 6.168.5 and cryptography 50.0.2.
+
+pytest>=8.0
+hypothesis>=6.0
+jsonschema>=4.0
+cryptography>=41.0
+pyyaml>=6.0

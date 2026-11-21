@@ -1,0 +1,761 @@
+{
+  "comment": "Byte-level known answers. canonical: the RFC 8785 bytes of the JSON text (also as hex). reject: inputs with no portable canonical form. ed25519_seed, public_key, resume_proofs: the exact bytes a re-attach or join proof signs and the Ed25519 signature over them (deterministic, so pinned). resume_negatives: signatures that must not verify for the stated fields. events, content_hashes: the canonical bytes and SHA-256 of an event and of tool-call content. add_client_proofs, add_client_negatives: the bytes a connected client signs to authorise a further key, and signatures that must not verify for the stated fields. attach_proofs, attach_negatives: the bytes the attaching key signs to prove it holds its private key (a bridge-bound tuple with the scheme tag), and signatures that must not verify for the stated fields. operator_seed, operator_public_key, operator_proofs, operator_negatives: the bytes an operator signs for a revocation, a key addition and a termination (bridge id, session, the operation's fields, and the sequence and hash of the last event at signing) and signatures that must not verify for the stated fields.",
+  "canonical": [
+    {
+      "name": "key order",
+      "json": "{\"b\":1,\"a\":2}",
+      "canonical": "{\"a\":2,\"b\":1}",
+      "hex": "7b2261223a322c2262223a317d"
+    },
+    {
+      "name": "key order, nested",
+      "json": "{\"z\":{\"b\":[1,{\"y\":1,\"x\":2}],\"a\":null},\"a\":true}",
+      "canonical": "{\"a\":true,\"z\":{\"a\":null,\"b\":[1,{\"x\":2,\"y\":1}]}}",
+      "hex": "7b2261223a747275652c227a223a7b2261223a6e756c6c2c2262223a5b312c7b2278223a322c2279223a317d5d7d7d"
+    },
+    {
+      "name": "whitespace is dropped",
+      "json": "{ \"a\" : [ 1 , 2 ] , \"b\" : false }",
+      "canonical": "{\"a\":[1,2],\"b\":false}",
+      "hex": "7b2261223a5b312c325d2c2262223a66616c73657d"
+    },
+    {
+      "name": "empty containers and string",
+      "json": "{\"o\":{},\"a\":[],\"s\":\"\"}",
+      "canonical": "{\"a\":[],\"o\":{},\"s\":\"\"}",
+      "hex": "7b2261223a5b5d2c226f223a7b7d2c2273223a22227d"
+    },
+    {
+      "name": "non-ASCII string is raw UTF-8",
+      "json": "\"\\u00e9\\u20ac\"",
+      "canonical": "\"\u00e9\u20ac\"",
+      "hex": "22c3a9e282ac22"
+    },
+    {
+      "name": "supplementary-plane character is raw UTF-8",
+      "json": "\"\\ud83d\\ude00\"",
+      "canonical": "\"\ud83d\ude00\"",
+      "hex": "22f09f988022"
+    },
+    {
+      "name": "combining sequence is not normalised",
+      "json": "\"e\\u0301\"",
+      "canonical": "\"e\u0301\"",
+      "hex": "2265cc8122"
+    },
+    {
+      "name": "controls and quote and backslash",
+      "json": "\"\\u0000\\b\\t\\n\\f\\r\\u001f\\\"\\\\\"",
+      "canonical": "\"\\u0000\\b\\t\\n\\f\\r\\u001f\\\"\\\\\"",
+      "hex": "225c75303030305c625c745c6e5c665c725c75303031665c225c5c22"
+    },
+    {
+      "name": "DEL and U+2028 are not escaped",
+      "json": "\"\\u007f\\u2028\"",
+      "canonical": "\"\u007f\u2028\"",
+      "hex": "227fe280a822"
+    },
+    {
+      "name": "slash is not escaped",
+      "json": "\"a/b\"",
+      "canonical": "\"a/b\"",
+      "hex": "22612f6222"
+    },
+    {
+      "name": "keys sort by UTF-16 code units",
+      "json": "{\"\\uff5e\":1,\"\\ud83d\\ude00\":2,\"a\":3}",
+      "canonical": "{\"a\":3,\"\ud83d\ude00\":2,\"\uff5e\":1}",
+      "hex": "7b2261223a332c22f09f9880223a322c22efbd9e223a317d"
+    },
+    {
+      "name": "non-ASCII key",
+      "json": "{\"\\u00e9\":1,\"e\":2}",
+      "canonical": "{\"e\":2,\"\u00e9\":1}",
+      "hex": "7b2265223a322c22c3a9223a317d"
+    },
+    {
+      "name": "float with integral value",
+      "json": "1.0",
+      "canonical": "1",
+      "hex": "31"
+    },
+    {
+      "name": "negative zero",
+      "json": "-0.0",
+      "canonical": "0",
+      "hex": "30"
+    },
+    {
+      "name": "exponent form of an integer",
+      "json": "1E+2",
+      "canonical": "100",
+      "hex": "313030"
+    },
+    {
+      "name": "fraction",
+      "json": "0.5",
+      "canonical": "0.5",
+      "hex": "302e35"
+    },
+    {
+      "name": "timestamp with fraction",
+      "json": "1000.25",
+      "canonical": "1000.25",
+      "hex": "313030302e3235"
+    },
+    {
+      "name": "small number, decimal form",
+      "json": "0.000001",
+      "canonical": "0.000001",
+      "hex": "302e303030303031"
+    },
+    {
+      "name": "small number, exponent form",
+      "json": "1e-7",
+      "canonical": "1e-7",
+      "hex": "31652d37"
+    },
+    {
+      "name": "large number, decimal form",
+      "json": "1.2345678901234568e20",
+      "canonical": "123456789012345680000",
+      "hex": "313233343536373839303132333435363830303030"
+    },
+    {
+      "name": "large number, exponent form",
+      "json": "1e21",
+      "canonical": "1e+21",
+      "hex": "31652b3231"
+    },
+    {
+      "name": "shortest round trip",
+      "json": "0.1",
+      "canonical": "0.1",
+      "hex": "302e31"
+    },
+    {
+      "name": "smallest subnormal",
+      "json": "5e-324",
+      "canonical": "5e-324",
+      "hex": "35652d333234"
+    },
+    {
+      "name": "largest double",
+      "json": "1.7976931348623157e308",
+      "canonical": "1.7976931348623157e+308",
+      "hex": "312e37393736393331333438363233313537652b333038"
+    },
+    {
+      "name": "largest safe integer",
+      "json": "9007199254740992",
+      "canonical": "9007199254740992",
+      "hex": "39303037313939323534373430393932"
+    },
+    {
+      "name": "smallest safe integer",
+      "json": "-9007199254740992",
+      "canonical": "-9007199254740992",
+      "hex": "2d39303037313939323534373430393932"
+    },
+    {
+      "name": "literals",
+      "json": "[null,true,false]",
+      "canonical": "[null,true,false]",
+      "hex": "5b6e756c6c2c747275652c66616c73655d"
+    }
+  ],
+  "reject": [
+    {
+      "name": "integer beyond 2^53",
+      "json": "9007199254740993"
+    },
+    {
+      "name": "negative integer beyond 2^53",
+      "json": "-9007199254740993"
+    },
+    {
+      "name": "not a number",
+      "json": "NaN"
+    },
+    {
+      "name": "overflowing exponent (infinity)",
+      "json": "1e400"
+    }
+  ],
+  "ed25519_seed": "4242424242424242424242424242424242424242424242424242424242424242",
+  "public_key": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+  "resume_proofs": [
+    {
+      "name": "re-attach",
+      "op": "reattach",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat",
+      "nonce": "abababababababababababababababab",
+      "seq": 3,
+      "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "signed_text": "[\"bc/v1/reattach\",\"sess-kat-\u00e9\",\"ck-kat\",\"abababababababababababababababab\",3,\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"]",
+      "signed_hex": "5b2262632f76312f7265617474616368222c22736573732d6b61742dc3a9222c22636b2d6b6174222c226162616261626162616261626162616261626162616261626162616261626162222c332c2263646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364225d",
+      "signature": "4be6ab07f4f6350acfb6abb5ab053f6be29c2eacddbd584e4f695383858dd3c5550f6ff598c6348fd991abd39e07f1ee66769022ef6b6cc5046e5f733e9ec00f"
+    },
+    {
+      "name": "join",
+      "op": "join",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat",
+      "nonce": "abababababababababababababababab",
+      "seq": 3,
+      "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "signed_text": "[\"bc/v1/join\",\"sess-kat-\u00e9\",\"ck-kat\",\"abababababababababababababababab\",3,\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"]",
+      "signed_hex": "5b2262632f76312f6a6f696e222c22736573732d6b61742dc3a9222c22636b2d6b6174222c226162616261626162616261626162616261626162616261626162616261626162222c332c2263646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364225d",
+      "signature": "b8fc36962f0eebce6fd10a167b00251454ebf9b789d3f0449dcf15ff568a89ba49244ebcd5f20fb7be56a8923134d3a1959a489a771d36f7ad4854b87d53550b"
+    },
+    {
+      "name": "re-attach, sequence 0, other nonce",
+      "op": "reattach",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat",
+      "nonce": "00000000000000000000000000000000",
+      "seq": 0,
+      "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "signed_text": "[\"bc/v1/reattach\",\"sess-kat-\u00e9\",\"ck-kat\",\"00000000000000000000000000000000\",0,\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"]",
+      "signed_hex": "5b2262632f76312f7265617474616368222c22736573732d6b61742dc3a9222c22636b2d6b6174222c223030303030303030303030303030303030303030303030303030303030303030222c302c2263646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364225d",
+      "signature": "1c22f5db257836e63571a3191b57753311444949f32491ae834187e597b6c708a0539a4dd2b682d26568250eae65b45978bb6e9a22f214b11412af6ad95aa409"
+    },
+    {
+      "name": "re-attach, non-ASCII session id",
+      "op": "reattach",
+      "session_id": "s\u2192\ud83d\ude00",
+      "key_id": "ck-kat",
+      "nonce": "abababababababababababababababab",
+      "seq": 3,
+      "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "signed_text": "[\"bc/v1/reattach\",\"s\u2192\ud83d\ude00\",\"ck-kat\",\"abababababababababababababababab\",3,\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"]",
+      "signed_hex": "5b2262632f76312f7265617474616368222c2273e28692f09f9880222c22636b2d6b6174222c226162616261626162616261626162616261626162616261626162616261626162222c332c2263646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364225d",
+      "signature": "431ff3754d997078c5af7f3a6fae7e2fa3880197bfb8e1d276b00f79738f1531accb767bfd2d642402b08a8422708f37853aec3b600813ff905d22f06689e50c"
+    }
+  ],
+  "resume_negatives": [
+    {
+      "name": "a re-attach signature is not a join signature",
+      "op": "join",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat",
+      "nonce": "abababababababababababababababab",
+      "seq": 3,
+      "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "signature": "4be6ab07f4f6350acfb6abb5ab053f6be29c2eacddbd584e4f695383858dd3c5550f6ff598c6348fd991abd39e07f1ee66769022ef6b6cc5046e5f733e9ec00f"
+    },
+    {
+      "name": "a join signature is not a re-attach signature",
+      "op": "reattach",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat",
+      "nonce": "abababababababababababababababab",
+      "seq": 3,
+      "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "signature": "b8fc36962f0eebce6fd10a167b00251454ebf9b789d3f0449dcf15ff568a89ba49244ebcd5f20fb7be56a8923134d3a1959a489a771d36f7ad4854b87d53550b"
+    },
+    {
+      "name": "the signature names the key id",
+      "op": "reattach",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-other",
+      "nonce": "abababababababababababababababab",
+      "seq": 3,
+      "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "signature": "4be6ab07f4f6350acfb6abb5ab053f6be29c2eacddbd584e4f695383858dd3c5550f6ff598c6348fd991abd39e07f1ee66769022ef6b6cc5046e5f733e9ec00f"
+    },
+    {
+      "name": "a signature over the untagged tuple is refused",
+      "op": "reattach",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat",
+      "nonce": "abababababababababababababababab",
+      "seq": 3,
+      "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "signature": "963b9330d3a1fb81face1516e1666a5a7a5d8cb39d6e04ffeb6055cbb4fbecd1c813e3fac788d5b60958f7b9ea750c618cb8f8a94b115d0deddda1670af7c30b"
+    },
+    {
+      "name": "a signature over the tuple without the key id is refused",
+      "op": "reattach",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat",
+      "nonce": "abababababababababababababababab",
+      "seq": 3,
+      "hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "signature": "f5deaab35347e0dff79d3a2ba65700b8f2c0539a807578532e85df9a29f3d25414fc528f4b5f4684fdff3a2695ea3a438fd3aafc76c17315d442b6e3de849b06"
+    }
+  ],
+  "events": [
+    {
+      "kind": "ATTACHED",
+      "session_id": "sess-kat-\u00e9",
+      "sequence": 7,
+      "prev_hash": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "payload": {
+        "key": "k\u00e9",
+        "note": "\u2192\ud83d\ude00",
+        "n": 2
+      },
+      "timestamp": 1000.0,
+      "canonical": "{\"kind\":\"ATTACHED\",\"payload\":{\"key\":\"k\u00e9\",\"n\":2,\"note\":\"\u2192\ud83d\ude00\"},\"prev_hash\":\"efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef\",\"sequence\":7,\"session_id\":\"sess-kat-\u00e9\",\"timestamp\":1000}",
+      "hex": "7b226b696e64223a224154544143484544222c227061796c6f6164223a7b226b6579223a226bc3a9222c226e223a322c226e6f7465223a22e28692f09f9880227d2c22707265765f68617368223a2265666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566222c2273657175656e6365223a372c2273657373696f6e5f6964223a22736573732d6b61742dc3a9222c2274696d657374616d70223a313030307d",
+      "hash": "3f78daa79baf4b40ebc0ae4fd9e36195828c831e93fcaa4a9e14e08674a99f01"
+    },
+    {
+      "kind": "ATTACHED",
+      "session_id": "sess-kat-\u00e9",
+      "sequence": 7,
+      "prev_hash": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "payload": {},
+      "timestamp": 1000.25,
+      "canonical": "{\"kind\":\"ATTACHED\",\"payload\":{},\"prev_hash\":\"efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef\",\"sequence\":7,\"session_id\":\"sess-kat-\u00e9\",\"timestamp\":1000.25}",
+      "hex": "7b226b696e64223a224154544143484544222c227061796c6f6164223a7b7d2c22707265765f68617368223a2265666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566222c2273657175656e6365223a372c2273657373696f6e5f6964223a22736573732d6b61742dc3a9222c2274696d657374616d70223a313030302e32357d",
+      "hash": "eb14b9c03afb714cdad6dff64b5a956eb37de26dff01dd9846a9ea4beee3f6ac"
+    }
+  ],
+  "content_hashes": [
+    {
+      "name": "non-ASCII content",
+      "json": "{\"cmd\": \"echo \\u00e9\", \"args\": [\"\\u2192\", 1]}",
+      "canonical": "{\"args\":[\"\u2192\",1],\"cmd\":\"echo \u00e9\"}",
+      "hash": "a5860ee580790a079b56b37bf64b66b11f44652df25f3d3190de3a136f793c57"
+    },
+    {
+      "name": "integral float in content",
+      "json": "{\"timeout\": 30.0}",
+      "canonical": "{\"timeout\":30}",
+      "hash": "2e134e47e356ce08bffed9fc79e7f38fa3b38ef0d3812f182202731896133dc4"
+    }
+  ],
+  "add_client_proofs": [
+    {
+      "session_id": "sess-kat-\u00e9",
+      "via_key_id": "ck-kat",
+      "new_key_id": "ck-kat-2",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "nonce": "abababababababababababababababab",
+      "name": "add_client",
+      "signed_text": "[\"bc/v1/add-client\",\"sess-kat-\u00e9\",\"ck-kat\",\"ck-kat-2\",\"ed25519\",\"efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef\",\"abababababababababababababababab\"]",
+      "signed_hex": "5b2262632f76312f6164642d636c69656e74222c22736573732d6b61742dc3a9222c22636b2d6b6174222c22636b2d6b61742d32222c2265643235353139222c2265666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566222c226162616261626162616261626162616261626162616261626162616261626162225d",
+      "signature": "42db4a858a5f73ae1099e1387337e5e94bdb0f4f2d40556d7da85d263571b1fa50ba99af696ae69b9fb069b11a71e9f95daca9bf689693863e84a1f7c3775002"
+    }
+  ],
+  "add_client_negatives": [
+    {
+      "session_id": "sess-kat-\u00e9",
+      "via_key_id": "ck-kat",
+      "new_key_id": "ck-evil",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "nonce": "abababababababababababababababab",
+      "name": "a signature for another new key id does not verify",
+      "signature": "42db4a858a5f73ae1099e1387337e5e94bdb0f4f2d40556d7da85d263571b1fa50ba99af696ae69b9fb069b11a71e9f95daca9bf689693863e84a1f7c3775002"
+    },
+    {
+      "session_id": "sess-kat-\u00e9",
+      "via_key_id": "ck-kat",
+      "new_key_id": "ck-kat-2",
+      "scheme": "ed25519",
+      "public_key": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "nonce": "abababababababababababababababab",
+      "name": "a signature for another public key does not verify",
+      "signature": "42db4a858a5f73ae1099e1387337e5e94bdb0f4f2d40556d7da85d263571b1fa50ba99af696ae69b9fb069b11a71e9f95daca9bf689693863e84a1f7c3775002"
+    },
+    {
+      "session_id": "sess-kat-\u00e9",
+      "via_key_id": "ck-kat",
+      "new_key_id": "ck-kat-2",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "nonce": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "a signature for another nonce does not verify",
+      "signature": "42db4a858a5f73ae1099e1387337e5e94bdb0f4f2d40556d7da85d263571b1fa50ba99af696ae69b9fb069b11a71e9f95daca9bf689693863e84a1f7c3775002"
+    },
+    {
+      "session_id": "sess-other",
+      "via_key_id": "ck-kat",
+      "new_key_id": "ck-kat-2",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "nonce": "abababababababababababababababab",
+      "name": "a signature for another session does not verify",
+      "signature": "42db4a858a5f73ae1099e1387337e5e94bdb0f4f2d40556d7da85d263571b1fa50ba99af696ae69b9fb069b11a71e9f95daca9bf689693863e84a1f7c3775002"
+    },
+    {
+      "session_id": "sess-kat-\u00e9",
+      "via_key_id": "ck-other",
+      "new_key_id": "ck-kat-2",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "nonce": "abababababababababababababababab",
+      "name": "a signature for another via key id does not verify",
+      "signature": "42db4a858a5f73ae1099e1387337e5e94bdb0f4f2d40556d7da85d263571b1fa50ba99af696ae69b9fb069b11a71e9f95daca9bf689693863e84a1f7c3775002"
+    },
+    {
+      "session_id": "sess-kat-\u00e9",
+      "via_key_id": "ck-kat",
+      "new_key_id": "ck-kat-2",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "nonce": "abababababababababababababababab",
+      "name": "a join signature is not an add_client signature",
+      "signature": "b8fc36962f0eebce6fd10a167b00251454ebf9b789d3f0449dcf15ff568a89ba49244ebcd5f20fb7be56a8923134d3a1959a489a771d36f7ad4854b87d53550b"
+    }
+  ],
+  "attach_proofs": [
+    {
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "principal": "p-kat",
+      "scope": [
+        "read",
+        "write"
+      ],
+      "lineage": [
+        "root",
+        "child"
+      ],
+      "key_id": "ck-kat",
+      "scheme": "ed25519",
+      "public_key": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+      "name": "attach",
+      "signed_text": "[\"bc/v1/attach\",\"bridge-kat\",\"sess-kat-\u00e9\",\"p-kat\",[\"read\",\"write\"],[\"root\",\"child\"],\"ck-kat\",\"ed25519\",\"2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12\"]",
+      "signed_hex": "5b2262632f76312f617474616368222c226272696467652d6b6174222c22736573732d6b61742dc3a9222c22702d6b6174222c5b2272656164222c227772697465225d2c5b22726f6f74222c226368696c64225d2c22636b2d6b6174222c2265643235353139222c2232313532663864313962373931643234343533323432653135663265616236636237636666613762366135656433303039373936306530363938383164623132225d",
+      "signature": "4fc7bf806b353d6b0ea4fe30db37040bb5eb1f9187c6afa1b5ad309ae2fffc683787eb32e6346d3e93b447d45f76e851354c8f732c22b1a0d80d78aac79e090d"
+    }
+  ],
+  "attach_negatives": [
+    {
+      "bridge_id": "bridge-other",
+      "session_id": "sess-kat-\u00e9",
+      "principal": "p-kat",
+      "scope": [
+        "read",
+        "write"
+      ],
+      "lineage": [
+        "root",
+        "child"
+      ],
+      "key_id": "ck-kat",
+      "scheme": "ed25519",
+      "public_key": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+      "name": "other bridge",
+      "signature": "4fc7bf806b353d6b0ea4fe30db37040bb5eb1f9187c6afa1b5ad309ae2fffc683787eb32e6346d3e93b447d45f76e851354c8f732c22b1a0d80d78aac79e090d"
+    },
+    {
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "principal": "p-kat",
+      "scope": [
+        "read",
+        "write"
+      ],
+      "lineage": [
+        "root",
+        "child"
+      ],
+      "key_id": "ck-kat",
+      "scheme": "ecdsa-p256",
+      "public_key": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+      "name": "other scheme tag",
+      "signature": "4fc7bf806b353d6b0ea4fe30db37040bb5eb1f9187c6afa1b5ad309ae2fffc683787eb32e6346d3e93b447d45f76e851354c8f732c22b1a0d80d78aac79e090d"
+    },
+    {
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "principal": "p-kat",
+      "scope": [
+        "read",
+        "write"
+      ],
+      "lineage": [
+        "root",
+        "child"
+      ],
+      "key_id": "ck-other",
+      "scheme": "ed25519",
+      "public_key": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+      "name": "other key id",
+      "signature": "4fc7bf806b353d6b0ea4fe30db37040bb5eb1f9187c6afa1b5ad309ae2fffc683787eb32e6346d3e93b447d45f76e851354c8f732c22b1a0d80d78aac79e090d"
+    },
+    {
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "principal": "p-kat",
+      "scope": [
+        "read"
+      ],
+      "lineage": [
+        "root",
+        "child"
+      ],
+      "key_id": "ck-kat",
+      "scheme": "ed25519",
+      "public_key": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+      "name": "other scope",
+      "signature": "4fc7bf806b353d6b0ea4fe30db37040bb5eb1f9187c6afa1b5ad309ae2fffc683787eb32e6346d3e93b447d45f76e851354c8f732c22b1a0d80d78aac79e090d"
+    }
+  ],
+  "operator_seed": "0707070707070707070707070707070707070707070707070707070707070707",
+  "operator_public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+  "operator_proofs": [
+    {
+      "op": "revoke",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "revoke",
+      "signed_text": "[\"bc/v1/revoke\",\"bridge-kat\",\"sess-kat-\u00e9\",\"ck-kat-2\",\"compromise\",7,\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"]",
+      "signed_hex": "5b2262632f76312f7265766f6b65222c226272696467652d6b6174222c22736573732d6b61742dc3a9222c22636b2d6b61742d32222c22636f6d70726f6d697365222c372c2263646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364225d",
+      "signature": "74a1089483afb3026bdc6a596e7d5435d2059abd35f391edbb6fcfd6d9e1e76d701c58bb245cce2ecbfae6cf00e573cf4c22948f13776651c24ff2a9040e7003"
+    },
+    {
+      "op": "add_key",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "add_key",
+      "signed_text": "[\"bc/v1/add-key\",\"bridge-kat\",\"sess-kat-\u00e9\",\"ck-kat-2\",\"ed25519\",\"efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef\",7,\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"]",
+      "signed_hex": "5b2262632f76312f6164642d6b6579222c226272696467652d6b6174222c22736573732d6b61742dc3a9222c22636b2d6b61742d32222c2265643235353139222c2265666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566656665666566222c372c2263646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364225d",
+      "signature": "cb7553d16380b43d7f73812c7de6916749ccf780c97e0e7f1f7567b6748eefb3a2d43bb8f8341db0bacb4eac2adf32f037018d6adee5965ebfee5e6efec7fd0e"
+    },
+    {
+      "op": "terminate",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "terminate",
+      "signed_text": "[\"bc/v1/terminate\",\"bridge-kat\",\"sess-kat-\u00e9\",\"compromise\",7,\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"]",
+      "signed_hex": "5b2262632f76312f7465726d696e617465222c226272696467652d6b6174222c22736573732d6b61742dc3a9222c22636f6d70726f6d697365222c372c2263646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364225d",
+      "signature": "a17374bfbb2ab5679c7d086af4d58be20a782432d6db09a2c2678dca45e361e4dd0f49aa10bafe36a8029d634b5b459a5b1ad317e53e2d3fe98edbb83a3aef06"
+    }
+  ],
+  "operator_negatives": [
+    {
+      "op": "revoke",
+      "bridge_id": "bridge-other",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "revoke: signed for another bridge",
+      "signature": "74a1089483afb3026bdc6a596e7d5435d2059abd35f391edbb6fcfd6d9e1e76d701c58bb245cce2ecbfae6cf00e573cf4c22948f13776651c24ff2a9040e7003"
+    },
+    {
+      "op": "revoke",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-other",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "revoke: signed for another session",
+      "signature": "74a1089483afb3026bdc6a596e7d5435d2059abd35f391edbb6fcfd6d9e1e76d701c58bb245cce2ecbfae6cf00e573cf4c22948f13776651c24ff2a9040e7003"
+    },
+    {
+      "op": "revoke",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 8,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "revoke: signed for another sequence",
+      "signature": "74a1089483afb3026bdc6a596e7d5435d2059abd35f391edbb6fcfd6d9e1e76d701c58bb245cce2ecbfae6cf00e573cf4c22948f13776651c24ff2a9040e7003"
+    },
+    {
+      "op": "revoke",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "abababababababababababababababababababababababababababababababab",
+      "name": "revoke: signed for another head hash",
+      "signature": "74a1089483afb3026bdc6a596e7d5435d2059abd35f391edbb6fcfd6d9e1e76d701c58bb245cce2ecbfae6cf00e573cf4c22948f13776651c24ff2a9040e7003"
+    },
+    {
+      "op": "revoke",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "rotation",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "revoke: signed for another reason",
+      "signature": "74a1089483afb3026bdc6a596e7d5435d2059abd35f391edbb6fcfd6d9e1e76d701c58bb245cce2ecbfae6cf00e573cf4c22948f13776651c24ff2a9040e7003"
+    },
+    {
+      "op": "add_key",
+      "bridge_id": "bridge-other",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "add_key: signed for another bridge",
+      "signature": "cb7553d16380b43d7f73812c7de6916749ccf780c97e0e7f1f7567b6748eefb3a2d43bb8f8341db0bacb4eac2adf32f037018d6adee5965ebfee5e6efec7fd0e"
+    },
+    {
+      "op": "add_key",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-other",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "add_key: signed for another session",
+      "signature": "cb7553d16380b43d7f73812c7de6916749ccf780c97e0e7f1f7567b6748eefb3a2d43bb8f8341db0bacb4eac2adf32f037018d6adee5965ebfee5e6efec7fd0e"
+    },
+    {
+      "op": "add_key",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 8,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "add_key: signed for another sequence",
+      "signature": "cb7553d16380b43d7f73812c7de6916749ccf780c97e0e7f1f7567b6748eefb3a2d43bb8f8341db0bacb4eac2adf32f037018d6adee5965ebfee5e6efec7fd0e"
+    },
+    {
+      "op": "add_key",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "abababababababababababababababababababababababababababababababab",
+      "name": "add_key: signed for another head hash",
+      "signature": "cb7553d16380b43d7f73812c7de6916749ccf780c97e0e7f1f7567b6748eefb3a2d43bb8f8341db0bacb4eac2adf32f037018d6adee5965ebfee5e6efec7fd0e"
+    },
+    {
+      "op": "add_key",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "abababababababababababababababababababababababababababababababab",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "add_key: signed for another public key",
+      "signature": "cb7553d16380b43d7f73812c7de6916749ccf780c97e0e7f1f7567b6748eefb3a2d43bb8f8341db0bacb4eac2adf32f037018d6adee5965ebfee5e6efec7fd0e"
+    },
+    {
+      "op": "terminate",
+      "bridge_id": "bridge-other",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "terminate: signed for another bridge",
+      "signature": "a17374bfbb2ab5679c7d086af4d58be20a782432d6db09a2c2678dca45e361e4dd0f49aa10bafe36a8029d634b5b459a5b1ad317e53e2d3fe98edbb83a3aef06"
+    },
+    {
+      "op": "terminate",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-other",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "terminate: signed for another session",
+      "signature": "a17374bfbb2ab5679c7d086af4d58be20a782432d6db09a2c2678dca45e361e4dd0f49aa10bafe36a8029d634b5b459a5b1ad317e53e2d3fe98edbb83a3aef06"
+    },
+    {
+      "op": "terminate",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 8,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "terminate: signed for another sequence",
+      "signature": "a17374bfbb2ab5679c7d086af4d58be20a782432d6db09a2c2678dca45e361e4dd0f49aa10bafe36a8029d634b5b459a5b1ad317e53e2d3fe98edbb83a3aef06"
+    },
+    {
+      "op": "terminate",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "abababababababababababababababababababababababababababababababab",
+      "name": "terminate: signed for another head hash",
+      "signature": "a17374bfbb2ab5679c7d086af4d58be20a782432d6db09a2c2678dca45e361e4dd0f49aa10bafe36a8029d634b5b459a5b1ad317e53e2d3fe98edbb83a3aef06"
+    },
+    {
+      "op": "terminate",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "other",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "terminate: signed for another reason",
+      "signature": "a17374bfbb2ab5679c7d086af4d58be20a782432d6db09a2c2678dca45e361e4dd0f49aa10bafe36a8029d634b5b459a5b1ad317e53e2d3fe98edbb83a3aef06"
+    },
+    {
+      "op": "terminate",
+      "bridge_id": "bridge-kat",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat-2",
+      "reason": "compromise",
+      "scheme": "ed25519",
+      "public_key": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "seq": 7,
+      "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "name": "a revoke signature is not a termination signature",
+      "signature": "74a1089483afb3026bdc6a596e7d5435d2059abd35f391edbb6fcfd6d9e1e76d701c58bb245cce2ecbfae6cf00e573cf4c22948f13776651c24ff2a9040e7003"
+    }
+  ]
+}

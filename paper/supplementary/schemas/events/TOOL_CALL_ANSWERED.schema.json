@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/TOOL_CALL_ANSWERED.schema.json",
+  "title": "TOOL_CALL_ANSWERED payload",
+  "x-invariants": "I14",
+  "description": "A decision on a queued call; shown_hash is h_a.",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string"
+    },
+    "shown_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "deny"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "operator_policy"
+      ],
+      "description": "Present when the operator's allowlist, not a human, approved the call."
+    }
+  },
+  "required": [
+    "key",
+    "shown_hash",
+    "decision"
+  ],
+  "additionalProperties": false
+}

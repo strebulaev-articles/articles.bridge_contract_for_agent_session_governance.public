@@ -1,0 +1,24 @@
+{
+  "id": "V58",
+  "title": "Attach claiming a wider scope than the grant is refused",
+  "covers": [
+    "I-GRANT"
+  ],
+  "session": {
+    "session_id": "sess-58",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1",
+    "grant": "wider-scope"
+  },
+  "actions": [],
+  "expect": {
+    "attach_refused": true,
+    "events": [],
+    "cell": [],
+    "scope_version": 0
+  }
+}

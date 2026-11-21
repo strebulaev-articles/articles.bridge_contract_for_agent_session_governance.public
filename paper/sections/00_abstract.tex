@@ -1,0 +1,146 @@
+\textbf{Status of this document:} Independent specification draft, written in
+Internet-Draft style, not submitted to the IETF. It has no standing in any
+standards process, and the RFC~2119 and RFC~8174 key words are used as in an
+Internet-Draft.
+
+\medskip
+\noindent\textbf{How to read this document.}
+The comparisons in Sections~\ref{sec:related-work} and~\ref{sec:mapping}
+are the author's reading of the cited drafts at the versions listed in
+\texttt{paper/sources/MANIFEST.md}. Where this document and a cited
+draft differ, the cited draft is authoritative for its own scope; this
+document is authoritative only for the Bridge Contract. The phrase
+``as read'' marks an interpretation of a cited draft, not a fact about
+it. The ``Why this obligation is out of <draft>'s scope'' paragraphs in
+Section~\ref{sec:related-work} argue that, in the versions read, the gap is
+one of scope rather than an oversight. The wire format (Appendix~\ref{app:wire-format}) is
+normative for client--bridge messages; the unit of conformance is the
+committed event log and the final session state. The limits of the
+evidence are stated in Section~\ref{sec:limitations} and the
+limitations register (Table~\ref{tab:limitations}).
+
+% ─────────────────────────────────────────────────────────────
+% Abstract and keywords. The block below is regenerated from
+% metadata.yaml by `make metadata`; edit metadata.yaml, not this file.
+% ─────────────────────────────────────────────────────────────
+% ABSTRACT:START
+\begin{abstract}
+\noindent
+Existing agent protocols --- the Agent Transfer Protocol (AGTP), the
+Governance Audit Record (GAR) and the Protocol for Agent Communication
+Exchange (PACE) --- define transport, audit and resumption semantics
+for agent sessions, but, in the versions read, none defines what an intermediate bridge MUST
+do when the client is detached and the agent keeps executing, or when
+the human in the loop is unavailable. We argue that the reason is
+scope rather than oversight; this rests on a reading of those drafts
+and would weaken if one of them were extended to own these duties.
+
+This document defines the Bridge Contract BC = (S, E, R, C): a Session
+Identity Descriptor, Mandatory Governance Events, a Resume Record that
+the bridge keeps for itself, and Conformance Criteria. Re-attach is a
+challenge-response in which the client proves possession of a
+registered key over a single-use nonce and the last event it saw,
+and the bridge accepts only a consistent prefix. The log is
+hash-chained, which detects edits and reordering inside it but not
+the truncation of its last events without a head held outside the log. The normative model
+is a product state machine of attachment, human and lifecycle, with
+invariants I1--I15 and derived timers. The contract complements
+AGTP, GAR and PACE and does not replace them.
+
+Evidence: the product model is checked with TLC on bounded
+configurations; a conformance suite (T1--T158) and a mutation check
+in which every MUST invariant except the inspection-only I-SIGN-JWKS has
+a killed mutant, on a Python bridge; vectors V01--V134 pass on it, and
+all but the checkpoint-emission vectors (V52--V54, V88, V89; they need a
+feature the crate lacks) pass on a Rust crate. Both implementations have the
+same author; no third-party implementation exists. The evidence
+shows the consistency of one reading of the text, not independent
+confirmation; the limits are stated in the limitations section and
+the limitations register, which also lists where the reference bridges
+do not yet meet the text, among them the replay of a request refused
+before its key was registered.
+
+\end{abstract}
+
+\bigskip
+\noindent\textbf{A note on evidence.} This document arose from the development of Termenbox,
+the author's proprietary, free-to-use project, a self-hosted web terminal for AI coding agents, which may adopt
+the specification. The specification is implementation-agnostic.
+
+
+\medskip
+\noindent\textbf{Keywords:} agent, bridge contract, session governance, AGTP, GAR, PACE, conformance, session resumption, specification draft.
+% ABSTRACT:END
+
+\section*{Normative summary}
+\addcontentsline{toc}{section}{Normative summary}
+
+This page restates the obligations of a conformant bridge; the sections
+cited are authoritative where the wording differs.
+
+\smallskip\noindent\textbf{State.} A live session is in a cell
+$(a,h)$, $a \in \{\textsc{Att}, \textsc{Det}, \textsc{Res}\}$ (client
+attached, detached, re-attaching), $h \in \{\textsc{None},
+\textsc{Pend}\}$ (no escalation, or the agent waits on a human), or in the
+terminal cell $\bot$. The transition table
+(Section~\ref{sec:product-model}) is normative; the names ATTACHED,
+DETACHED, PENDING\_HUMAN, RESUMING and TERMINATED are a derived view. Every
+transition emits a governance event or is an explicit idempotent no-op.
+
+\smallskip\noindent\textbf{A bridge MUST} (Sections~\ref{sec:spec}
+and~\ref{sec:state-machine}):
+\begin{itemize}[leftmargin=1.5em,itemsep=0pt,topsep=2pt]
+\item append every event, hash-chained (I5), durably and \emph{before}
+the cell changes or the client is acknowledged (I7, I12), and rebuild each
+session after a restart by replaying its log, as detached
+(Section~\ref{sec:recovery});
+\item emit \texttt{DETACHMENT} and \texttt{RESUME\_PREPARED} before
+entering a detached cell (I1), and queue, never forward, tool calls while
+$h=\textsc{Pend}$ (I2); queued calls carry idempotency keys, the queue
+is bounded, calls and human approvals expire, and drain revalidates the
+current scope (I13); a call is forwarded only if an approving answer
+whose reported call hash (tool, permission and content) equals the hash recorded at queue time
+exists (I14);
+\item let authority only narrow, with a version counter (I10); refuse a
+widening it is asked to apply, and report a widening the runtime
+announces as \texttt{AUTHORITY\_EXTENSION\_REJECTED} with source
+\texttt{observed} (I3; the bridge prevents the first and can only report the
+second);
+\item treat attachment as derived from the set of connected client keys
+(I15): a further client joining or leaving while another is connected
+changes no cell;
+\item accept a re-attach only as a challenge-response: a signature under a
+registered client key over a fresh, single-use nonce
+and the last event the client saw, where that event is in the bridge's
+chain (I4, I9, I11); any other attempt is rejected without changing state;
+emit \texttt{RESUME\_VERIFIED} on $\textsc{Res}\to\textsc{Att}$ after
+re-verifying the chain;
+\item derive the timers from one value, $T_{\text{detach}}$, with
+$T_{\text{call}} \le T_{\text{human}}$ (MUST) and
+$T_{\text{human}} \le T_{\text{detach}}$ as the default and a recommendation
+(default 30~min, profile \emph{persistent} 7~days),
+time out a pending human and a detachment, and keep $\bot$ terminal (I6).
+\end{itemize}
+It SHOULD sign events in GEC-less deployments (I-SIGN-EVENT) and emit
+signed checkpoints anchored in an external transparency log
+(I-CHECKPOINT). It MUST NOT accept a JWKS endpoint from session metadata
+(I-SIGN-JWKS).
+
+\smallskip\noindent\textbf{Assumptions and scope.} The bridge is
+trusted (A4), the clients' private keys are not stolen (A7), and the
+durable log honours append (A1). A Byzantine client without a registered
+key and a restart of a single bridge are in scope; replication, partial
+detach, a Byzantine bridge and multi-hop composition are not
+(Section~\ref{sec:scope}). I2 and I13 hold for calls the runtime submits
+to the bridge (Section~\ref{sec:coverage}).
+
+\smallskip\noindent\textbf{Evidence} (Section~\ref{sec:conformance},
+Appendix~\ref{app:formal}). TLC finds no violation of the product model on
+bounded configurations (the two-session run never fires Disconnect,
+Resolve, Submit or Drain; the detach paths are checked only in
+single-session runs) and kills every mutant of the model; the pytest
+cases and the mutants (every invariant I1--I15 has a killed mutant) cover
+the Python reference bridge; JSON vectors V01--V134 run on it, and all but those that expect checkpoint events run on a Rust crate. No third-party implementation exists yet.
+
+\tableofcontents
+\newpage

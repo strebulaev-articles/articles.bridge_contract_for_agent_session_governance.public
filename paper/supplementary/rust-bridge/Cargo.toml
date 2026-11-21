@@ -1,0 +1,19 @@
+[package]
+name = "bridge-contract"
+version = "0.10.2"
+edition = "2021"
+description = "Bridge Contract bridge: product state machine, client set, challenge-response resume, durable log, recovery"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Standalone: this crate must not depend on Termenbox; the
+# empty table keeps it out of any enclosing Cargo workspace.
+[workspace]
+
+[dependencies]
+hex = "0.4"
+ed25519-dalek = "2"
+p256 = { version = "0.13", features = ["ecdsa"] }
+serde_json = "1"
+sha2 = "0.10"
+getrandom = "0.2"

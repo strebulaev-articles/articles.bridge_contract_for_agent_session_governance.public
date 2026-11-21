@@ -1,0 +1,62 @@
+{
+  "id": "V87",
+  "title": "Unauthenticated rejections are logged only up to a bound, then the genuine re-attach succeeds",
+  "covers": [
+    "I11",
+    "I11g"
+  ],
+  "session": {
+    "session_id": "sess-87",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach",
+      "nonce": "unknown",
+      "proof": "invalid",
+      "times": 20,
+      "error": true
+    },
+    {
+      "do": "reattach"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0
+  }
+}

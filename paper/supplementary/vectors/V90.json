@@ -1,0 +1,47 @@
+{
+  "id": "V90",
+  "title": "A signature made for a re-attach is refused when presented as a join",
+  "covers": [
+    "I11",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-90",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "join",
+      "client": "ck-2",
+      "proof": "other-operation",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "RESUME_REJECTED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1"
+    ],
+    "last_event_payload": {
+      "reason": "bad_signature"
+    }
+  }
+}

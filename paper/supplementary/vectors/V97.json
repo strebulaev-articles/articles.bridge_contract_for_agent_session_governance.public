@@ -1,0 +1,24 @@
+{
+  "id": "V97",
+  "title": "Attach without a proof of possession is refused as possession_invalid",
+  "covers": [
+    "I11",
+    "I-GRANT",
+    "attach-possession"
+  ],
+  "session": {
+    "session_id": "sess-97",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1",
+    "possession": "none"
+  },
+  "expect": {
+    "attach_refused": true,
+    "attach_reason": "possession_invalid"
+  },
+  "actions": []
+}

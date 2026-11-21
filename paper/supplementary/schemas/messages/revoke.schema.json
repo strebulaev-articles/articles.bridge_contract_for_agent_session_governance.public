@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/revoke.schema.json",
+  "title": "Wire op: revoke",
+  "type": "object",
+  "properties": {
+    "op": {
+      "const": "revoke"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "key_id": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "rotation",
+        "compromise"
+      ]
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[0-9a-f]*$",
+      "description": "Operator signature over canonical JSON of [\"bc/v1/revoke\", bridge_id, session_id, key_id, reason, seq, head]; empty with requested_by records only a request."
+    },
+    "requested_by": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "op",
+    "session_id",
+    "key_id",
+    "reason"
+  ],
+  "additionalProperties": false
+}

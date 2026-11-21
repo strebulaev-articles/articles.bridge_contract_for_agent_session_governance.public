@@ -1,0 +1,64 @@
+{
+  "id": "V64",
+  "title": "Two-phase rotation: add the new key, revoke the old, only the new one re-attaches",
+  "covers": [
+    "I11-REVOKE",
+    "B.4"
+  ],
+  "session": {
+    "session_id": "sess-64",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "rotation"
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1",
+      "error": true
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "KEY_REVOKED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_REJECTED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-2"
+    ],
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": false
+  }
+}

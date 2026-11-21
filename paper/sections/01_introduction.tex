@@ -1,0 +1,142 @@
+\section{Introduction}
+% ================================================================================
+
+AI agents increasingly operate as long-lived processes that outlive the
+interactive client that initiated them. A mobile user asks a research agent
+to summarise a dataset; the agent enqueues several tool calls and then
+pauses for a human confirmation. The user's phone moves between cell towers,
+the transport disconnects, and the user does not return for forty minutes.
+During that interval, what must the bridge component that mediates between
+the client and the agent runtime actually \emph{do}? Existing agent
+protocols answer the questions of identity (AGTP), audit (GAR) and
+resumption (PACE) but leave the bridge's own question orphaned. AGTP \cite{I-D.hood-agtp} and its session companion
+\cite{I-D.hood-agtp-session} define transport-level identity headers
+(\texttt{Agent-ID}, \texttt{Owner-ID}, \texttt{Authority-Scope},
+\texttt{Session-ID}) but do not specify the execution semantics of the
+bridge that holds them. GAR \cite{I-D.sato-soos-gar} defines a tamper-evident
+audit record (SAR) and the Authority Lifecycle Event (ALE), but presupposes
+the existence of a Governing Enforcement Component (GEC) and does not say
+who emits audit events when no GEC is present. PACE
+\cite{I-D.nandakumar-agentproto-moq-pace} defines a re-attach mechanism for
+sessions in the SUSPENDED state but presumes a relay or Media over QUIC
+Transport (MOQT) substrate and does not define what happens in the window
+\emph{during} which the client is detached and the agent continues to work.
+The orphaned question---what the bridge must do during this window---is
+unanswered, in the versions read, by AGTP, GAR or PACE.
+
+This document answers it. We define the \emph{Bridge Contract}, a
+structured specification of the tuple $BC = (S, E, R, C)$ where $S$ is a
+Session Identity Descriptor, $E$ is the set of Governance Events the
+bridge is obligated to emit, $R$ is the Resume Record the
+bridge keeps for itself on detach, and $C$ is the set of Conformance
+Criteria against which any implementation can be independently
+verified. The contract is positioned as \emph{execution semantics for
+AGTP headers}, \emph{a GAR-shaped event source for deployments
+without a Governing Enforcement Component (GEC)}, and \emph{the
+source of the resume point that a PACE re-attach
+needs}. It does not compete with any of these protocols.
+
+The research questions RQ1--RQ4 answered in this document are:
+
+\begin{description}[leftmargin=2em]
+\item[RQ1] Given that AGTP defines transport headers such as
+\texttt{Session-ID}, \texttt{Authority-Scope}, and \texttt{Task-ID}, are
+there uncovered governance obligations at the bridge layer? If so, which?
+\item[RQ2] GAR already defines the Session Audit Record (SAR) and the
+Authority Lifecycle Event (ALE). Is the Bridge Contract a competitor, a
+complement, or an ``execution-side precondition'' for GAR?
+\item[RQ3] PACE already defines a session resumption mechanism (re-attach
+to SUSPENDED sessions). Does the Bridge Contract's resume record and re-attach protocol
+overlap with PACE, complement it, or duplicate it? If it complements, where
+does the boundary lie?
+\item[RQ4] What is the Bridge Contract's uniqueness with respect to
+existing session-level implementations such as Herdr? What exactly is
+contributed, and what is the evidence for it?
+\end{description}
+
+\paragraph{Terminology.} In this document, ``Bridge Contract'' (BC) refers to
+the specification defined hereby; ``bridge'' refers to the component that
+implements the contract. ``Resume Record'' (Definition~\ref{def:rt})
+is the bridge's own record of where a detachment can be resumed; it is
+not handed to the client. The client re-attaches by challenge-response
+(Section~\ref{sec:spec}); a MACed ``resume token'' held by the client
+was considered and rejected, for the reason given in
+Section~\ref{sec:spec}.
+``GEC-less deployment'' refers to a deployment without
+a Governing Enforcement Component, per Definition~\ref{def:gecless}.
+
+\paragraph{Novelty statement.} The contribution of this document is one
+artifact with a specification, evidence and a gap analysis: a \emph{specification} (a tuple, a normative
+state machine and conformance criteria) for the obligations that no
+protocol among AGTP, GAR, and PACE assigns to the bridge, \emph{executable
+evidence} (reference implementations, tests, mutants and vectors), and a
+\emph{formal model} checked within stated bounds. The \emph{phenomenon} of orphaned obligations in
+protocol composition is reported by AgentThread
+\cite{zheng2026formal} for other protocols, which motivates this work. Hash-chained
+audit events, capability revocation during detach, and event-before-mutation
+audit patterns are standard techniques in the protocol composition
+literature; the Bridge Contract does not introduce new mechanisms in any
+of these areas. We use the term ``Bridge Contract'' in the engineering
+sense (a structurally specified set of obligations), not in the sense of
+session types or behavioural contracts.
+
+\paragraph{Contributions.} The contributions of this document are:
+\begin{enumerate}[leftmargin=2em]
+\item A structured specification of the Bridge Contract as a tuple
+$BC = (S, E, R, C)$ with formal definitions of $S$, $E$, $R$, $C$
+(Section~\ref{sec:spec}), where $R$ is a resume record the bridge keeps
+and re-attach is a challenge-response over a single-use nonce and the
+last event the client saw. According to the author's report on the Termenbox integration, a
+client-held MACed token cannot work (Section~\ref{sec:impl}).
+\item A normative product state machine
+$\{$attachment$\} \times \{$human$\} \times \{$lifecycle$\}$ with
+allowed transitions, preconditions and events, restart recovery, several
+clients per principal (attachment derived from the client set, I15), and
+conformance invariants I1--I15, among them proof of possession over a
+single-use nonce (I11), durable append (I12), queue integrity (I13) and
+answer binding (I14) (Section~\ref{sec:state-machine}). The state
+names ATTACHED, DETACHED, PENDING\_HUMAN, RESUMING and TERMINATED remain
+only as a derived view. According to the author's report, the integration motivated I15 and the client set
+(a single attached client is not enough), I14, and I9, which bounds a
+nonce rather than a token.
+\item Explicit axioms (A1--A7), lemmas
+(Lemmas~1--4), and liveness properties (L1--L2) supporting the safety
+argument (Section~\ref{sec:state-machine}), with timers derived from
+one value, $T_{\text{detach}}$, with $T_{\text{call}} \le T_{\text{human}}$ as a
+bound and $T_{\text{human}} \le T_{\text{detach}}$ as the default,
+and two profiles; as reported by the author, the integration motivated the derivation.
+\item A statement of what the bridge can see (Section~\ref{sec:coverage}):
+I2 and I13 cover calls the runtime submits to the bridge, and I3 splits
+into scope widening the bridge prevents and widening the runtime
+announces, which it reports.
+\item A comparison of each Bridge Contract obligation with the cited drafts
+and one product, with its method and a generated matrix of cells
+(Section~\ref{sec:mapping}).
+\item A reference implementation note describing how a bridge can satisfy
+the contract without requiring changes to AGTP, GAR, or PACE
+(Section~\ref{sec:impl}).
+\item Evidence that the specification is free of invariant violations on bounded models and is testable
+(Section~\ref{sec:conformance}, Appendix~\ref{app:formal}): a TLC-checked
+TLA+ model of the product machine with a mutant check, a Python
+reference bridge with a pytest suite (including
+property-based tests) and a mutation check with a killed mutant for
+every invariant I1--I15, language-neutral JSON
+test vectors V01--V134, and a second implementation in Rust, behind storage and
+verifier traits, that runs the same vectors except V52--V54, V88 and V89, which expect
+checkpoint events the crate does not emit. Both implementations have the same author; the evidence shows
+consistency, not independent confirmation.
+\end{enumerate}
+
+\paragraph{Roadmap.} The remainder of this document is structured as
+follows. Section~\ref{sec:spec} defines the Bridge Contract tuple
+$BC = (S, E, R, C)$. Section~\ref{sec:state-machine} specifies the
+state machine, invariants, axioms, lemmas, liveness, timeouts, and
+the safety argument. Section~\ref{sec:mapping} compares each obligation with
+the cited drafts and presents the threat model.
+Section~\ref{sec:impl} sketches a reference implementation.
+Section~\ref{sec:conformance} presents the conformance test suite.
+Section~\ref{sec:limitations} states limitations and out-of-scope
+items. Appendix~\ref{app:formal} provides the TLA+ model of the product
+machine and its TLC results.
+
+% ================================================================================

@@ -1,0 +1,55 @@
+{
+  "id": "V118",
+  "title": "After T_detach a key-exhausted session is over: OPERATOR_ADD_KEY is refused",
+  "covers": [
+    "I11-REVOKE",
+    "L1",
+    "I6"
+  ],
+  "config": {
+    "t_detach": 600
+  },
+  "session": {
+    "session_id": "sess-118",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise"
+    },
+    {
+      "do": "advance",
+      "seconds": 600
+    },
+    {
+      "do": "operator_add_key",
+      "client": "ck-2",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "KEY_REVOKED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "DETACH_TIMEOUT",
+      "TERMINATION"
+    ],
+    "cell": [
+      "Terminated"
+    ],
+    "scope_version": 0,
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": true
+  }
+}

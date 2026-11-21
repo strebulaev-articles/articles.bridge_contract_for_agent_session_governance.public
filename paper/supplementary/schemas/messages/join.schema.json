@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/join.schema.json",
+  "title": "Wire op: join",
+  "type": "object",
+  "properties": {
+    "op": {
+      "const": "join"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "key_id": {
+      "type": "string"
+    },
+    "nonce": {
+      "type": "string"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "hash": {
+      "type": "string"
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[0-9a-f]+$"
+    }
+  },
+  "required": [
+    "op",
+    "session_id",
+    "key_id",
+    "nonce",
+    "seq",
+    "hash",
+    "signature"
+  ],
+  "additionalProperties": false
+}

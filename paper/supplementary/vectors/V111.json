@@ -1,0 +1,60 @@
+{
+  "id": "V111",
+  "title": "Revoking by compromise the key whose re-attach is being verified abandons the re-attach",
+  "covers": [
+    "I11-REVOKE",
+    "IRev"
+  ],
+  "session": {
+    "session_id": "sess-111",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach",
+      "complete": false,
+      "then_cell": [
+        "Res",
+        "None"
+      ]
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise"
+    },
+    {
+      "do": "complete_resume",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_STARTED",
+      "KEY_REVOKED",
+      "DETACHMENT",
+      "RESUME_PREPARED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [],
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": true
+  }
+}

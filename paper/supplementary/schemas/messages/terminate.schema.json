@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/terminate.schema.json",
+  "title": "Wire op: terminate",
+  "type": "object",
+  "properties": {
+    "op": {
+      "const": "terminate"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "op",
+    "session_id",
+    "reason"
+  ],
+  "additionalProperties": false
+}

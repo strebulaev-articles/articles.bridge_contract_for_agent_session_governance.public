@@ -1,0 +1,44 @@
+{
+  "id": "V108",
+  "title": "A client registration presented a second time is refused",
+  "covers": [
+    "I11",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-108",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "add_client",
+      "client": "ck-2",
+      "proof": "replay",
+      "error": true,
+      "reason": "nonce_used"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1"
+    ]
+  }
+}

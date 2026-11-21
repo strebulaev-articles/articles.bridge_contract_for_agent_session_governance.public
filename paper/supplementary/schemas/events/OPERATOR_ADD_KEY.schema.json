@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/OPERATOR_ADD_KEY.schema.json",
+  "title": "OPERATOR_ADD_KEY payload",
+  "x-invariants": "I11-REVOKE",
+  "description": "Operator adds a key to a key_exhausted session, clearing the predicate.",
+  "type": "object",
+  "properties": {
+    "key_id": {"type": "string"},
+    "scheme": {"type": "string", "enum": ["ed25519", "ecdsa-p256"], "description": "Scheme tag of the registered public key."},
+    "public_key": {"type": "string", "pattern": "^([0-9a-f]{64}|[0-9a-f]{130})$"},
+    "signature": {"type": "string", "description": "Ed25519 operator signature over [\"bc/v1/add-key\", session_id, key_id, scheme, public_key]."}
+  },
+  "required": ["key_id", "scheme", "public_key", "signature"],
+  "additionalProperties": false
+}

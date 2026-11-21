@@ -1,0 +1,76 @@
+{
+  "id": "V70",
+  "title": "A key revoked between its challenge and its re-attach is rejected and the nonce is spent",
+  "covers": [
+    "I11-REVOKE",
+    "B.4",
+    "I11"
+  ],
+  "session": {
+    "session_id": "sess-70",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "challenge",
+      "as": "n1"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "rotation"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1",
+      "nonce": "n1",
+      "error": true
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2",
+      "nonce": "n1",
+      "error": true
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "KEY_REVOKED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-2"
+    ],
+    "revoked": [
+      "ck-1"
+    ]
+  }
+}

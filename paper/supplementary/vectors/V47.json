@@ -1,0 +1,23 @@
+{
+  "id": "V47",
+  "title": "Wire: narrow then extend (observed) — authority wire ops",
+  "covers": ["I3", "I10"],
+  "session": {
+    "session_id": "sess-47",
+    "principal_id": "user-eve",
+    "authority_scope": ["read:docs", "exec:shell"],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {"do": "narrow", "scope": ["read:docs"]},
+    {"do": "extend", "scope": ["read:docs", "exec:shell", "exec:sudo"], "source": "observed"}
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED", "AUTHORITY_NARROWED", "AUTHORITY_EXTENSION_REJECTED"
+    ],
+    "cell": ["Att", "None"],
+    "scope_version": 1,
+    "reverts": 1
+  }
+}

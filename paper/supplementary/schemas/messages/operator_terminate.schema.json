@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/operator_terminate.schema.json",
+  "title": "Wire op: operator_terminate",
+  "type": "object",
+  "properties": {
+    "op": {
+      "const": "operator_terminate"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[0-9a-f]+$",
+      "description": "Operator signature over canonical JSON of [\"bc/v1/terminate\", bridge_id, session_id, reason, seq, head]."
+    }
+  },
+  "required": [
+    "op",
+    "session_id",
+    "reason"
+  ],
+  "additionalProperties": false
+}

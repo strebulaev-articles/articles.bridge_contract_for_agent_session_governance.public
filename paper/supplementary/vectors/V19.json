@@ -1,0 +1,45 @@
+{
+  "id": "V19",
+  "title": "Recovery on a broken hash chain quarantines the session",
+  "covers": [
+    "I5",
+    "I12",
+    "recovery"
+  ],
+  "session": {
+    "session_id": "sess-19",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "tamper_log",
+      "index": 1,
+      "field": "prev_hash"
+    },
+    {
+      "do": "restart"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RECOVERY_FAILED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "quarantined": true,
+    "scope_version": 0
+  }
+}

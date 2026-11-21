@@ -1,0 +1,57 @@
+{
+  "id": "V74",
+  "title": "Soft revocation of the only connected key keeps it in the client set until it disconnects, then it cannot re-attach",
+  "covers": [
+    "I11-REVOKE",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-74",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "rotation"
+    },
+    {
+      "do": "disconnect",
+      "client": "ck-1"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "KEY_REVOKED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_REJECTED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [],
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": false
+  }
+}

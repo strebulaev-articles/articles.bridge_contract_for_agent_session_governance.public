@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/messages/tick.schema.json",
+  "title": "Wire op: tick",
+  "type": "object",
+  "properties": {
+    "op": {
+      "const": "tick"
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Optional; absent means all sessions."
+    }
+  },
+  "required": [
+    "op"
+  ],
+  "additionalProperties": false
+}

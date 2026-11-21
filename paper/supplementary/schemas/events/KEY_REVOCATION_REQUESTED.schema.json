@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/KEY_REVOCATION_REQUESTED.schema.json",
+  "title": "KEY_REVOCATION_REQUESTED payload",
+  "x-invariants": "I11-REVOKE",
+  "description": "A client requested revocation; the operator must approve. Informational.",
+  "type": "object",
+  "properties": {
+    "key_id": {"type": "string"},
+    "requested_by": {"type": "string"},
+    "reason": {"type": "string"}
+  },
+  "required": ["key_id", "requested_by", "reason"],
+  "additionalProperties": false
+}

@@ -1,0 +1,54 @@
+{
+  "id": "V114",
+  "title": "A session whose log cannot be replayed is quarantined alone; the others recover",
+  "covers": [
+    "I11",
+    "Q"
+  ],
+  "session": {
+    "session_id": "sess-114",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "plant_malformed_log",
+      "session_id": "bad-1",
+      "how": "no-genesis"
+    },
+    {
+      "do": "plant_malformed_log",
+      "session_id": "bad-2",
+      "how": "missing-field"
+    },
+    {
+      "do": "restart"
+    },
+    {
+      "do": "other_quarantined",
+      "session_id": "bad-1"
+    },
+    {
+      "do": "other_quarantined",
+      "session_id": "bad-2"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "BRIDGE_RECOVERED",
+      "DETACHMENT",
+      "RESUME_PREPARED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": []
+  }
+}

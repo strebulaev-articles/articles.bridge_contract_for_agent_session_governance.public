@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bridge-contract/schemas/events/TOOL_CALL_EXPIRED.schema.json",
+  "title": "TOOL_CALL_EXPIRED payload",
+  "x-invariants": "I13",
+  "description": "A queued call outlived T_call, or its approval outlived T_approve.",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "call_ttl",
+        "approval_ttl"
+      ],
+      "description": "Reason code."
+    }
+  },
+  "required": [
+    "key",
+    "tool",
+    "reason"
+  ],
+  "additionalProperties": false
+}

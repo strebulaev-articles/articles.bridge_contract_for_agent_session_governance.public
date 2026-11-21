@@ -1,0 +1,24 @@
+{
+  "id": "V56",
+  "title": "Attach with a grant from another authority is refused",
+  "covers": [
+    "I-GRANT"
+  ],
+  "session": {
+    "session_id": "sess-56",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1",
+    "grant": "forged"
+  },
+  "actions": [],
+  "expect": {
+    "attach_refused": true,
+    "events": [],
+    "cell": [],
+    "scope_version": 0
+  }
+}

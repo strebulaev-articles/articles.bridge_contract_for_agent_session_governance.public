@@ -1,0 +1,25 @@
+{
+  "id": "V51",
+  "title": "Wire: disconnect specific key, then disconnect all — partial disconnect",
+  "covers": ["I1", "I15"],
+  "session": {
+    "session_id": "sess-51",
+    "principal_id": "user-ivan",
+    "authority_scope": ["read:docs"],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {"do": "add_client", "client": "ck-2"},
+    {"do": "join", "client": "ck-2"},
+    {"do": "disconnect", "client": "ck-1"},
+    {"do": "disconnect"}
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED", "CLIENT_ADDED", "CLIENT_JOINED",
+      "CLIENT_LEFT", "DETACHMENT", "RESUME_PREPARED"
+    ],
+    "cell": ["Det", "None"],
+    "scope_version": 0
+  }
+}

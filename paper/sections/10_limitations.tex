@@ -1,0 +1,406 @@
+\section{Limitations and Threats to Validity}
+\label{sec:limitations}
+% ================================================================================
+
+\paragraph{Boundaries of applicability.} The Bridge Contract adds value
+only when the client can detach or the human can be unavailable. In
+scenarios with perfect-availability connectivity and an always-available
+human, the Bridge Contract is overhead: every state transition emits an
+event, and every detach produces a resume record that is
+never used. Conformant deployments MAY skip resume-record production when
+no detach is possible, but MUST still emit lifecycle events
+(ATTACHED, TERMINATION).
+
+\paragraph{What the bridge does not see.} The contract covers what
+crosses the bridge (Section~\ref{sec:coverage}). Where the bridge sees
+an approval request but not the tool execution, I2 applies to the
+request and execution is outside the contract. A runtime that runs a
+tool without first submitting an approval request is outside the gate in
+the same way: I2 and I13 govern only the calls that cross the bridge.
+Where the runtime
+announces its own authority or mode change, I3 is \emph{observed}, not
+enforced: the bridge reports the change and SHOULD instruct a revert,
+but the runtime holds the widened authority until it complies. A bridge
+claims \emph{enforced} authority only where the runtime routes all
+authority changes through it; otherwise its authority is
+\emph{observed} (Section~\ref{sec:coverage}). Neither
+limit can be removed by a bridge alone; both need a runtime that routes
+execution and authority changes through it.
+
+\paragraph{Post-quantum signatures.} The contract fixes what a key must
+prove at re-attach (possession, bound to the session, the nonce and the
+acknowledged prefix of the chain), not which signature scheme does the
+proving. The implementations and the evidence use Ed25519 and, as a second
+scheme, ECDSA P-256 (V59--V62); neither is post-quantum secure, and the model checking treats a signature as a
+possession predicate whose unforgeability is assumed. A re-attach signature matters only while its nonce is live
+($T_{\text{nonce}}$, default 60~s), so a later break of Ed25519 does
+not reopen past re-attaches; but a break that is feasible while a
+session is still live would let an attacker who knows a registered
+public key forge a re-attach for any session that is still in a
+detached or re-attaching cell, which in the \emph{persistent} profile
+is up to $T_{\text{total}}$ of that profile (Table~\ref{tab:timer-profiles}) after the last detach. The signatures
+that must stay unforgeable for years are those on archived audit evidence,
+the operator signatures on events and checkpoints (I-SIGN-EVENT,
+I-CHECKPOINT); a deployment that keeps such evidence for long should move
+those to a post-quantum or hybrid scheme first. Section~\ref{sec:ext-schemes}
+gives the scheme-list convention and the guidance as an extension that
+weakens no MUST invariant; no post-quantum scheme is implemented or tested.
+
+\paragraph{Out of scope.} The following are explicitly out of scope
+(see \S\ref{sec:scope} for the full failure model): bridge
+replication and failover, network partition (partial detach), true
+concurrency on the same session, compromise of the client or bridge
+keys, Byzantine bridge, multi-hop composition (BC $\circ$ BC), and
+multi-agent composition (A2A, MCP). Auditor
+marking (annotations anchored to events via \texttt{event\_hash}),
+routing, and broadcast are also explicitly out of scope for this
+version; BC reserves \texttt{AUDITOR\_MARK}, \texttt{ROUTING\_HINT},
+and \texttt{BROADCAST\_SUBSCRIPTION} as extension points for a
+separate specification. A
+future revision may extend the contract to cover some of these.
+
+\paragraph{Implementation divergence.} Two bridge implementations may
+satisfy the invariants but produce wire formats that are not
+byte-for-byte interoperable. The Bridge Contract defines the resume record
+(Definition~\ref{def:rt}) as a tuple, the supplementary schemas fix
+the envelope and the payload of every event kind
+(Section~\ref{sec:conformance}), and Appendix~\ref{app:wire-format}
+specifies the client--bridge wire format (the op-types,
+single-envelope JSON, signature scope, error reasons); it is normative
+for the signed bytes and reason names, which the vectors and known
+answers check, and for the envelope only where the wire front-ends of the
+two implementations serve it. What remains
+open is the transport binding (HTTP, WebSocket, QUIC): the wire
+format is the JSON message content, and the transport carries it.
+The two implementations in this deposit agree on the committed event
+kinds and the final cell on every vector V01--V134 that does not require
+checkpoint emission (V52--V54, V88, V89). In wire mode
+(\texttt{run\_vectors.py -{}-wire}) the vector actions that have a
+server-side handler in the wire front-end of each implementation, which
+includes session creation (\texttt{attach}), \texttt{resolve}, \texttt{extend} and the
+operator events, are sent as
+Appendix~B messages with real signatures and the bridge verifies them from the
+envelope; the actions without a handler (clock and restart hooks, log and
+registry tampering, a re-attach left incomplete or flagged as a transport
+replay) are applied to the bridge directly (the Python runner also checks that they encode and decode).
+The byte level is checked separately: the
+canonical encoding is RFC~8785 for strings, integers up to $2^{53}$ and
+finite numbers, and the event hash, the content hash and the
+re-attach and join proofs are pinned by known-answer vectors
+(\texttt{vectors/bytes\_kat.json}, T101--T104) that both bridges read.
+Outside that subset (NaN, infinities, integers beyond $2^{53}$, which
+no event of the contract carries) a bridge refuses to canonicalise.
+Byte-level agreement with a third implementation has not been shown,
+only with the JavaScript string and number rules and the Node.js Ed25519
+verifier on the file's contents.
+
+\paragraph{The human channel.} The contract does not say who may emit
+\texttt{HUMAN\_RESOLVED}, \texttt{TOOL\_CALL\_ANSWERED} or a clean end of
+session, nor under which key. The human channel is outside the contract:
+the bridge trusts its runtime and the deployment to deliver them from the
+human. I14 binds an answer to the bytes the client reports having shown;
+it protects against rendering drift by an honest client, not against a
+client that reports whatever hash it was given.
+
+\paragraph{Confidentiality of the log and the replay.} The resume
+record and the events replayed on re-attach carry the authority scope
+and the pending tool calls. In regulated deployments these may leak
+sensitive information. Operators SHOULD encrypt the log at rest with a
+key bound to the principal's identity, and the replay MUST travel over
+an authenticated, confidential transport. The event log and the replay
+are, as a deployment requirement, readable only by parties the
+deployment has authorised (the principal, auditors with a documented
+scope, and the bridge operator), and the deployment documents who those
+parties are. The deployment enforces a retention bound on the event log
+of every session, and the operator defines the policy by which the log
+is archived or destroyed after it. These are deployment requirements
+(Table~\ref{tab:deployment-requirements}); none is an invariant of the contract and none
+is checked by it. A future revision may specify
+a standard encryption envelope.
+
+\paragraph{Audit levels.} The audit guarantees of this contract
+fall into the levels below, in increasing strength:
+\begin{description}[leftmargin=2em]
+\item[Crash durability (I12).] The durable append of I12 and the
+recovery rules of Section~\ref{sec:recovery} ensure that a bridge
+crash loses no committed event and that the cell recovered from the
+log matches the cell the bridge last acknowledged. This is the first
+level, and the baseline MUSTs require it.
+\item[Internal consistency (I5).] The hash chain of I5 makes the log
+tamper-evident against an unsophisticated editor for edits inside the
+log: an insertion, a deletion, a rewrite or a reordering of records
+that are followed by other records breaks the chain and is detected on
+verification, whether at re-attach (I4) or at restart recovery
+(Section~\ref{sec:recovery}). It does not detect truncation or the
+rewriting of the last events: a log cut back to an earlier event is a
+valid chain, and recovery then accepts it, so a terminated session can
+become active again and a revoked key can be accepted again. Closing
+that needs a head (sequence and hash) held outside the log, such as an
+I-CHECKPOINT anchor; the reference bridges keep none. This is also
+required by the baseline MUSTs.
+\item[External tamper evidence (I-SIGN-EVENT, I-CHECKPOINT).] A
+determined operator with write access to the log can rewrite it and
+recompute the chain. Detecting that requires operator-signed events
+(I-SIGN-EVENT, SHOULD) plus checkpoints anchored outside the
+operator's control (I-CHECKPOINT, SHOULD), for example in a SCITT
+transparency log. This external-tamper-evidence level is not required by the baseline
+MUSTs; a deployment that needs it adopts both SHOULDs.
+\end{description}
+The baseline contract delivers crash durability and internal
+consistency; external tamper evidence is the SHOULD-level extension
+that defends against a Byzantine operator (A4 is otherwise assumed).
+
+\paragraph{Performance considerations.} Verification of the event hash
+chain on re-attach is $O(n)$ in the number of events emitted since
+session attach. For long-running sessions ($n > 10^4$), the bridge
+SHOULD emit signed Merkle checkpoints (I-CHECKPOINT,
+Appendix~\ref{app:merkle}) so that verification covers only the suffix
+after the latest verified checkpoint; the conformance suite still uses
+an $O(n)$ full-chain verification. The size of the event log is unbounded in this document;
+the operator defines the retention policy, as a deployment requirement (above). The size of the pending
+tool-call queue $Q$ in the resume record is bounded by $Q_{\max}$ (I13);
+a call arriving at a full queue is refused rather than evicting an
+older one.
+
+\paragraph{Non-goals.} The contract is not a transport or message
+format and does not replace AGTP, GAR, or PACE; the client--bridge
+wire format is specified normatively in
+Appendix~\ref{app:wire-format}, but the transport binding (HTTP,
+WebSocket, QUIC) is not; the contract does not defend against a compromised bridge, a compromised
+runtime, or a stolen client key; it gives no guarantee for work the
+runtime performs without submitting it to the bridge (Section~\ref{sec:coverage});
+and it is not a proof of correctness of any implementation.
+
+\paragraph{Limitations register.}
+Table~\ref{tab:limitations} lists each limitation of this work, what
+it affects, who owns the residual risk, and the mitigation or future
+work that addresses it. The register is the single place to look for
+``what this document does not claim''; the prose paragraphs above
+give the reasoning, the table gives the index.
+
+\footnotesize
+\begin{longtable}{p{0.18\columnwidth} p{0.22\columnwidth} p{0.18\columnwidth} p{0.26\columnwidth}}
+\caption{Limitations register.}
+\label{tab:limitations}\\
+\toprule
+\textbf{Limitation} & \textbf{Affects} & \textbf{Owner} & \textbf{Mitigation} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Limitation} & \textbf{Affects} & \textbf{Owner} & \textbf{Mitigation} \\
+\midrule
+\endhead
+Single author, two implementations &
+Validity of the evidence (consistency, not independent confirmation) &
+Author; future implementers &
+External implementer; future work; V01--V134 are the interface \\
+Bounded TLC (two-session run does not fire Disconnect/Resolve/Submit/Drain) &
+Generalisability of the model check to multi-session detach paths &
+Author; future model-checking work &
+Deeper single-session runs cover the detach paths; unbounded argument is future work \\
+Cryptographic checks abstracted in TLA+ (I4, I5, I14 hold only as flag abstractions; I11 is checked against an attacker that holds no client key) &
+Formal rigour: unforgeability and hash-chain integrity are assumed, not model-checked; \texttt{NoForgery} checks that an accepted signature was produced by an honest client, not that the request was presented by one, so it admits a replayed honest signature; the state invariant for I6 is a tautology and the no-eviction property of I11 (f) reads over an empty set in every configuration (\texttt{LiveLimit} is one), so these two are not meaningfully TLC-checked &
+Author; formal-methods community &
+Conformance suite and mutants exercise the cryptography (Ed25519, SHA-256); a property that every accepted request is honest, a real I6 conjunct and a configuration with more than one live nonce are planned and not done (they need a TLC rerun); mechanised proof is future work \\
+I8 (QUIC 0-RTT replay) is tests-only, not in TLA+ &
+Model coverage of the transport-replay invariant &
+Author; transport-layer implementers &
+Tested through a transport-reported replay flag; vacuous where QUIC 0-RTT is not used \\
+I-SIGN-JWKS is inspection-only, no test, vector or mutant &
+Conformance claim for the JWKS-source invariant &
+Deployment operator (inspects the bridge's key sources) &
+A claim of conformance rests on inspection, not on a test \\
+Key revocation is operator-only (I11-REVOKE); client cannot self-revoke &
+A compromised client cannot lock the principal out; but the principal
+must contact the operator to revoke a lost device key &
+Deployment operator; principal &
+I11-REVOKE adds operator-signed revocation, two-phase
+rotation, key\_exhausted predicate; soft/hard revocation. A key\_exhausted
+session keeps its timers and ends after the detachment bound unless the
+operator adds a key; one whose softly revoked key stays connected is in
+$a=\textsc{Att}$, has no detach timer, and ends only after the transport is
+lost or the operator acts (the $a=\textsc{Res}$ case is a separate row below) \\
+A re-attach signature carries no channel identifier &
+A relayed genuine signature is indistinguishable from the client at the contract level &
+Deployment operator; transport binding &
+The client signs only nonces it requested from the intended bridge and the transport authenticates the bridge; a channel-bound signature (for example a TLS exporter value) is not specified \\
+Scope is a flat set of opaque identifiers &
+I3 and I10 compare sets by inclusion; a structured scope (for example a hierarchy) is outside the document unless mapped to identifiers whose subset relation is its order &
+Deployment operator &
+Stated in Section~\ref{sec:spec}; defining a partial order is future work \\
+I14 protects only against honest rendering drift &
+A malicious client that reports whatever hash it was given is not detected by I14 &
+Deployment operator; client-side implementation &
+The bridge has no independent view of what the client displayed; future work may bind the answer to a client-side attestation \\
+Wire format for client--bridge messages specified normatively (Appendix~\ref{app:wire-format}); transport binding not specified &
+Byte-level interoperability between bridges for the JSON message content; transport-layer interop &
+Implementer (must choose a transport binding) &
+The wire format (Appendix~\ref{app:wire-format}) specifies the wire format; a future revision MAY add a binary encoding (protobuf, CBOR) and transport bindings \\
+The key registry and the event log are written in two steps &
+A crash between the registry write and the commit of \texttt{ATTACHED}, \texttt{CLIENT\_ADDED} or \texttt{OPERATOR\_ADD\_KEY} leaves a registry entry the log does not record &
+Storage implementer &
+Recovery drops it: the log is the source of truth, so recovery repairs the registry from the log (writes back a missing entry, drops an extra one, replaces one that differs) and names the key ids in \texttt{BRIDGE\_RECOVERED}; the session is not quarantined, and a registry that has been tampered with is silently restored, so storage tampering is detected only through the log; the reference bridges undo the registration when the append fails and repair the rest at recovery; a durable store may write both in one transaction; tests T108--T112 and T143, vectors V102--V104 and V129 \\
+A grant is bound to a bridge identity that the deployment configures &
+Two bridges with the same identity accept each other's grants; a captured attach (grant and proof) can create the session once at its bridge, with the same key, which gives the replayer nothing it can sign with &
+Deployment operator &
+Give each bridge a distinct identity; the attach proof has no nonce, so freshness of the attach itself is not claimed \\
+Truncation or rewriting of the last events is not detected by I5 &
+A log cut back to an earlier event, or whose final event is replaced, is a valid chain; recovery accepts it, so a terminated session can become active again and a revoked key can be accepted again &
+Bridge operator; storage implementer &
+Hold the head (sequence and hash) outside the log, for example as an I-CHECKPOINT anchor; the reference bridges keep no external head \\
+A re-attach request lets an unauthenticated caller tell a live session from a dead one &
+An unknown, a terminated and a quarantined session get one refusal (\texttt{refused}), but a session that is live answers a request with a bad signature, a stale nonce or a wrong prefix under those reasons, and a key\_exhausted session says so; a caller who guesses session identifiers can therefore list the identifiers that are live, though it learns nothing about their keys (an unregistered key is answered as a bad signature) &
+Transport binding; deployment operator &
+Use unguessable session identifiers and rate-limit unauthenticated resume requests per source; the contract bounds only what such requests write to the log (I11g), not what they reveal \\
+A join tells an attached session from a detached one before authentication &
+In both reference bridges a \texttt{join} with any signature is answered \texttt{bad\_signature} (and one \texttt{RESUME\_REJECTED} is logged) when the session is attached, and \texttt{refused} with nothing logged when it is detached or re-attaching, because the cell is checked before the signature; a key\_exhausted or expired session is likewise reported before any signature check; this departs from I11 (d), which gives such answers only after the signature verifies &
+Author (reference bridges); deployment operator &
+Checking the signature and nonce before the cell and the timers is planned and not done; until then the mitigation of the row above applies \\
+A request refused before authentication can be accepted later (pre-registration replay) &
+A join or re-attach signed by a key the session does not yet register is refused (\texttt{unknown\_key}, answered \texttt{bad\_signature}; on a key\_exhausted session \texttt{key\_exhausted}, before any check) and its nonce stays live; if \texttt{CLIENT\_ADDED} or \texttt{OPERATOR\_ADD\_KEY} registers that key within $T_{\text{nonce}}$, anyone who captured the bytes can present them and is accepted. After \texttt{OPERATOR\_ADD\_KEY} on a detached, exhausted session the replayer becomes the only attached client and receives the replay of the log. Both reference bridges behave so, and the TLA+ model reaches the same trace (\texttt{NoForgery} admits it). This violates the single-use statement of I11 and the outsider statement of Section~\ref{sec:invariants-token-auth} &
+Author (reference bridges, model); deployment operator until fixed &
+A rule that a registry change voids the live nonces of the session, stated in I11 and checked in the model, is planned and not done. Until then: register a key before its device presents a request with it, or let $T_{\text{nonce}}$ pass after a refused attempt before registering the key \\
+Replays of a captured authentic request grow the log without bound &
+A replayed authentic request verifies, is recorded (\texttt{nonce\_used}) and restores the I11 (g) allowance, so a caller without a key that holds one captured request makes the log grow linearly in its effort (Appendix~\ref{app:attacker}) &
+Deployment operator &
+Rate-limit or authenticate the transport in front of re-attach and join; the contract has no identity to limit by before a signature \\
+A caller without a key can end a detached session &
+Holding the live-nonce limit (I11 (f)) refuses a detached client every challenge; kept up until $T_{\text{detach}}$ elapses, the session ends with \texttt{DETACH\_TIMEOUT} (Residual denial in Section~\ref{sec:invariants-token-auth}); L1 bounds detachment, it does not give availability &
+Deployment operator &
+Rate-limit or authenticate the transport in front of \texttt{challenge} \\
+A later approval revives a lapsed one &
+Both reference bridges keep one approval expiry per session, set by the latest \texttt{HUMAN\_RESOLVED}; a queued call approved under an escalation whose $T_{\text{approve}}$ has lapsed is forwarded at the drain that follows a later, unrelated approval, instead of \texttt{TOOL\_CALL\_EXPIRED} (\texttt{approval\_ttl}) as I13 and Table~\ref{tab:timers} require. The TLA+ model has the same single countdown, so TLC cannot see it &
+Author (reference bridges, model) &
+Recording the approval expiry per call at approval time, in both bridges and the model, is planned and not done; $T_{\text{call}}$ still bounds every queued call \\
+The Python bridge can append \texttt{CHECKPOINT} after the end of a session &
+With checkpoints enabled (the default configuration), the Python bridge emits a \texttt{CHECKPOINT} whenever the threshold is reached, with no check of the lifecycle or of quarantine and before chain verification: after \texttt{TERMINATION} (against I6 and the termination effects), on a quarantined session (against rule~Q), and over a tampered log when a re-attach starts. The suite runs with checkpoints off, so no test sees it. The Rust crate emits no checkpoints &
+Author (Python bridge) &
+Guarding emission by lifecycle and quarantine and placing it after chain verification, with tests that run with checkpoints on, is planned and not done; a reader of a Python bridge log ignores a \texttt{CHECKPOINT} after \texttt{TERMINATION} or after the failure event \\
+A re-attach in the tick in which $T_{\text{detach}}$ expires is refused &
+The edge-case rule of Section~\ref{sec:timeouts} says the request MUST be processed first; both reference bridges evaluate the timers before the request, so the session ends with \texttt{DETACH\_TIMEOUT} and \texttt{TERMINATION} and the request is answered \texttt{terminated} &
+Author (reference bridges) &
+Verifying the request before the timers is planned and not done; the effect is confined to the instant at which $T_{\text{detach}}$ expires \\
+A soft revocation of the key being verified does not abandon the verification &
+Through the two-phase interface (a re-attach begun and completed in separate calls), a \texttt{KEY\_REVOKED} with reason \texttt{rotation} between the two leaves the revoked key attached when the verification completes; if it was the only key, the session is key\_exhausted in $a=\textsc{Res}$, the completion is refused and no detach timer runs, so the session stays in $a=\textsc{Res}$ until the transport is lost, a human timer fires or the operator acts (against L1 and the bound on $a=\textsc{Res}$). The wire front-ends of both bridges run both phases in one call, so the case is not reachable over their wire; by reading, the model has the same shape (no TLC run of the property) &
+Author (reference bridges, model); implementer of an asynchronous bridge &
+Abandoning the verification on a soft revocation as on a hard one, in both bridges and the model, is planned and not done; until then revoke a key that is being verified with reason \texttt{compromise} \\
+An operator key addition is accepted on a quarantined session &
+Rule~Q permits only an operator \texttt{TERMINATION} on a quarantined session; both reference bridges accept \texttt{OPERATOR\_ADD\_KEY} with a valid operator signature on a session that is quarantined and key\_exhausted and append it. An operator-signed termination of a quarantined session that still has active keys is refused (\texttt{not\_key\_exhausted}); the unsigned \texttt{terminate} ends it &
+Author (reference bridges); deployment operator &
+Refusing \texttt{OPERATOR\_ADD\_KEY} on a quarantined session is planned and not done; until then the operator adds no key to a quarantined session \\
+A call forwarded directly is neither scope-checked nor recorded &
+While the session is in $(\textsc{Att},\textsc{None})$, both reference bridges forward a submitted call with no event and no check against the current scope, also after a narrowing or for a permission never granted; I3 and I10 bind the scope the bridge holds and the queue and drain path, not the direct path, and no MUST covers the direct path &
+Runtime; deployment operator &
+The runtime enforces the scope on what it executes; a MUST that a direct call outside the current scope is refused and recorded would be a design change (both bridges, vectors, model) and is not made \\
+A duplicate submission leaves no record &
+A call submitted for queuing (while $h=\textsc{Pend}$, or while detached) under a key the session has already queued is answered \texttt{duplicate\_key} and commits no event, so the log does not show that the runtime resubmitted the key, with the same content or other content; a key the bridge generates (\texttt{tc-} and a counter) can coincide with one the runtime supplied, and that distinct call is then dropped as a duplicate &
+Runtime; author &
+The runtime supplies its own key for every call or for none; generated keys that skip taken identifiers are planned and not done \\
+Approvals and resolutions are not signed &
+Anyone who can speak the transport can inject \texttt{resolve}, \texttt{answer\_tool\_call}, \texttt{escalate}, \texttt{disconnect} or \texttt{terminate}; the contract binds an approval to a request hash (I14), not to a person &
+Transport binding; deployment operator &
+These ops stay transport-authenticated (Appendix~\ref{app:wire-format}); the deployment documents the authentication and the identity accepted; the reference wire server takes a caller-identity hook but ships none \\
+A key that a connected client registers is not checked for well-formedness &
+\texttt{add\_client} verifies the signature of the connected key, not the scheme tag or the length of the new public key; a key of an unknown scheme or of the wrong length is registered, can never prove possession, and counts as an unrevoked key, so the session does not reach \texttt{key\_exhausted} (and the operator's key addition and termination stay unavailable) until the operator revokes it &
+Client implementer; deployment operator &
+The registering key is itself registered and connected; the timers and the unsigned terminate still end the session; a deployment can refuse unknown schemes in its verifier \\
+Quarantine is not a cell in $Q$ (the product machine) &
+The state machine has active cells and $\bot$; quarantine is a side predicate &
+Reader (may miscount states) &
+Stated explicitly in Section~\ref{sec:product-model} and rule Q; vectors V19, V29 exercise it \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Claims and their limits.} Table~\ref{tab:claims} lists each
+headline claim of this document next to the evidence behind it and the
+limit of that evidence.
+
+\begin{table}[htbp]
+\centering
+\caption{Claims, evidence and limits.}
+\label{tab:claims}
+\footnotesize
+\begin{tabularx}{\columnwidth}{X X X}
+\toprule
+\textbf{Claim} & \textbf{Evidence} & \textbf{Limit} \\
+\midrule
+The obligations in G1--G4 are not assigned to the bridge by AGTP, GAR, or PACE &
+The comparison matrix in Section~\ref{sec:mapping}, built from the texts read
+(\texttt{paper/sources/}, with \texttt{paper/sources/MANIFEST.md}
+recording the URL and SHA-256 of each version; the sources are working
+copies and are not re-licensed under CC-BY-4.0 or MIT) &
+An argument from the drafts as read; it weakens if one of them is extended.
+Cells not verified are marked as such in the matrix. \\
+The product state machine and invariants I1--I7 and I9--I15 have no violation under bounded model checking, with I8 not modelled and I6 and I11 (f) only weakly checked (see the register) &
+TLC on bounded configurations; mutants of the TLA+ model are rejected
+(Appendix~\ref{app:formal}) &
+Bounded sessions, clients and permissions; hashes and event
+replay are abstracted, so I4, I5 and I14 are checked as flags only, I8 is tests-only, the state invariant for I6 is a tautology and the no-eviction property of I11 (f) is vacuous as configured, and signatures
+are a possession predicate with unforgeability assumed, and the attacker is checked only in a narrow configuration (one permission, one call key, no log tampering, two remembered signatures); no mechanised proof for unbounded parameters;
+liveness only under stated fairness. \\
+The invariants are testable &
+Pytest suite T1--T158, property-based tests T8--T10, a killed mutant for
+every invariant I1--I15 (Table~\ref{tab:invariant-independence}) &
+Tests run against the author's own bridge; a mutant kill shows the suite
+is sensitive to that edit, not that the invariant holds in general. \\
+One author implemented the specification from the text &
+Rust crate written by the same author after the Python bridge, from
+Sections 4 and 5 and with comments, error texts and the generated key
+format shared with the Python code, so it is not an independent reading; shared vectors V01--V134 pass on the Python bridge, and on the
+crate except V52--V54, V88 and V89, which expect \texttt{CHECKPOINT}
+events the crate does not emit and which its runner skips; the crate runs the same vectors on two storage backends &
+One author for both implementations; agreement shows one reading is
+consistent, not that the text is unambiguous. A second, independent
+implementation is the next step; V01--V134 are the interface for it. \\
+Proof of possession (I11) holds against an outsider, except for the
+pre-registration replay in the register; I11-REVOKE
+extends it to revoked keys &
+Ed25519 and ECDSA P-256 (wrong key, other message, key added after the
+challenge; the proof of the other operation, another key id or no tag;
+V59--V62, V90--V94, T82--T84, T101--T104) in the Python bridge and the Rust crate;
+key identifiers scoped to a session and a registry repaired from the log at recovery (T105--T112, T143, V95, V96, V102--V104, V129, mutants \texttt{registry-*}); a proof of possession at attach (T113--T118, V97, V98, V101);
+registering a further key needs a signature by a connected, unrevoked key over the key, the session and a single-use nonce (unsigned, forged, other-operation, replayed, expired and revoked-key requests are refused with a named reason: V105--V108, T119--T123, mutants \texttt{I15-add-client-*});
+registry holds public keys and a scheme tag only; mutants for forged requests; revocation, rotation, key exhaustion and in-flight revocation: tests T67--T76, T85--T89 and T134--T137, vectors V63--V74 and V115--V120 on both implementations (the timers of a key\_exhausted session keep running: mutants \texttt{TIMERS-key-exhausted-*}, \texttt{EXHAUST-*}); the operator signature on a revocation, key addition and termination is verified (T90--T96, V75--V85, mutants \texttt{IOPERATOR-*}); an unsigned terminate is refused on a key\_exhausted session (T145, T146, V130, mutants \texttt{I11-REVOKE-bare-terminate-*}, \texttt{EXHAUST-bare-terminate-*}), and a re-attach for an unregistered key is answered as a bad signature (T147, V131, mutants \texttt{I11-unknown-key-distinguishable}, \texttt{RESUME-unknown-key-distinguishable});
+two sessions on one bridge do not share the resources listed (nonces, challenge, rejection and revocation-request budgets, tool call keys, the authentication hook of the unsigned wire ops: T152--T155, V133, V134, mutants \texttt{session-*}, \texttt{SESSION-*}); the TLC model is single-session and does not see this class &
+Unforgeability of the signature scheme is assumed; the model's attacker holds no
+client key (bounded as in the register). It does not hold for a request
+refused before its key was registered: both bridges and the model accept
+its replay once the key is registered within $T_{\text{nonce}}$ (register). The operator key is the one that signs scope grants; its
+custody, rotation and revocation are the deployment's, and a signature
+carries no sequence number, so a captured one is replayable only where
+the operation is still legal (a key already revoked or registered is
+refused). \\
+The initial scope is verified against a grant before attach is committed &
+Tests T77--T81 and T113--T118, vectors V55--V58 and V99--V101 (the grant binds the public key and the bridge) and mutants of the check
+(Table~\ref{tab:invariant-independence}) &
+The grant format is the deployment's; the reference verifier checks an
+operator signature, so what a real authority issues is not tested; the
+model does not represent attach. \\
+The contract is usable in a product runtime &
+Mapping onto Termenbox, which changed the contract &
+Same author; the server is not wired to the crate; no production case
+study. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Threats to validity.} The safety argument in
+Section~\ref{sec:safety-argument} is informal. TLC checks the invariants
+only on bounded models, and the cryptographic checks are not modelled
+there, so the unforgeability of the signature scheme is an assumption
+and is not model-checked; the implementations exercise it with Ed25519
+against a registry of public keys (Appendix~\ref{app:formal-limitations}). The conformance suite,
+its mutants and the vectors test two implementations (the Python
+reference bridge and the Rust crate); they show consistency of one reading
+of the specification, not independent confirmation, and no third-party
+bridge has been tested. The specification
+does not address cross-session correlation (deferred to
+AGTP-SESSION \S 10.3) or governance of multi-agent composition
+(deferred to A2A and MCP composition analyses). The product machine
+(Section~\ref{sec:product-model}) is the normative state model; the
+state names that survive in the figures are a lossy derived view,
+not the semantics. No case study from a production runtime exists yet,
+and the author's runtime project (Termenbox) intends to adopt this
+specification, without a schedule, so the first production case study is still to come.
+
+% ================================================================================

@@ -1,0 +1,53 @@
+{
+  "id": "V65",
+  "title": "Hard revocation removes only the revoked client while another stays connected",
+  "covers": [
+    "I11-REVOKE",
+    "B.4",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-65",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "join",
+      "client": "ck-2"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "CLIENT_JOINED",
+      "KEY_REVOKED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-2"
+    ],
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": false
+  }
+}

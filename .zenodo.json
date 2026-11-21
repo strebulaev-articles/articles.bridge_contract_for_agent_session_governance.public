@@ -1,0 +1,35 @@
+{
+  "title": "Bridge Contract for Agent Session Governance",
+  "description": "Existing agent protocols --- the Agent Transfer Protocol (AGTP), the\nGovernance Audit Record (GAR) and the Protocol for Agent Communication\nExchange (PACE) --- define transport, audit and resumption semantics\nfor agent sessions, but, in the versions read, none defines what an intermediate bridge MUST\ndo when the client is detached and the agent keeps executing, or when\nthe human in the loop is unavailable. We argue that the reason is\nscope rather than oversight; this rests on a reading of those drafts\nand would weaken if one of them were extended to own these duties.\n\nThis document defines the Bridge Contract BC = (S, E, R, C): a Session\nIdentity Descriptor, Mandatory Governance Events, a Resume Record that\nthe bridge keeps for itself, and Conformance Criteria. Re-attach is a\nchallenge-response in which the client proves possession of a\nregistered key over a single-use nonce and the last event it saw,\nand the bridge accepts only a consistent prefix. The log is\nhash-chained, which detects edits and reordering inside it but not\nthe truncation of its last events without a head held outside the log. The normative model\nis a product state machine of attachment, human and lifecycle, with\ninvariants I1--I15 and derived timers. The contract complements\nAGTP, GAR and PACE and does not replace them.\n\nEvidence: the product model is checked with TLC on bounded\nconfigurations; a conformance suite (T1--T158) and a mutation check\nin which every MUST invariant except the inspection-only I-SIGN-JWKS has\na killed mutant, on a Python bridge; vectors V01--V134 pass on it, and\nall but the checkpoint-emission vectors (V52--V54, V88, V89; they need a\nfeature the crate lacks) pass on a Rust crate. Both implementations have the\nsame author; no third-party implementation exists. The evidence\nshows the consistency of one reading of the text, not independent\nconfirmation; the limits are stated in the limitations section and\nthe limitations register, which also lists where the reference bridges\ndo not yet meet the text, among them the replay of a request refused\nbefore its key was registered.\n",
+  "creators": [
+    {
+      "name": "Sergei A. Strebulaev",
+      "orcid": "0009-0006-2710-8910",
+      "affiliation": "Independent Researcher"
+    }
+  ],
+  "keywords": [
+    "agent",
+    "bridge contract",
+    "session governance",
+    "AGTP",
+    "GAR",
+    "PACE",
+    "conformance",
+    "session resumption",
+    "specification draft"
+  ],
+  "upload_type": "publication",
+  "publication_type": "preprint",
+  "access_right": "open",
+  "version": "0.10.2",
+  "language": "en",
+  "communities": [],
+  "license": "cc-by-4.0",
+  "references": [
+    "Hood, C. (2026). Agent Transfer Protocol (AGTP). draft-hood-independent-agtp.",
+    "Sato, T. (2026). Governance Audit Record (GAR). draft-sato-soos-gar.",
+    "Nandakumar, S. (2026). Protocol for Agent Communication Exchange (PACE). draft-nandakumar-agentproto-moq-pace.",
+    "Zheng, S. et al. (2026). Formal Security Analysis of Agent Protocol Composition. arXiv:2606.28690."
+  ]
+}

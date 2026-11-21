@@ -1,0 +1,72 @@
+{
+  "id": "V132",
+  "title": "Operator events refused on the wire with named reasons",
+  "covers": [
+    "I11-REVOKE",
+    "I-OPERATOR",
+    "wire-reasons"
+  ],
+  "session": {
+    "session_id": "sess-132",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "revoke",
+      "client": "ck-9",
+      "error": true,
+      "wire_reason": "unknown_key"
+    },
+    {
+      "do": "operator_add_key",
+      "client": "ck-2",
+      "error": true,
+      "wire_reason": "not_key_exhausted"
+    },
+    {
+      "do": "operator_terminate",
+      "error": true,
+      "wire_reason": "not_key_exhausted"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise"
+    },
+    {
+      "do": "operator_add_key",
+      "client": "ck-1",
+      "error": true,
+      "wire_reason": "key_already_registered"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise",
+      "error": true,
+      "wire_reason": "key_exhausted"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "KEY_REVOKED",
+      "DETACHMENT",
+      "RESUME_PREPARED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0,
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": true
+  }
+}
