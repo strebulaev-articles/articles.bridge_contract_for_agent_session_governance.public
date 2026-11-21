@@ -1,9 +1,10 @@
 # Version History
 
 <!-- CHANGES:CURRENT:START -->
-## v0.10.2 - 2026-11-21 (current)
+## v0.10.3 - 2026-11-21 (current)
 
 ### Changes in this release
+- Republished so that the Zenodo archive of the public companion is created for this version; the paper text and the code are unchanged from the previous version.
 - Review pass: every objection in the argument map now has a stated defense, and the costs the defenses concede are in the text: the model is not linked to the code by a refinement proof, and the invariant set has no operator-side hazard analysis behind it.
 - Layout and publication: appendix tables that ran into the margin are narrowed, and the paper sources are published as pointers and hashes only.
 - Signatures and wire format: re-attach, join, attach, client registration and operator proofs are signed under domain tags over RFC 8785 canonical bytes, pinned by known-answer files; operator signatures are bound to the bridge and the log position; the wire layer is served by both reference runners, with typed reasons.

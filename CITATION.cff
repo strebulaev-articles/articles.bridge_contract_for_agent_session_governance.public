@@ -8,7 +8,7 @@ authors:
   orcid: https://orcid.org/0009-0006-2710-8910
   affiliation: Independent Researcher
 subtitle: Independent specification draft
-version: 0.10.2
+version: 0.10.3
 date-released: '2026-11-21'
 abstract: 'Existing agent protocols --- the Agent Transfer Protocol (AGTP), the
 
@@ -98,6 +98,6 @@ preferred-citation:
     given-names: Sergei A.
     orcid: https://orcid.org/0009-0006-2710-8910
     affiliation: Independent Researcher
-  notes: v0.10.2, deposited on Zenodo
+  notes: v0.10.3, deposited on Zenodo
   year: 2026
   month: 11
