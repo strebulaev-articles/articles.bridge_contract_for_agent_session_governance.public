@@ -26,16 +26,23 @@ Invariants (paper Sections 5.2 and 5.6):
   I8  A transport-reported 0-RTT replay is rejected.
   I9  A challenge nonce is valid for T_nonce; expiry rejects, never terminates.
   I10 Authority scope is narrow-only and versioned.
-  I11 Challenge-response: proof of possession over a single-use nonce;
-      a live nonce is never evicted by a further challenge (f), and
+  I11 Challenge-response: proof of possession over a single-use nonce
+      that is bound, at issue, to the key id it was requested for; a
+      request that was presented and refused is never accepted later; a
+      live nonce is never evicted by a further challenge (f), and
       unauthenticated failures are logged only up to a bound (g).
   I12 An event is durable before any mutation, forwarding or ack.
-  I13 Queue keys/limits, call expiry and approval freshness at drain.
+  I13 Queue keys/limits, call expiry and approval freshness at drain
+      (the approval expiry is kept per call).
   I14 Answer binding: forward only on an approving answer with equal hash.
   I15 Client set: Att iff a client is connected; joins and registrations
       are authenticated.
-  TIMERS  T_call <= T_human <= T_detach.
-  (I-CHECKPOINT is a SHOULD and is not implemented by this bridge.)
+  TIMERS  T_call <= T_human and T_detach <= T_total (T_human may exceed
+      T_detach).
+  I-CHECKPOINT (SHOULD)  A CHECKPOINT carries the tree size and the Merkle
+      tree hash of RFC 9162 over the event hashes (``merkle.py``); it is
+      emitted only on an active, unquarantined session whose chain
+      verifies.
 
 Run with (in a venv with requirements.txt installed):
     python3 -I -m pytest conformance_suite.py -q
@@ -223,6 +230,15 @@ def call_hash(tool: str, permission: Optional[str], content: Any) -> str:
     that carries the same content under a different tool name."""
     return content_hash({"tool": tool, "permission": permission,
                          "content": content})
+
+
+def canonical_scope(scope) -> tuple[str, ...]:
+    """A scope is a set of permission strings; its canonical form is the
+    strings without repetition, sorted by code point (Section 4, scope
+    semantics).  The bridge records a scope only in this form, so the
+    authority hash does not depend on the order or the repetitions a
+    caller wrote."""
+    return tuple(sorted(set(scope)))
 
 
 def _authority_hash(principal: str, scope, lineage) -> str:
@@ -740,14 +756,29 @@ class _Sess:
     quarantined: bool = False            # chain failed: frozen (A.5)
     unacked: dict[str, str] = field(default_factory=dict)  # drained, not delivered
     unacked_calls: dict[str, dict[str, Any]] = field(default_factory=dict)  # their requests
+    drained: set[str] = field(default_factory=set)   # keys forwarded at a drain
     completed: set[str] = field(default_factory=set)
     human_at: Optional[float] = None
     record: Optional[Event] = None                   # RESUME_PREPARED
+    # each queued call carries its own approval expiry (I13), set by the
+    # HUMAN_RESOLVED that ends the escalation it was queued under
     queue: list[dict[str, Any]] = field(default_factory=list)
     used_keys: set[str] = field(default_factory=set)
-    approval_until: float = 0.0
     revoked_keys: set[str] = field(default_factory=set)  # I11-REVOKE
     key_exhausted: bool = False                          # I11-REVOKE
+
+
+@dataclass
+class _NonceRecord:
+    """A challenge nonce as the bridge keeps it (volatile).  ``key_id`` is
+    the key id the challenge named; ``eligible`` says whether that key was
+    registered and unrevoked in the session when the nonce was issued.
+    Neither changes afterwards, so a nonce issued for a key id that was not
+    an active key at issue never verifies, whatever the registry becomes."""
+    issued_at: float
+    key_id: str
+    eligible: bool
+    used: bool = False
 
 
 NONCE_RECORDS = 16          # live nonces per session (volatile); I11f
@@ -756,18 +787,27 @@ UNAUTH_LOG_LIMIT = 16       # unauthenticated rejections logged per session
 REVOCATION_REQUEST_LIMIT = 16   # KEY_REVOCATION_REQUESTED writes per session
                                 # between two operator-signed revocations
                                 # (volatile); I11-REVOKE
+REVOKE_REASONS = ("rotation", "compromise")     # soft, hard (I11-REVOKE)
 
 
 def _public_reason(reason: str) -> str:
-    """The reason a caller sees.  A request for an unregistered key and a
-    request whose signature does not verify are one refusal to the caller,
-    so a rejection does not say which key ids a session registers; the
-    log keeps the true reason (F-8a)."""
-    return "bad_signature" if reason == "unknown_key" else reason
+    """The reason a caller sees.  A request for an unregistered key, one
+    whose signature does not verify and one that presents a nonce not bound
+    to its key are one refusal to the caller, so a rejection says neither
+    which key ids a session registers nor for which key id a nonce was
+    issued; the log keeps the true reason."""
+    return ("bad_signature" if reason in ("unknown_key", "nonce_binding")
+            else reason)
 
 
+# Refusals of a request that is not shown to come from an active key holder:
+# the transport flagged it as a replay, the key is not registered, the
+# signature does not verify, the nonce is not bound to the key, or the key
+# is revoked.  They are logged only up to a bound and do not restore it
+# (I11g).
 UNAUTHENTICATED = frozenset({"transport_replay", "unknown_key",
-                             "bad_signature"})
+                             "bad_signature", "nonce_binding",
+                             "revoked_key"})
 
 
 class Bridge:
@@ -793,8 +833,8 @@ class Bridge:
         self.cfg = config if config is not None else Config()
         self._sess: dict[str, _Sess] = {}
         self._floor = 0.0           # latest committed timestamp (A6)
-        # volatile: sid -> {nonce: [issued_at, used]}; void after a restart
-        self._nonces: dict[str, dict[str, list]] = {}
+        # volatile: sid -> {nonce: record}; void after a restart
+        self._nonces: dict[str, dict[str, _NonceRecord]] = {}
         # volatile: sid -> unauthenticated rejections logged since the last
         # authentic request (I11g)
         self._unauth_logged: dict[str, int] = {}
@@ -841,7 +881,16 @@ class Bridge:
     def _maybe_checkpoint(self, sid: str) -> None:
         """Emit a CHECKPOINT event if the session has accumulated enough
         events or enough time since the last checkpoint (I-CHECKPOINT).
-        The CHECKPOINT event itself does not trigger another checkpoint."""
+        The CHECKPOINT event itself does not trigger another checkpoint.
+
+        Nothing is emitted on a terminated session (I6: TERMINATION is the
+        last event) or on a quarantined one (rule Q: only a TERMINATION may
+        follow the failure event), and the root is taken only over a log
+        whose hash chain verifies (I5): a checkpoint must not vouch for
+        events the bridge has not checked."""
+        s = self._sess.get(sid)
+        if s is None or s.life == Lifecycle.TERMINATED or s.quarantined:
+            return
         log = self.storage.logs.get(sid, [])
         n = len(log)
         now = self._now()
@@ -853,9 +902,13 @@ class Bridge:
         since = n - self._cp_len.get(sid, 0)    # events since the last checkpoint
         if since < self.cfg.n_checkpoint and (now - last) < self.cfg.t_checkpoint:
             return
-        # Compute Merkle root over all preceding event hashes
+        # The leaves are the event hashes the chain verification computes:
+        # one pass over the log yields both the verdict and the leaves.
         from merkle import merkle_root
-        hashes = [bytes.fromhex(ev.event_hash()) for ev in log]
+        try:
+            hashes = self._chain_hashes(sid)
+        except BridgeError:
+            return                      # not vouched for: no checkpoint
         root = merkle_root(hashes).hex()
         self._last_cp[sid] = now  # set before commit to prevent recursion
         self._commit(sid, [(GE.CHECKPOINT, {
@@ -922,7 +975,12 @@ class Bridge:
         elif k == GE.HUMAN_RESOLVED:
             s.human = Human.NONE
             s.human_at = None
-            s.approval_until = p["valid_until"]
+            # I13: the approval belongs to the calls of the escalation it
+            # ends, each of which keeps this expiry; a call approved by an
+            # earlier resolution keeps the earlier one
+            for c in s.queue:
+                if not c["held"] and c["approved_until"] is None:
+                    c["approved_until"] = p["valid_until"]
         elif k == GE.AUTHORITY_NARROWED:
             s.scope = tuple(p["new_scope"])
             s.scope_version = p["new_version"]
@@ -932,7 +990,8 @@ class Bridge:
                             "content": p.get("content"),
                             "expires_at": p["expires_at"],
                             "shown_hash": p["shown_hash"], "answer": None,
-                            "held": p.get("held", False)})
+                            "held": p.get("held", False),
+                            "approved_until": None})
             s.used_keys.add(p["key"])
         elif k == GE.TOOL_CALL_ANSWERED:
             for c in s.queue:
@@ -940,9 +999,11 @@ class Bridge:
                     c["answer"] = (p["decision"], p["shown_hash"])
         elif k in (GE.TOOL_CALL_DRAINED, GE.TOOL_CALL_REJECTED,
                    GE.TOOL_CALL_EXPIRED):
-            s.queue = [c for c in s.queue if c["key"] != p["key"]]
+            if not p.get("direct"):         # a direct call was never queued
+                s.queue = [c for c in s.queue if c["key"] != p["key"]]
             s.used_keys.add(p["key"])
             if k == GE.TOOL_CALL_DRAINED:
+                s.drained.add(p["key"])
                 s.unacked[p["key"]] = p["tool"]
                 s.unacked_calls[p["key"]] = {
                     "tool": p["tool"], "permission": p.get("permission"),
@@ -987,9 +1048,12 @@ class Bridge:
         self.storage.register_key(sid, client_key.key_id, client_key.scheme,
                                   client_key.public_key)
         try:
+            # the grant and the proof bind the scope as presented; the
+            # session records it in canonical form (a set, sorted)
             self._commit(sid, [(GE.ATTACHED, {
                 "principal_id": session.principal_id,
-                "authority_scope": list(session.authority_scope),
+                "authority_scope": list(canonical_scope(
+                    session.authority_scope)),
                 "task_lineage": list(session.task_lineage),
                 "client_key_id": client_key.key_id,
                 "scheme": client_key.scheme,
@@ -1005,15 +1069,21 @@ class Bridge:
         """CLIENT_ADDED: a connected client authorises a further key for
         the same principal (I15d).  Takes the public key only, and a
         signature by ``via_key_id`` over ``_add_client_bytes`` with a
-        nonce issued by ``challenge``.  Every refusal is an
-        ``AddClientRejected`` with a reason and commits nothing."""
+        nonce that ``challenge`` issued for ``via_key_id``.  Every refusal
+        is an ``AddClientRejected`` with a reason and commits nothing.
+
+        The order is that of a re-attach: key and signature, revocation,
+        the binding of the nonce to the key, the nonce itself (spent by an
+        authentic request), and only then what depends on the session
+        (whether the key is connected, whether the new key id is free).  A
+        request that names an unregistered key, or a nonce not bound to its
+        key, is answered as a bad signature."""
         if not isinstance(new_key, ClientPublicKey):
             raise TypeError("add_client_key takes the client's public key "
                             "only (ClientKey.public())")
         s = self._enter(sid)
-        if via_key_id not in s.conn:
-            raise AddClientRejected("via_not_connected")
-        record = self.storage.key_record(sid, via_key_id)
+        record = (self.storage.key_record(sid, via_key_id)
+                  if via_key_id in s.keys else None)
         scheme, public = record if record else (SCHEME_ED25519, None)
         if public is None or not _verify_scheme(
                 scheme, public,
@@ -1022,17 +1092,25 @@ class Bridge:
                                   nonce),
                 signature):
             raise AddClientRejected("bad_signature")
-        if via_key_id in s.revoked_keys:
-            raise AddClientRejected("revoked_key")
         rec = self._nonces.get(sid, {}).get(nonce)
+        bound = (rec is not None and rec.key_id == via_key_id
+                 and rec.eligible)
+        if via_key_id in s.revoked_keys:
+            if bound:
+                rec.used = True                        # as in I11-REVOKE
+            raise AddClientRejected("revoked_key")
+        if rec is not None and not bound:
+            raise AddClientRejected("bad_signature")   # not this key's nonce
         if rec is None:
             raise AddClientRejected("nonce_unknown")
-        issued, used = rec
-        rec[1] = True                                  # spent, as in I11d
+        used = rec.used
+        rec.used = True                                # spent, as in I11d
         if used:
             raise AddClientRejected("nonce_used")
-        if self._now() - issued >= self.cfg.t_nonce:
+        if self._now() - rec.issued_at >= self.cfg.t_nonce:
             raise AddClientRejected("nonce_expired")
+        if via_key_id not in s.conn:
+            raise AddClientRejected("via_not_connected")
         if new_key.key_id in s.keys:
             raise AddClientRejected("key_already_registered")
         self.storage.register_key(sid, new_key.key_id, new_key.scheme,
@@ -1051,28 +1129,61 @@ class Bridge:
     def submit_tool_call(self, sid: str, tool: str, key: Optional[str] = None,
                          permission: Optional[str] = None,
                          content: Any = None) -> str:
+        return self.submit_tool_call_keyed(sid, tool, key, permission,
+                                           content)[0]
+
+    def submit_tool_call_keyed(self, sid: str, tool: str,
+                               key: Optional[str] = None,
+                               permission: Optional[str] = None,
+                               content: Any = None) -> tuple[str, str]:
+        """Submit a tool call; returns the outcome and the idempotency key
+        the call carries (the caller's, or the one the bridge generated;
+        empty for a call forwarded directly without one)."""
         s = self._enter(sid)
         if s.human == Human.PENDING:
             if key is None:
-                key = f"tc-{len(s.used_keys) + 1:04d}"
+                key = self._fresh_key(s)
             if key in s.used_keys:
-                return "DUPLICATE"
+                return "DUPLICATE", key
             if len(s.queue) >= self.cfg.q_max:
                 self._commit(sid, [(GE.TOOL_CALL_REJECTED, {
                     "key": key, "tool": tool, "reason": "queue_full"})])
-                return "REJECTED"
+                return "REJECTED", key
             self._commit(sid, [(GE.TOOL_CALL_QUEUED, {
                 "key": key, "tool": tool, "permission": permission,
                 "content": content,
                 "shown_hash": call_hash(tool, permission, content),
                 "expires_at": self._now() + self.cfg.t_call})])
-            return "QUEUED"
+            return "QUEUED", key
         if s.att == Attachment.ATTACHED:
+            if permission is not None and permission not in s.scope:
+                # I3 on the direct path: a call outside the current scope is
+                # not forwarded; the refusal is recorded (it was never
+                # queued, so the event is marked ``direct``)
+                if key is None:
+                    key = self._fresh_key(s)
+                self._commit(sid, [(GE.TOOL_CALL_REJECTED, {
+                    "key": key, "tool": tool, "permission": permission,
+                    "reason": "scope", "direct": True})])
+                raise BridgeError(
+                    f"tool call needs {permission!r}, which is not in the "
+                    "current scope (I3)", reason="scope")
             self._send(sid, key or "", tool, permission, content)
-            return "FORWARDED"
+            return "FORWARDED", key or ""
         return self._detached_call(sid, s, tool, key, permission, content)
 
-    def _detached_call(self, sid, s, tool, key, permission, content) -> str:
+    @staticmethod
+    def _fresh_key(s: _Sess) -> str:
+        """An idempotency key for a call that came without one: the next
+        ``tc-NNNN`` the session has not used, so a generated key never
+        collides with one the runtime supplied (I13)."""
+        n = len(s.used_keys) + 1
+        while f"tc-{n:04d}" in s.used_keys:
+            n += 1
+        return f"tc-{n:04d}"
+
+    def _detached_call(self, sid, s, tool, key, permission,
+                       content) -> tuple[str, str]:
         """G1: a call with no escalation pending while no client is
         attached.  Default: refuse.  Variants are a deployment choice."""
         policy = self.cfg.detached_calls
@@ -1084,13 +1195,13 @@ class Bridge:
                 f"tool call not allowed in cell {self._cell(s)} "
                 f"(detached_calls={policy})")
         if key is None:
-            key = f"tc-{len(s.used_keys) + 1:04d}"
+            key = self._fresh_key(s)
         if key in s.used_keys:
-            return "DUPLICATE"
+            return "DUPLICATE", key
         if len(s.queue) >= self.cfg.q_max:
             self._commit(sid, [(GE.TOOL_CALL_REJECTED, {
                 "key": key, "tool": tool, "reason": "queue_full"})])
-            return "REJECTED"
+            return "REJECTED", key
         queued = (GE.TOOL_CALL_QUEUED, {
             "key": key, "tool": tool, "permission": permission,
             "content": content,
@@ -1098,7 +1209,7 @@ class Bridge:
             "expires_at": self._now() + self.cfg.t_call})
         if policy == "queue":
             self._commit(sid, [queued])
-            return "QUEUED"
+            return "QUEUED", key
         # forward: the operator pre-approved this permission, so the call is
         # recorded as queued, answered and drained in one committed batch and
         # forwarded only after the batch is durable (I12).
@@ -1114,7 +1225,7 @@ class Bridge:
                 "authority_hash": _authority_hash(
                     s.principal, s.scope, s.lineage)})])
         self._send(sid, key, tool, permission, content)
-        return "FORWARDED"
+        return "FORWARDED", key
 
     def shown_hash_of(self, sid: str, key: str) -> str:
         """h(content shown) as the bridge recorded it; what a faithful
@@ -1158,7 +1269,11 @@ class Bridge:
             if now >= c["expires_at"]:
                 items.append((GE.TOOL_CALL_EXPIRED,
                               {**base, "reason": "call_ttl"}))
-            elif now >= s.approval_until and not c["held"]:
+            elif not c["held"] and (c["approved_until"] is None
+                                    or now >= c["approved_until"]):
+                # I13: the approval of this call's own escalation is valid
+                # strictly before T_approve has elapsed; a later approval
+                # of another escalation does not revive it
                 items.append((GE.TOOL_CALL_EXPIRED,
                               {**base, "reason": "approval_ttl"}))
             elif c["permission"] is not None and c["permission"] not in s.scope:
@@ -1213,11 +1328,16 @@ class Bridge:
         self._commit(sid, [(GE.TOOL_CALL_DELIVERED, {"key": key})])
 
     def completed(self, sid: str, key: str, result_hash: str = "") -> None:
-        """The runtime reports that a delivered call finished."""
+        """The runtime reports that a forwarded call finished.  The report
+        is accepted once for a call the bridge forwarded, at a drain (the
+        log says so) or directly (this process says so; a direct forward
+        leaves no event, so a restart forgets it).  A call that was never
+        forwarded (denied, rejected, expired, still queued) has nothing to
+        complete, and a second report is refused."""
         s = self._enter(sid)
-        if key in s.completed or (
-                key not in s.unacked and key not in s.used_keys):
-            raise BridgeError(f"no call {key!r} to complete")
+        forwarded = key in s.drained or (sid, key) in self._sent
+        if key in s.completed or not forwarded:
+            raise BridgeError(f"no forwarded call {key!r} to complete")
         self._commit(sid, [(GE.TOOL_CALL_COMPLETED, {
             "key": key, "result_hash": result_hash})])
 
@@ -1283,40 +1403,45 @@ class Bridge:
         Also checks I-CHECKPOINT thresholds (time-based)."""
         for x in ([sid] if sid is not None else list(self._sess)):
             self._check_timers(x)
-            s = self._sess.get(x)
-            if s and s.life != Lifecycle.TERMINATED and not s.quarantined:
-                self._maybe_checkpoint(x)
+            self._maybe_checkpoint(x)      # guarded by lifecycle and rule Q
 
-    def _check_timers(self, sid: str) -> None:
+    def _check_timers(self, sid: str, *, overdue_only: bool = False) -> None:
+        """Fire the timers that have expired.  With ``overdue_only`` only
+        those whose expiry lies before the present instant fire: a timer
+        that expires in the very tick of an incoming request waits until the
+        request has been processed (Section 5.3, edge case 1)."""
         s = self._sess[sid]
         if s.life == Lifecycle.TERMINATED or s.quarantined:
             return
         now = self._now()
+
+        def due(elapsed: float, limit: float) -> bool:
+            return elapsed > limit if overdue_only else elapsed >= limit
         detach = (s.att == Attachment.DETACHED and s.detach_at is not None
-                  and now - s.detach_at >= self.cfg.t_detach)
+                  and due(now - s.detach_at, self.cfg.t_detach))
         total = (s.att == Attachment.DETACHED and s.det_since is not None
-                 and s.det_total + (now - s.det_since) >= self.cfg.t_total)
+                 and due(s.det_total + (now - s.det_since), self.cfg.t_total))
         human = (s.human == Human.PENDING and s.human_at is not None
-                 and now - s.human_at >= self.cfg.t_human)
+                 and due(now - s.human_at, self.cfg.t_human))
+        # the reason names the detach-side timer that fired: the bound of
+        # this detachment, or the cumulative cap when only the cap was
+        # reached
+        away = "detach_timeout" if detach else "detach_total_timeout"
         if (detach or total) and human:
             self._commit(sid, [
                 (GE.HUMAN_TIMEOUT, {"reason": "human_timeout"}),
-                (GE.DETACH_TIMEOUT, {"reason": "detach_timeout"}),
+                (GE.DETACH_TIMEOUT, {"reason": away}),
                 (GE.TERMINATION, {
-                    "reason": "human_timeout+detach_timeout (simultaneous)"})])
+                    "reason": f"human_timeout+{away} (simultaneous)"})])
         elif human:
             self._commit(sid, [
                 (GE.HUMAN_TIMEOUT, {"reason": "human_timeout"}),
                 (GE.TERMINATION, {"reason": "human_timeout"})])
-        elif detach:
+        elif detach or total:
             self._commit(sid, [
-                (GE.DETACH_TIMEOUT, {"reason": "detach_timeout"}),
-                (GE.TERMINATION, {"reason": "detach_timeout"})])
-        elif total:
-            self._commit(sid, [
-                (GE.DETACH_TIMEOUT, {"reason": "detach_total_timeout"}),
-                (GE.TERMINATION, {"reason": "detach_total_timeout"})])
-        else:
+                (GE.DETACH_TIMEOUT, {"reason": away}),
+                (GE.TERMINATION, {"reason": away})])
+        elif not overdue_only:
             expired = [(GE.TOOL_CALL_EXPIRED, {
                 "key": c["key"], "tool": c["tool"], "reason": "call_ttl"})
                 for c in s.queue if now >= c["expires_at"]]
@@ -1325,9 +1450,19 @@ class Bridge:
 
     # -- challenge-response re-attach and join (I4, I8, I9, I11, I15) --------
 
-    def challenge(self, sid: str) -> Challenge:
-        """Issue a fresh single-use nonce (I11b).  Not a governance event;
-        volatile, so a restart voids every nonce."""
+    def challenge(self, sid: str, key_id: str) -> Challenge:
+        """Issue a fresh single-use nonce for the key id ``key_id`` (I11b).
+        Not a governance event; volatile, so a restart voids every nonce.
+
+        The nonce is bound to ``key_id``: only a request that names this
+        key id can use it, and only if the key was a registered, unrevoked
+        key of the session when the nonce was issued.  The answer is the
+        same for every key id, registered or not: a nonce of the same form
+        and lifetime, counted against the same limit of the session.  So
+        ``challenge`` says nothing about the registry; a nonce that can
+        never verify shows only later, as a bad signature."""
+        if not isinstance(key_id, str):
+            raise TypeError("challenge takes the key id the nonce is for")
         s = self._sess.get(sid)
         if (s is None or s.life == Lifecycle.TERMINATED
                 or s.quarantined):
@@ -1341,68 +1476,119 @@ class Bridge:
             # nonce is never evicted, so no caller can invalidate a nonce
             # another client holds.  If every record is live, refuse.
             now = self._now()
-            for old in [n for n, (at, used) in book.items()
-                        if used or now - at >= self.cfg.t_nonce]:
+            for old in [n for n, r in book.items()
+                        if r.used or now - r.issued_at >= self.cfg.t_nonce]:
                 del book[old]
                 if len(book) < NONCE_RECORDS:
                     break
             if len(book) >= NONCE_RECORDS:
                 raise BridgeError("challenge budget exhausted (I11f)")
         nonce = os.urandom(16).hex()
-        book[nonce] = [self._now(), False]
+        book[nonce] = _NonceRecord(
+            issued_at=self._now(), key_id=key_id,
+            eligible=key_id in s.keys and key_id not in s.revoked_keys)
         return Challenge(nonce, self.cfg.t_nonce)
+
+    @staticmethod
+    def _well_formed(req: ResumeRequest) -> None:
+        """A request whose fields are not of the wire types (Appendix B: the
+        sequence number is a non-negative integer, the others are strings)
+        is refused as malformed.  The answer depends on the request alone,
+        so it is the same for every session, and nothing is logged."""
+        ok = (isinstance(req.seq, int) and not isinstance(req.seq, bool)
+              and 0 <= req.seq <= 2 ** 53
+              and all(isinstance(x, str) for x in (
+                  req.key_id, req.nonce, req.hash, req.signature)))
+        if not ok:
+            raise BridgeError("malformed re-attach request",
+                              reason="bad_canonical")
 
     def begin_resume(self, sid: str, req: ResumeRequest,
                      *, transport_replay: bool = False,
                      op: str = "reattach"):
-        """Det -> Res on an authentic re-attach; a re-attach while Att is
-        refused (``already_attached``: join is the only way into an
-        attached session), as is any request while Res; every failure is
-        RESUME_REJECTED with no change of cell (I11e).  A join (``op``
-        "join") while Att is a CLIENT_JOINED."""
+        """Det -> Res on an authentic re-attach; a join (``op`` "join")
+        while Att is a CLIENT_JOINED.  Every failure is RESUME_REJECTED with
+        no change of cell (I11e).
+
+        The request is verified before anything that depends on the state
+        of the session is answered: key and signature, revocation, the
+        nonce and the prefix first; then, only for a request that verified,
+        the attachment (``resume_in_progress`` while Res,
+        ``already_attached`` for a re-attach while Att, ``not_attached``
+        for a join while Det).  An unauthenticated caller therefore gets
+        the same answer whatever the attachment, the timers or the keys.
+        A request that verified has spent its nonce by then, so a request
+        that was presented and refused is not accepted when it is presented
+        again."""
+        self._well_formed(req)
         self._refuse_unavailable(sid)
-        s = self._enter(sid)
-        reason = self._reject_reason(sid, s, req, transport_replay, op)
+        s = self._sess[sid]
+        # A timer that expired before this instant has ended the session
+        # (the answer is then the uniform one).  A timer that expires in the
+        # very tick of the request waits: the request is processed first
+        # (Section 5.3, edge case 1) and the timers are evaluated after it.
+        self._check_timers(sid, overdue_only=True)
+        self._refuse_unavailable(sid)
+        reason = self._reject_reason(sid, s, req, op)
+        if transport_replay:
+            reason = "transport_replay"                            # I8
         if reason is None and s.att == Attachment.RESUMING:
             reason = "resume_in_progress"
         if (reason is None and s.att == Attachment.ATTACHED
                 and op == "reattach"):
             reason = "already_attached"
-        if reason in UNAUTHENTICATED:
-            # I11g: the caller proved nothing; bound what it can write
-            logged = self._unauth_logged.get(sid, 0)
-            if logged >= UNAUTH_LOG_LIMIT:
-                raise BridgeError(
-                    f"re-attach rejected: {_public_reason(reason)} "
-                    "(I4/I8/I9/I11)", reason=_public_reason(reason))
-            self._unauth_logged[sid] = logged + 1
-        else:
-            self._unauth_logged.pop(sid, None)      # a key holder spoke
+        if (reason is None and s.att != Attachment.ATTACHED
+                and op == "join"):
+            reason = "not_attached"                                # I15c
         if reason is not None:
-            self._commit(sid, [(GE.RESUME_REJECTED, {
-                "reason": reason, "key_id": req.key_id, "seq": req.seq})])
+            self._record_rejection(sid, req, reason)
+            self._check_timers(sid)        # the tick's timers, after it
             raise BridgeError(
                 f"re-attach rejected: {_public_reason(reason)} "
                 "(I4/I8/I9/I11)", reason=_public_reason(reason))
+        self._unauth_logged.pop(sid, None)          # a key holder spoke
         body = {"key_id": req.key_id, "seq": req.seq, "hash": req.hash,
                 "nonce_digest": _digest(req.nonce)}
-        if s.att == Attachment.ATTACHED:
-            self._commit(sid, [(GE.CLIENT_JOINED, body)])
-            return self.replay_after(sid, req.seq)
-        self._commit(sid, [(GE.RESUME_STARTED, body)])
-        return None
+        joined = s.att == Attachment.ATTACHED
+        self._commit(sid, [(GE.CLIENT_JOINED if joined
+                            else GE.RESUME_STARTED, body)])
+        self._check_timers(sid)            # the tick's timers, after it
+        return self.replay_after(sid, req.seq) if joined else None
+
+    def _record_rejection(self, sid: str, req: ResumeRequest,
+                          reason: str) -> None:
+        """RESUME_REJECTED for a refused request.  A refusal of the
+        unauthenticated class is logged only until the session has logged
+        UNAUTH_LOG_LIMIT of them since its last authentic request, and is
+        refused the same way afterwards (I11g); any other refusal comes
+        from an active key holder, is always logged and restores the
+        allowance."""
+        if reason in UNAUTHENTICATED:
+            logged = self._unauth_logged.get(sid, 0)
+            if logged >= UNAUTH_LOG_LIMIT:
+                return
+            self._unauth_logged[sid] = logged + 1
+        else:
+            self._unauth_logged.pop(sid, None)      # a key holder spoke
+        self._commit(sid, [(GE.RESUME_REJECTED, {
+            "reason": reason, "key_id": req.key_id, "seq": req.seq})])
 
     def join(self, sid: str, req: ResumeRequest, **kw) -> list[Event]:
-        """A further client joins an attached session (I15c)."""
-        self._refuse_unavailable(sid)
-        s = self._enter(sid)
-        if s.att != Attachment.ATTACHED:
-            raise BridgeError("join requires Att")
+        """A further client joins an attached session (I15c).  The request
+        is verified like a re-attach, under the join tag; a join that
+        verified is refused as ``not_attached`` while no client is attached
+        and as ``resume_in_progress`` while a re-attach is being verified,
+        so a join proof never starts a re-attach."""
         return self.begin_resume(sid, req, op="join", **kw)
 
-    def _reject_reason(self, sid, s, req, transport_replay, op="reattach"):
-        if transport_replay:
-            return "transport_replay"                              # I8
+    def _reject_reason(self, sid, s, req, op="reattach"):
+        """Why the request does not verify, or None.  The order is fixed:
+        the key and the signature, revocation, the binding of the nonce to
+        the key, the nonce, the prefix.  Before the nonce step nothing about
+        the nonces or the chain is revealed and no nonce is touched, except
+        that a revoked key spends the nonce bound to it; from the nonce step
+        on the request comes from an active key and has spent its nonce,
+        whatever is decided about it afterwards (I11d)."""
         if req.key_id not in s.keys:
             return "unknown_key"                                   # I15
         record = self.storage.key_record(sid, req.key_id)
@@ -1413,22 +1599,27 @@ class Bridge:
                               req.hash),
                 req.signature):
             return "bad_signature"                                 # I11c
+        rec = self._nonces.get(sid, {}).get(req.nonce)
+        # the nonce counts for this request only if it was issued for this
+        # key id while the key was an active key of the session
+        bound = (rec is not None and rec.key_id == req.key_id
+                 and rec.eligible)
         # I11-REVOKE: check after signature, before nonce
         if req.key_id in s.revoked_keys:
-            # the signature verified, so the request is authentic and
-            # spends its nonce (I11d)
-            spent = self._nonces.get(sid, {}).get(req.nonce)
-            if spent is not None:
-                spent[1] = True                                    # request
+            # the signature verified, so the request spends the nonce that
+            # was issued to its key (I11d)
+            if bound:
+                rec.used = True                                    # request
             return "revoked_key"                                   # I11-REVOKE
-        rec = self._nonces.get(sid, {}).get(req.nonce)
+        if rec is not None and not bound:
+            return "nonce_binding"                                 # I11b
         if rec is None:
             return "nonce_unknown"                                 # I11b
-        issued, used = rec
-        rec[1] = True                                              # I11d
+        used = rec.used
+        rec.used = True                                            # I11d
         if used:
             return "nonce_used"
-        if self._now() - issued >= self.cfg.t_nonce:          # I9
+        if self._now() - rec.issued_at >= self.cfg.t_nonce:   # I9
             return "nonce_expired"
         log = self.storage.logs.get(sid, [])
         if not (0 <= req.seq < len(log)) or log[req.seq].event_hash() != req.hash:
@@ -1440,8 +1631,9 @@ class Bridge:
         return list(self.storage.logs[sid][seq + 1:])
 
     def complete_resume(self, sid: str) -> list[Event]:
-        """Res -> Att once the hash chain verifies; else terminate.
-        Returns the replay of the events after the acknowledged prefix."""
+        """Res -> Att once the hash chain verifies; a chain that does not
+        verify quarantines the session (rule Q).  Returns the replay of the
+        events after the acknowledged prefix."""
         s = self._enter(sid)
         if s.att != Attachment.RESUMING:
             raise BridgeError("complete_resume requires Att=Res")
@@ -1480,8 +1672,11 @@ class Bridge:
         """Reject any widening in every cell; a subset is not an extension.
         ``source="observed"``: the runtime changed its own scope; the
         bridge cannot prevent that, so it records the rejection, keeps its
-        record unchanged and asks for a revert (I3)."""
-        s = self._enter(sid)
+        record unchanged and asks for a revert (I3).  An observed widening
+        is a report about the runtime, not a client operation, so it is
+        recorded on a key_exhausted session too."""
+        s = self._enter(sid, exhausted_ok=source == "observed")
+        new_scope = canonical_scope(new_scope)
         if set(new_scope).issubset(s.scope):
             return None
         if source == "observed":
@@ -1495,7 +1690,8 @@ class Bridge:
 
     def _reject_extension(self, sid, s, new_scope, reason):
         """Record and refuse a widening; ``reason`` is the typed wire reason
-        (the extend op names it, the narrow op does not)."""
+        (``extension_rejected`` for the extend op, ``not_a_strict_narrowing``
+        for a narrow op that asked for more)."""
         self._commit(sid, [(GE.AUTHORITY_EXTENSION_REJECTED, {
             "proposed": list(new_scope), "current": list(s.scope),
             "cell": f"{s.att.value}/{s.human.value}",
@@ -1503,19 +1699,26 @@ class Bridge:
         raise BridgeError("authority extension rejected (I3)", reason=reason)
 
     def narrow_authority_scope(self, sid: str,
-                               new_scope: tuple[str, ...]) -> None:
+                               new_scope: tuple[str, ...]) -> int:
+        """Replace the scope by a strict subset of it (I10); returns the new
+        scope version.  A proposal that equals or widens the scope is
+        refused as ``not_a_strict_narrowing`` and recorded."""
         s = self._enter(sid)
+        new_scope = canonical_scope(new_scope)
         proposed, current = set(new_scope), set(s.scope)
         if not proposed.issubset(current):
-            self._reject_extension(sid, s, new_scope, "refused")
+            self._reject_extension(sid, s, new_scope,
+                                   "not_a_strict_narrowing")
         if proposed == current:
             self._commit(sid, [(GE.AUTHORITY_NARROWING_REJECTED, {
                 "proposed": list(new_scope), "current": list(s.scope),
                 "reason": "not a strict narrowing"})])
-            raise BridgeError("authority narrowing rejected (I10)")
+            raise BridgeError("authority narrowing rejected (I10)",
+                              reason="not_a_strict_narrowing")
         version = s.scope_version + 1
         self._commit(sid, [(GE.AUTHORITY_NARROWED, {
             "new_scope": list(new_scope), "new_version": version})])
+        return version
 
     @property
     def scope_versions(self) -> dict[str, int]:
@@ -1559,7 +1762,16 @@ class Bridge:
         operator signs, which also name this bridge; without a verifier, or
         with a signature that does not verify over those bytes (another
         bridge, another session, another operation, another position), they
-        are refused and nothing is committed."""
+        are refused and nothing is committed.
+
+        The check comes before anything is said about the session: a
+        caller without the operator's signature gets this refusal for every
+        session id, known or not, whatever its lifecycle and its keys.  The
+        timers that are due fire before it, as at any tick, so the position
+        the signature names is the one the operator's event follows and an
+        expired session is over (L1)."""
+        if sid in self._sess:
+            self._check_timers(sid)          # an expired session is over (L1)
         seq, head = self.head_of(sid)
         message = build(self.bridge_id, seq, head)
         check = getattr(self.grant_verifier, "verify_operation", None)
@@ -1573,27 +1785,36 @@ class Bridge:
                    requested_by: Optional[str] = None) -> str:
         """Operator-signed revocation of a registered client key (I11-REVOKE).
 
-        ``reason``: 'rotation' (soft) or 'compromise' (hard).
+        ``reason``: 'rotation' (soft) or 'compromise' (hard); any other
+        value is a malformed request.
         ``signature``: operator Ed25519 signature over
         ``[bc/v1/revoke, bridge_id, sid, key_id, reason, seq, head]`` (the log
-        position at signing); it is verified, and a
+        position at signing); it is verified first, and a
         signature that does not verify is refused (``operator_signature_
-        invalid``) before anything is committed.
+        invalid``) before anything is said about the session or committed.
         ``requested_by``: if set, a client requested it (emits
         KEY_REVOCATION_REQUESTED first, then KEY_REVOKED if a signature
-        is present); an empty signature with ``requested_by`` records only
-        the request, and without it is a missing signature (refused).
+        is present); no signature (absent or empty) with ``requested_by``
+        records only the request, and without it is a missing signature
+        (refused).  A key that is already revoked is not revoked again.
 
         Returns 'revoked' if the key was revoked, 'requested' if only
         a request was recorded.
         """
-        s = self._enter(sid)
-        if key_id not in s.keys:
-            raise BridgeError(f"unknown key {key_id!r}", reason="unknown_key")
-        if signature != "" or requested_by is None:
+        if reason not in REVOKE_REASONS:
+            raise BridgeError(f"unknown revocation reason {reason!r}",
+                              reason="bad_canonical")
+        signed = signature is not None and signature != ""
+        if signed or requested_by is None:
             self._operator_verified(
                 lambda b, q, h: _revoke_bytes(b, sid, key_id, reason, q, h),
                 signature, sid)
+        s = self._enter(sid)
+        if key_id not in s.keys:
+            raise BridgeError(f"unknown key {key_id!r}", reason="unknown_key")
+        if key_id in s.revoked_keys:
+            raise BridgeError(f"key {key_id!r} is already revoked",
+                              reason="revoked_key")
         now = self._now()
         if requested_by is not None:
             asked = self._revocation_requests.get(sid, 0)
@@ -1605,16 +1826,17 @@ class Bridge:
             self._commit(sid, [(GE.KEY_REVOCATION_REQUESTED, {
                 "key_id": key_id, "requested_by": requested_by,
                 "reason": reason})])
-        if signature != "":
+        if signed:
             payload = {"key_id": key_id, "reason": reason,
                        "revoked_at": now, "signature": signature}
             items = [(GE.KEY_REVOKED, payload)]
-            if reason == "compromise" and (
-                    (s.conn == {key_id} and s.att == Attachment.ATTACHED)
+            if ((reason == "compromise" and s.conn == {key_id}
+                 and s.att == Attachment.ATTACHED)
                     or (s.att == Attachment.RESUMING
                         and s.resuming == key_id)):
-                # Hard revocation of the last connected key, or of the key
-                # whose re-attach is being verified (abandoned): detach
+                # Hard revocation of the last connected key, or a revocation
+                # of either kind of the key whose re-attach is being
+                # verified (the verification is abandoned): detach
                 items += [(GE.DETACHMENT, {"reason": "key_revoked"}),
                           self._prepared_item(s, "key_revoked")]
             # _apply marks the key revoked, drops a hard-revoked key from
@@ -1633,23 +1855,26 @@ class Bridge:
         registered (revoked or not) is refused: a revoked key never returns
         to the active state.  ``signature`` is the operator's over
         ``[bc/v1/add-key, bridge_id, sid, key_id, scheme, public_key, seq,
-        head]`` and is verified before the key is registered."""
+        head]``; it is verified first, before anything is said about the
+        session.  A quarantined session takes no key (rule Q: only a
+        TERMINATION may follow the failure event)."""
+        self._operator_verified(
+            lambda b, q, h: _add_key_bytes(b, sid, key_id, scheme,
+                                           public_key, q, h),
+            signature, sid)
         if sid not in self._sess:
             raise BridgeError(f"unknown session {sid}", reason="unknown_session")
         s = self._sess[sid]
-        self._check_timers(sid)          # an expired session is over (L1)
         if s.life == Lifecycle.TERMINATED:
             raise BridgeError("session is TERMINATED (I6)", reason="terminated")
+        if s.quarantined:
+            raise BridgeError("session is QUARANTINED", reason="quarantined")
         if not s.key_exhausted:
             raise BridgeError("session is not key_exhausted",
                               reason="not_key_exhausted")
         if key_id in s.keys:
             raise BridgeError("client key already registered",
                               reason="key_already_registered")
-        self._operator_verified(
-            lambda b, q, h: _add_key_bytes(b, sid, key_id, scheme,
-                                           public_key, q, h),
-            signature, sid)
         self.storage.register_key(sid, key_id, scheme,
                                   bytes.fromhex(public_key))
         try:
@@ -1664,19 +1889,19 @@ class Bridge:
                            signature: Optional[str] = None) -> None:
         """Operator terminates a key_exhausted session; ``signature`` is
         the operator's over ``[bc/v1/terminate, bridge_id, sid, reason,
-        seq, head]`` and is verified."""
-        if sid not in self._sess:
-            raise BridgeError(f"unknown session {sid}", reason="unknown_session")
-        s = self._sess[sid]
-        self._check_timers(sid)
-        if s.life == Lifecycle.TERMINATED:
-            return
-        if not s.key_exhausted:
-            raise BridgeError("session is not key_exhausted",
-                              reason="not_key_exhausted")
+        seq, head]`` and is verified first.  A session that is already
+        terminated has nothing to terminate: the request is refused."""
         self._operator_verified(
             lambda b, q, h: _terminate_bytes(b, sid, reason, q, h),
             signature, sid)
+        if sid not in self._sess:
+            raise BridgeError(f"unknown session {sid}", reason="unknown_session")
+        s = self._sess[sid]
+        if s.life == Lifecycle.TERMINATED:
+            raise BridgeError("session is TERMINATED (I6)", reason="terminated")
+        if not s.key_exhausted:
+            raise BridgeError("session is not key_exhausted",
+                              reason="not_key_exhausted")
         self._commit(sid, [(GE.OPERATOR_TERMINATION, {
             "reason": reason, "signature": signature})])
         self._commit(sid, [(GE.TERMINATION, {"reason": reason})])
@@ -1782,14 +2007,24 @@ class Bridge:
                 repaired.add(kid)
         return sorted(repaired)
 
-    def _verify_event_chain(self, sid: str) -> None:
-        prev = ""
+    def _chain_hashes(self, sid: str) -> list[bytes]:
+        """Verify the hash chain of the session's log (I5): every event
+        carries its position as its sequence number and the hash of its
+        predecessor.  Returns the event hashes in order (the leaves of a
+        checkpoint)."""
+        prev, hashes = "", []
         for i, ev in enumerate(self.storage.logs.get(sid, [])):
             if ev.sequence != i or ev.prev_hash != prev:
                 raise BridgeError(
-                    f"event chain broken at index {i}: expected "
-                    f"prev_hash={prev!r}, got {ev.prev_hash!r} (I5)")
+                    f"event chain broken at index {i}: expected sequence "
+                    f"{i} and prev_hash={prev!r}, got sequence "
+                    f"{ev.sequence} and {ev.prev_hash!r} (I5)")
             prev = ev.event_hash()
+            hashes.append(bytes.fromhex(prev))
+        return hashes
+
+    def _verify_event_chain(self, sid: str) -> None:
+        self._chain_hashes(sid)
 
     @staticmethod
     def _cell(s: _Sess) -> Cell:
@@ -1878,7 +2113,7 @@ ATT, DET, RES = Attachment.ATTACHED, Attachment.DETACHED, Attachment.RESUMING
 NONE, PEND = Human.NONE, Human.PENDING
 ACTIVE, TERM = Lifecycle.ACTIVE, Lifecycle.TERMINATED
 SID = "sess-001"
-SCOPE = ("read:docs", "exec:shell")
+SCOPE = ("exec:shell", "read:docs")        # in canonical (sorted) order
 ALL_ACTIVE_CELLS = [(a, h) for a in (ATT, DET, RES) for h in (NONE, PEND)]
 
 
@@ -1886,7 +2121,7 @@ def add_client(bridge: "Bridge", sid: str, via: "ClientKey",
                new_key: ClientPublicKey) -> None:
     """Obtain a nonce and sign as the connected client ``via`` (the
     client side of CLIENT_ADDED)."""
-    nonce = bridge.challenge(sid).nonce
+    nonce = bridge.challenge(sid, via.key_id).nonce
     bridge.add_client_key(sid, via.key_id, new_key, nonce,
                           via.sign_add_client(sid, new_key, nonce))
 
@@ -1898,18 +2133,20 @@ class Env:
     observed on the event stream; a re-attach request acknowledges it."""
 
     def __init__(self, config: Optional[Config] = None,
-                 scope: tuple[str, ...] = SCOPE, sid: str = SID) -> None:
+                 scope: tuple[str, ...] = SCOPE, sid: str = SID,
+                 checkpoints: bool = False) -> None:
         self.sid = sid
         self.clock = FakeClock()
         self.storage = Storage()
-        # Disable checkpoints by default in the test harness so they
-        # don't add CHECKPOINT events to existing vector expectations.
-        # Dedicated checkpoint tests (T63+) set config.n_checkpoint and
-        # config.t_checkpoint to small values AFTER constructing Env.
+        # Checkpoints are off unless a test asks for them, so that they do
+        # not add CHECKPOINT events to the event lists the other tests
+        # expect.  With ``checkpoints`` the thresholds of ``config`` stand
+        # (the tests that run with checkpoints on, T63 to T66f).
         if config is None:
             config = Config()
-        config.n_checkpoint = 10**9
-        config.t_checkpoint = float("inf")
+        if not checkpoints:
+            config.n_checkpoint = 10**9
+            config.t_checkpoint = float("inf")
         self.config = config
         self.key = ClientKey("ck-1")
         self.keys = {"ck-1": self.key}
@@ -1944,9 +2181,10 @@ class Env:
     def request(self, key_id: str = "ck-1", *, prefix=None, nonce=None,
                 key: Optional[ClientKey] = None,
                 op: str = "reattach") -> ResumeRequest:
-        nonce = nonce or self.bridge.challenge(self.sid).nonce
+        signer = key or self.keys[key_id]
+        nonce = nonce or self.bridge.challenge(self.sid, signer.key_id).nonce
         seq, h = prefix or self.seen[key_id]
-        return (key or self.keys[key_id]).request(self.sid, nonce, seq, h, op)
+        return signer.request(self.sid, nonce, seq, h, op)
 
     def disconnect(self, key_id: Optional[str] = None) -> None:
         """Transport loss; the departing clients saw everything so far."""
@@ -2101,7 +2339,7 @@ def test_T4_terminated_is_irreversible():
         lambda: env.bridge.submit_tool_call(SID, "noop"),
         lambda: env.bridge.attempt_authority_extension(SID, ("read:docs",)),
         lambda: env.bridge.narrow_authority_scope(SID, ("read:docs",)),
-        lambda: env.bridge.challenge(SID),
+        lambda: env.bridge.challenge(SID, "ck-1"),
         lambda: env.bridge.begin_resume(SID, dummy),
         lambda: env.bridge.join(SID, dummy),
         lambda: env.bridge.complete_resume(SID),
@@ -2159,10 +2397,45 @@ def test_T7_non_prefix_history_is_rejected_without_state_change():
     _rejects(env, beyond, "prefix_mismatch")
     other_seq = env.request(prefix=(0, tip_hash))            # hash of seq tip
     _rejects(env, other_seq, "prefix_mismatch")
-    negative = env.request(prefix=(-1, tip_hash))
-    _rejects(env, negative, "prefix_mismatch")
     assert env.cell() == (DET, NONE, ACTIVE)
     env.reattach()                                  # the genuine one works
+    assert env.cell() == (ATT, NONE, ACTIVE)
+
+
+def test_T7b_a_negative_sequence_number_is_a_malformed_request():
+    """I4: a sequence number is a position in the log, so it is not
+    negative.  A request that carries one, even with the hash of the event a
+    negative index would reach and a valid signature over it, is refused as
+    malformed (``bad_canonical``), whatever the session; nothing is logged
+    and its nonce is not spent.  The wire server answers the same."""
+    import wire
+    import wire_server
+    env = Env()
+    env.disconnect()
+    tip_seq, tip_hash = env.tip()
+    n = len(env.kinds())
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
+    for seq in (-1, -len(env.kinds()), True, "0", 2 ** 53 + 1):
+        bad = ResumeRequest("ck-1", nonce, seq, tip_hash, "00" * 64)
+        if isinstance(seq, int) and not isinstance(seq, bool) and seq < 0:
+            bad = env.key.request(SID, nonce, seq, tip_hash)   # truly signed
+        for sid in (SID, "no-such-session"):
+            with pytest.raises(BridgeError) as exc:
+                env.bridge.begin_resume(sid, bad)
+            assert exc.value.reason == "bad_canonical"
+    assert len(env.kinds()) == n and env.cell() == (DET, NONE, ACTIVE)
+    assert env.bridge._nonces[SID][nonce].used is False
+    server = wire_server.WireServer(env.bridge)
+    signed = env.key.request(SID, nonce, -1, tip_hash)
+    for send in (wire.op_reattach, wire.op_join):
+        with pytest.raises(wire_server.WireRejected) as exc:
+            wire_server.send(server, send(
+                session_id=SID, key_id="ck-1", nonce=nonce, seq=-1,
+                hash=tip_hash, signature=signed.signature))
+        assert exc.value.reason == "bad_canonical"
+    assert len(env.kinds()) == n
+    env.bridge.client_reattach(SID, env.key.request(
+        SID, nonce, tip_seq, tip_hash))             # the nonce is still good
     assert env.cell() == (ATT, NONE, ACTIVE)
 
 
@@ -2170,7 +2443,15 @@ def test_T7_non_prefix_history_is_rejected_without_state_change():
 # 5. Property-based tests T8-T10 (Hypothesis)
 # ----------------------------------------------------------------------
 
-from hypothesis import given, settings, strategies as st  # noqa: E402
+from hypothesis import Phase, given, settings, strategies as st  # noqa: E402
+
+# The mutation check needs to learn that a property fails, not the smallest
+# example of the failure: with BRIDGE_SUITE_NO_SHRINK set, a property stops
+# at the first failing example it generates.
+settings.register_profile("no-shrink", phases=(
+    Phase.explicit, Phase.reuse, Phase.generate))
+if os.environ.get("BRIDGE_SUITE_NO_SHRINK"):
+    settings.load_profile("no-shrink")
 
 _OPS = ["disconnect", "leave", "escalate", "resolve", "tool", "answer",
         "extend", "observe", "narrow", "begin", "complete", "reattach",
@@ -2377,13 +2658,13 @@ def test_T13b_unauthenticated_presenter_learns_nothing_from_expiry():
     signature, and does not consume the nonce."""
     env = Env()
     env.disconnect()
-    nonce = env.bridge.challenge(SID).nonce
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
     other = ClientKey("ck-1", seed=b"x" * 32)             # wrong key
     env.clock.advance(Config().t_nonce)
     _rejects(env, env.request(nonce=nonce, key=other), "bad_signature")
     # the nonce was not consumed by the unauthenticated presenter
     book = env.bridge._nonces[SID]
-    assert book[nonce][1] is False
+    assert book[nonce].used is False
     assert env.cell() == (DET, NONE, ACTIVE)
 
 
@@ -2489,7 +2770,7 @@ def test_T18_proof_of_possession_required():
     env.disconnect()
     thief = ClientKey("ck-1", seed=b"y" * 32)
     seq, h = env.seen["ck-1"]
-    nonce = env.bridge.challenge(SID).nonce
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
     for sig in ("", "deadbeef", thief.sign(SID, nonce, seq, h)):
         _rejects(env, ResumeRequest("ck-1", nonce, seq, h, sig),
                  "bad_signature")
@@ -2536,7 +2817,7 @@ def test_T19b_nonce_failing_a_later_check_is_still_spent():
     then rejected (here for its prefix)."""
     env = Env()
     env.disconnect()
-    nonce = env.bridge.challenge(SID).nonce
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
     seq, h = env.tip()
     bad = env.keys["ck-1"].request(SID, nonce, seq, "00" * 32)
     _rejects(env, bad, "prefix_mismatch")
@@ -2551,7 +2832,7 @@ def test_T19c_nonce_of_another_session_is_unknown():
     attach_as(env.bridge, other, env.key)
     for sid in (SID, "sess-002"):
         env.bridge.client_disconnect(sid)
-    foreign = env.bridge.challenge("sess-002").nonce
+    foreign = env.bridge.challenge("sess-002", "ck-1").nonce
     seq, h = env.seen["ck-1"]
     req = env.key.request(SID, foreign, seq, h)
     _rejects(env, req, "nonce_unknown")
@@ -2594,7 +2875,7 @@ def test_T22_chain_failure_during_resume_quarantines():
     assert env.cell()[2] == ACTIVE                 # frozen in its last cell
     n = len(env.kinds())
     with pytest.raises(BridgeError, match="challenge refused"):
-        env.bridge.challenge(SID)                  # uniform (T126)
+        env.bridge.challenge(SID, "ck-1")                  # uniform (T126)
     for op in (lambda: env.bridge.escalate_to_human(SID),
                lambda: env.bridge.submit_tool_call(SID, "t"),
                lambda: env.bridge.client_disconnect(SID)):
@@ -2615,7 +2896,7 @@ def test_T22b_quarantine_survives_restart_and_operator_can_end_it():
     b = env.restart()
     assert b.is_quarantined(SID) and len(env.kinds()) == n   # no new events
     with pytest.raises(BridgeError, match="challenge refused"):
-        b.challenge(SID)
+        b.challenge(SID, "ck-1")
     b.terminate(SID, "operator")
     assert env.kinds()[-1] == GE.TERMINATION and env.cell()[2] == TERM
 
@@ -3127,7 +3408,8 @@ def test_T49_any_registered_key_may_resume_and_unregistered_may_not():
     env.disconnect()
     stranger = ClientKey("ck-3")
     seq, h = env.seen["ck-1"]
-    req = stranger.request(SID, env.bridge.challenge(SID).nonce, seq, h)
+    req = stranger.request(SID, env.bridge.challenge(SID, "ck-3").nonce,
+                           seq, h)
     _rejects(env, req, "unknown_key")
     with pytest.raises(BridgeError, match="I15"):         # nobody attached
         add_client(env.bridge, SID, env.key, ClientKey("ck-4").public())
@@ -3159,7 +3441,7 @@ def test_T51_challenge_is_not_a_governance_event():
     """I11(b): issuing a challenge writes nothing to the log."""
     env = Env()
     n = len(env.kinds())
-    nonces = {env.bridge.challenge(SID).nonce for _ in range(5)}
+    nonces = {env.bridge.challenge(SID, "ck-1").nonce for _ in range(5)}
     assert len(nonces) == 5 and all(len(x) >= 32 for x in nonces)
     assert len(env.kinds()) == n
 
@@ -3596,7 +3878,7 @@ def test_T69_revoked_key_rejected_on_reattach():
     op_revoke(env.bridge, SID, "ck-1", reason="rotation")
     # Re-attach with the revoked key
     env.sync("ck-1")
-    ch = env.bridge.challenge(SID)
+    ch = env.bridge.challenge(SID, "ck-1")
     req = env.keys["ck-1"].request(SID, ch.nonce, env.seen["ck-1"][0],
                                     env.seen["ck-1"][1])
     with pytest.raises(BridgeError, match="revoked_key"):
@@ -3876,15 +4158,16 @@ def test_T87_a_key_revoked_after_its_challenge_is_rejected():
     env = Env()
     env.add_device("ck-2")
     env.disconnect()
-    nonce = env.bridge.challenge(SID).nonce
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
     op_revoke(env.bridge, SID, "ck-1", reason="rotation")
     before = env.cell()
     with pytest.raises(BridgeError, match="revoked_key"):
         env.bridge.begin_resume(SID, env.request("ck-1", nonce=nonce))
     assert env.cell() == before == (DET, NONE, ACTIVE)
     assert env.bridge.events[SID][-1].kind == GE.RESUME_REJECTED
-    with pytest.raises(BridgeError, match="nonce_used"):
-        env.bridge.begin_resume(SID, env.request("ck-2", nonce=nonce))  # spent
+    assert env.bridge._nonces[SID][nonce].used       # spent (I11d)
+    # another key cannot use the nonce either: it was issued for ck-1
+    _rejects(env, env.request("ck-2", nonce=nonce), "nonce_binding")
     env.reattach("ck-2")                             # a fresh one works
     assert env.cell() == (ATT, NONE, ACTIVE)
 
@@ -3927,11 +4210,9 @@ def test_T89_revocation_refusals():
     with pytest.raises(BridgeError, match="not key_exhausted"):
         op_terminate(env.bridge, SID)
     op_revoke(env.bridge, SID, "ck-1", reason="compromise")
-    with pytest.raises(BridgeError, match="already registered"):
-        op_add_key(env.bridge, SID, "ck-1", "cd" * 32)
-    # refused before the signature is looked at, not only by the registry
+    # refused by the bridge from the log, not only by the registry
     with pytest.raises(BridgeError, match="client key already registered"):
-        env.bridge.operator_add_key(SID, "ck-1", "cd" * 32, signature=None)
+        op_add_key(env.bridge, SID, "ck-1", "cd" * 32)
     with pytest.raises(BridgeError, match="KEY_EXHAUSTED"):
         op_revoke(env.bridge, SID, "ck-1", reason="compromise")
     assert env.bridge._sess[SID].key_exhausted
@@ -4060,7 +4341,7 @@ def test_T97_keyless_challenges_cannot_evict_a_live_nonce():
     issued = 0
     with pytest.raises(BridgeError, match="challenge budget"):
         for _ in range(4 * NONCE_RECORDS):
-            env.bridge.challenge(SID)
+            env.bridge.challenge(SID, "ck-1")
             issued += 1
     assert issued == NONCE_RECORDS - 1               # the genuine one counts
     env.bridge.begin_resume(SID, req)                # still accepted
@@ -4072,18 +4353,18 @@ def test_T98_spent_or_expired_nonces_make_room_for_new_challenges():
     expired a challenge is issued again."""
     env = Env().reach(DET, NONE)
     for _ in range(NONCE_RECORDS):
-        env.bridge.challenge(SID)
+        env.bridge.challenge(SID, "ck-1")
     with pytest.raises(BridgeError, match="challenge budget"):
-        env.bridge.challenge(SID)
+        env.bridge.challenge(SID, "ck-1")
     env.clock.advance(Config().t_nonce)
-    assert env.bridge.challenge(SID).nonce             # expired ones yield
+    assert env.bridge.challenge(SID, "ck-1").nonce             # expired ones yield
     env2 = Env().reach(DET, NONE)
     first = env2.request()
     for _ in range(NONCE_RECORDS - 1):
-        env2.bridge.challenge(SID)
+        env2.bridge.challenge(SID, "ck-1")
     env2.bridge.begin_resume(SID, first)               # spends one
     env2.bridge.complete_resume(SID)
-    assert env2.bridge.challenge(SID).nonce
+    assert env2.bridge.challenge(SID, "ck-1").nonce
 
 
 def test_T99_unauthenticated_rejections_are_logged_up_to_a_bound():
@@ -4121,7 +4402,7 @@ def test_T100_a_flood_does_not_deny_the_genuine_reattach():
     stranger = ClientKey("ck-1")
     for _ in range(3 * NONCE_RECORDS):
         try:
-            env.bridge.challenge(SID)
+            env.bridge.challenge(SID, "ck-1")
         except BridgeError:
             pass
         with pytest.raises(BridgeError):
@@ -4212,11 +4493,11 @@ def test_T104_a_resume_proof_names_the_key_that_signs_it():
     env.sync("ck-2")
     env.disconnect()
     seq, h = env.seen["ck-2"]
-    nonce = env.bridge.challenge(env.sid).nonce
+    nonce = env.bridge.challenge(env.sid, "ck-2").nonce
     relabelled = ResumeRequest(
         "ck-2", nonce, seq, h, env.key.sign(env.sid, nonce, seq, h))
     _rejects(env, relabelled, "bad_signature")
-    nonce = env.bridge.challenge(env.sid).nonce
+    nonce = env.bridge.challenge(env.sid, "ck-1").nonce
     untagged = ResumeRequest(
         "ck-1", nonce, seq, h,
         env.key.sign_bytes(_canon([env.sid, nonce, seq, h])))
@@ -4240,7 +4521,7 @@ def test_T105_a_key_id_is_scoped_to_its_session():
     _attach_second(env, "sess-B", mallory)
     env.disconnect()
     seq, h = env.seen["ck-1"]
-    nonce = env.bridge.challenge(env.sid).nonce
+    nonce = env.bridge.challenge(env.sid, "ck-1").nonce
     forged = ResumeRequest("ck-1", nonce, seq, h,
                            mallory.sign(env.sid, nonce, seq, h))
     _rejects(env, forged, "bad_signature")       # not her key for this session
@@ -4371,7 +4652,7 @@ def test_T112_a_failed_commit_leaves_no_registry_entry():
     attach_as(bridge, ident, ClientKey("ck-1"))      # another key, same id
     env = Env()
     new = ClientKey("ck-2").public()
-    nonce = env.bridge.challenge(env.sid).nonce
+    nonce = env.bridge.challenge(env.sid, "ck-1").nonce
     signature = env.key.sign_add_client(env.sid, new, nonce)
     env.storage.fail_next = True
     with pytest.raises(StorageError):
@@ -4463,7 +4744,7 @@ def test_T118_a_key_id_registered_in_a_session_is_not_registered_again():
         env.storage.register_key(env.sid, "ck-1", SCHEME_ED25519,
                                  ClientKey("ck-1").public_key)
     dup = ClientKey("ck-1").public()
-    nonce = env.bridge.challenge(env.sid).nonce
+    nonce = env.bridge.challenge(env.sid, "ck-1").nonce
     _refused_add(env, "ck-1", dup, nonce,
                  env.key.sign_add_client(env.sid, dup, nonce),
                  "key_already_registered")
@@ -4486,7 +4767,7 @@ def test_T119_an_unsigned_or_forged_registration_is_refused():
     (the takeover that needed no proof before the signature was checked)."""
     env = Env()
     evil = ClientKey("ck-evil")
-    nonce = env.bridge.challenge(SID).nonce
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
     _refused_add(env, "ck-1", evil.public(), nonce, "", "bad_signature")
     forged = ClientKey("ck-1").sign_add_client(SID, evil.public(), nonce)
     _refused_add(env, "ck-1", evil.public(), nonce, forged, "bad_signature")
@@ -4495,7 +4776,8 @@ def test_T119_an_unsigned_or_forged_registration_is_refused():
                  "bad_signature")
     assert (SID, "ck-evil") not in env.storage.client_keys
     seq, h = env.seen["ck-1"]
-    req = evil.request(SID, env.bridge.challenge(SID).nonce, seq, h, "join")
+    req = evil.request(SID, env.bridge.challenge(SID, "ck-evil").nonce,
+                       seq, h, "join")
     with pytest.raises(BridgeError, match="rejected"):
         env.bridge.join(SID, req)
     assert env.bridge.events[SID][-1].payload["reason"] == "unknown_key"
@@ -4504,10 +4786,13 @@ def test_T119_an_unsigned_or_forged_registration_is_refused():
 def test_T120_a_registration_signature_binds_operation_session_and_key():
     """I15(d): a signature for a join, for another new key, for another
     session or by a key that is not connected does not authorise the
-    registration."""
+    registration.  A key id the session does not register is answered as a
+    bad signature; that a registered key is not connected is said only
+    after its signature verified, and that request has spent its nonce."""
     env = Env()
-    new, other = ClientKey("ck-2").public(), ClientKey("ck-3").public()
-    nonce = env.bridge.challenge(SID).nonce
+    second = ClientKey("ck-2")
+    new, other = second.public(), ClientKey("ck-3").public()
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
     seq, h = env.seen["ck-1"]
     for sig in (env.key.sign(SID, nonce, seq, h, "join"),
                 env.key.sign(SID, nonce, seq, h, "reattach"),
@@ -4515,18 +4800,29 @@ def test_T120_a_registration_signature_binds_operation_session_and_key():
                 env.key.sign_add_client("sess-other", new, nonce),
                 env.key.sign_add_client(SID, new, "00" * 16)):
         _refused_add(env, "ck-1", new, nonce, sig, "bad_signature")
+    # a key id the session does not register is a bad signature, not a
+    # statement about who is connected
     _refused_add(env, "ck-9", new, nonce,
-                 env.key.sign_add_client(SID, new, nonce), "via_not_connected")
+                 env.key.sign_add_client(SID, new, nonce), "bad_signature")
     env.bridge.add_client_key(SID, "ck-1", new, nonce,
                               env.key.sign_add_client(SID, new, nonce))
     assert env.bridge.events[SID][-1].kind == GE.CLIENT_ADDED
+    # ck-2 is registered now, and not connected
+    assert "ck-2" not in env.bridge.client_set(SID)
+    nonce2 = env.bridge.challenge(SID, "ck-2").nonce
+    _refused_add(env, "ck-2", other, nonce2, "00" * 64, "bad_signature")
+    assert not env.bridge._nonces[SID][nonce2].used
+    _refused_add(env, "ck-2", other, nonce2,
+                 second.sign_add_client(SID, other, nonce2),
+                 "via_not_connected")
+    assert env.bridge._nonces[SID][nonce2].used
 
 
 def test_T121_a_registration_cannot_be_replayed_or_use_a_stale_nonce():
     """I15(d), I11(b,d): the authorisation is single-use and fresh."""
     env = Env()
     new = ClientKey("ck-2").public()
-    nonce = env.bridge.challenge(SID).nonce
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
     sig = env.key.sign_add_client(SID, new, nonce)
     env.bridge.add_client_key(SID, "ck-1", new, nonce, sig)
     _refused_add(env, "ck-1", new, nonce, sig, "nonce_used")
@@ -4534,11 +4830,11 @@ def test_T121_a_registration_cannot_be_replayed_or_use_a_stale_nonce():
     nonce = "ab" * 16
     _refused_add(env, "ck-1", third, nonce,
                  env.key.sign_add_client(SID, third, nonce), "nonce_unknown")
-    nonce = env.bridge.challenge(SID).nonce
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
     env.clock.advance(env.config.t_nonce + 1)
     _refused_add(env, "ck-1", third, nonce,
                  env.key.sign_add_client(SID, third, nonce), "nonce_expired")
-    nonce = env.bridge.challenge(SID).nonce
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
     _refused_add(env, "ck-1", new, nonce,
                  env.key.sign_add_client(SID, new, nonce),
                  "key_already_registered")
@@ -4551,7 +4847,7 @@ def test_T122_a_revoked_key_cannot_authorise_a_registration():
     add_client(env.bridge, SID, env.key, ClientKey("ck-2").public())
     op_revoke(env.bridge, SID, "ck-1", reason="rotation")
     new = ClientKey("ck-3").public()
-    nonce = env.bridge.challenge(SID).nonce
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
     _refused_add(env, "ck-1", new, nonce,
                  env.key.sign_add_client(SID, new, nonce), "revoked_key")
 
@@ -4627,29 +4923,36 @@ def test_T125_attach_and_add_client_requests_carry_the_scheme():
 
 
 def test_T128_hard_revocation_abandons_the_reattach_it_is_verifying():
-    """I11-REVOKE (IRev): a key revoked for compromise while its re-attach is
-    in Res is not the attached client afterwards; the re-attach is abandoned
-    (Res -> Det, DETACHMENT and RESUME_PREPARED) and complete_resume refuses.
-    A soft revocation leaves the verification alone."""
-    env = Env()
-    env.add_device("ck-2")
-    env.disconnect()
-    env.begin_resume("ck-1")
-    assert env.cell() == (RES, NONE, ACTIVE)
-    n = len(env.kinds())
-    op_revoke(env.bridge, SID, "ck-1", "compromise")
-    assert _kinds_after(env, n) == [GE.KEY_REVOKED, GE.DETACHMENT,
-                                    GE.RESUME_PREPARED]
-    assert env.cell() == (DET, NONE, ACTIVE)
-    with pytest.raises(BridgeError):
-        env.bridge.complete_resume(SID)
-    assert env.bridge.client_set(SID) == set()
-    soft = Env()
-    soft.add_device("ck-2")
-    soft.disconnect()
-    soft.begin_resume("ck-1")
-    op_revoke(soft.bridge, SID, "ck-1", "rotation")
-    assert soft.cell() == (RES, NONE, ACTIVE)
+    """I11-REVOKE (IRev): a key revoked while its re-attach is in Res is not
+    the attached client afterwards; the re-attach is abandoned (Res -> Det,
+    DETACHMENT and RESUME_PREPARED) and complete_resume refuses.  A soft
+    revocation (rotation) abandons the verification exactly as a hard one
+    (compromise) does; the revocation of another key leaves it alone."""
+    for why in REVOKE_REASONS:
+        env = Env()
+        env.add_device("ck-2")
+        env.disconnect()
+        env.begin_resume("ck-1")
+        assert env.cell() == (RES, NONE, ACTIVE)
+        n = len(env.kinds())
+        op_revoke(env.bridge, SID, "ck-1", why)
+        assert _kinds_after(env, n) == [GE.KEY_REVOKED, GE.DETACHMENT,
+                                        GE.RESUME_PREPARED], why
+        assert env.bridge.events[SID][-2].payload["reason"] == "key_revoked"
+        assert env.cell() == (DET, NONE, ACTIVE)
+        with pytest.raises(BridgeError):
+            env.bridge.complete_resume(SID)
+        assert env.bridge.client_set(SID) == set()
+        env.reattach("ck-2")                 # the other key still resumes
+        assert env.bridge.client_set(SID) == {"ck-2"}
+    other = Env()
+    other.add_device("ck-2")
+    other.disconnect()
+    other.begin_resume("ck-1")
+    op_revoke(other.bridge, SID, "ck-2", "rotation")
+    assert other.cell() == (RES, NONE, ACTIVE)
+    other.bridge.complete_resume(SID)
+    assert other.bridge.client_set(SID) == {"ck-1"}
 
 
 def test_T126_challenge_refusal_does_not_reveal_session_state():
@@ -4658,7 +4961,7 @@ def test_T126_challenge_refusal_does_not_reveal_session_state():
     neither that a session exists nor its lifecycle state."""
     def refusal(b, sid):
         with pytest.raises(BridgeError) as exc:
-            b.challenge(sid)
+            b.challenge(sid, "ck-1")
         return str(exc.value)
     env = Env()
     unknown = refusal(env.bridge, "no-such-session")
@@ -4814,7 +5117,8 @@ def test_T133_the_wire_server_asks_the_authentication_hook_for_unsigned_ops():
         assert exc.value.reason == "unauthenticated"
     assert seen == ["terminate", "escalate", "disconnect"]
     assert len(env.kinds()) == n0 and env.cell() == (ATT, NONE, ACTIVE)
-    wire_server.send(server, wire.op_challenge(session_id=SID))
+    wire_server.send(server, wire.op_challenge(session_id=SID,
+                                               key_id="ck-1"))
     assert seen == ["terminate", "escalate", "disconnect"]   # signed: no hook
     server.authenticate = lambda op, msg: True
     wire_server.send(server, wire.op_escalate(session_id=SID))
@@ -4859,9 +5163,17 @@ def test_T135_the_operator_key_must_arrive_before_the_bound():
     env2 = Env()
     op_revoke(env2.bridge, SID, "ck-1", reason="compromise")
     env2.clock.advance(env2.config.t_detach)
+    stale = op_sig(env2.bridge, "add_key", SID, "ck-2", "cd" * 32)
+    with pytest.raises(OperatorSignatureInvalid):   # the timers fire first,
+        env2.bridge.operator_add_key(SID, "ck-2", "cd" * 32,  # the head moves
+                                     signature=stale)
+    assert env2.kinds()[-2:] == [GE.DETACH_TIMEOUT, GE.TERMINATION]
+    n = len(env2.kinds())
     with pytest.raises(BridgeError, match="TERMINATED"):
         op_add_key(env2.bridge, SID, "ck-2", "cd" * 32)
-    op_terminate(env2.bridge, SID)                # already over: no new event
+    with pytest.raises(BridgeError, match="TERMINATED"):
+        op_terminate(env2.bridge, SID)            # already over: refused
+    assert len(env2.kinds()) == n
     assert [k for k in env2.kinds() if k == GE.OPERATOR_TERMINATION] == []
 
 
@@ -5246,7 +5558,8 @@ def test_T150_the_wire_server_verifies_operator_events_from_the_message():
     operator_terminate carry the operator's signature, which the bridge
     verifies against the log position; a missing or foreign signature is
     refused as operator_signature_invalid, a request without a signature
-    only records a request, and the refusals of the bridge are named.
+    is a client's op (asked of the authentication hook) and only records a
+    request, and the refusals of the bridge are named.
     [trace: wire]"""
     import wire
     import wire_server
@@ -5272,10 +5585,24 @@ def test_T150_the_wire_server_verifies_operator_events_from_the_message():
             session_id=SID, key_id="ck-1", reason="rotation", signature=sig)
         ) == "operator_signature_invalid"
     n = len(env.kinds())
-    out = send(wire.op_revoke(session_id=SID, key_id="ck-1",
-                              reason="rotation", signature="",
-                              requested_by="ck-1"))
-    assert out["status"] == "requested" and len(env.kinds()) == n + 1
+    # a revocation request has no operator signature: it passes the hook,
+    # which here denies it, with the signature empty or absent
+    for sig in ("", None):
+        assert refused(wire.op_revoke(
+            session_id=SID, key_id="ck-1", reason="rotation", signature=sig,
+            requested_by="ck-1")) == "unauthenticated"
+    assert asked == ["revoke", "revoke"] and len(env.kinds()) == n
+    asked.clear()
+    server.authenticate = lambda op, msg: asked.append(op) or op == "revoke"
+    for sig in ("", None):
+        out = send(wire.op_revoke(session_id=SID, key_id="ck-1",
+                                  reason="rotation", signature=sig,
+                                  requested_by="ck-1"))
+        assert out["status"] == "requested"
+    assert asked == ["revoke", "revoke"] and len(env.kinds()) == n + 2
+    assert env.kinds()[-1] == GE.KEY_REVOCATION_REQUESTED
+    asked.clear()
+    server.authenticate = lambda op, msg: asked.append(op) or False
     assert refused(wire.op_revoke(
         session_id=SID, key_id="ck-9", reason="rotation",
         signature=op_sig(env.bridge, "revoke", SID, "ck-9", "rotation"))
@@ -5322,8 +5649,8 @@ def test_T151_the_wire_server_names_the_exhausted_refusal_and_hides_key_ids():
     server = wire_server.WireServer(env.bridge)
     seq, h = env.seen["ck-1"]
     for key_id in ("ck-1", "ck-9"):
-        nonce = wire_server.send(
-            server, wire.op_challenge(session_id=SID))["nonce"]
+        nonce = wire_server.send(server, wire.op_challenge(
+            session_id=SID, key_id=key_id))["nonce"]
         with pytest.raises(wire_server.WireRejected) as exc:
             wire_server.send(server, wire.op_reattach(
                 session_id=SID, key_id=key_id, nonce=nonce, seq=seq, hash=h,
@@ -5359,7 +5686,7 @@ def test_T152_a_nonce_belongs_to_the_session_that_issued_it():
     env = _two_sessions()
     b = env.bridge
     # a registration in A with a nonce that B issued
-    foreign = b.challenge(SID_B).nonce
+    foreign = b.challenge(SID_B, "ck-1").nonce
     new = ClientKey("ck-2").public()
     _refused_add(env, "ck-1", new, foreign,
                  env.key.sign_add_client(SID, new, foreign), "nonce_unknown")
@@ -5385,10 +5712,10 @@ def test_T152_a_nonce_belongs_to_the_session_that_issued_it():
     assert env.kinds()[-1] == GE.RESUME_VERIFIED
     # A using up its challenge budget leaves B's untouched
     for _ in range(NONCE_RECORDS):
-        b.challenge(SID)
+        b.challenge(SID, "ck-1")
     with pytest.raises(BridgeError, match="challenge budget"):
-        b.challenge(SID)
-    assert b.challenge(SID_B).nonce
+        b.challenge(SID, "ck-1")
+    assert b.challenge(SID_B, "ck-1").nonce
 
 
 def test_T153_bounds_on_unauthenticated_writes_are_kept_per_session():
@@ -5423,7 +5750,7 @@ def test_T153_bounds_on_unauthenticated_writes_are_kept_per_session():
     # revocation requests need no signature either
     env.reattach()
     b.client_reattach(SID_B, env.key.request(
-        SID_B, b.challenge(SID_B).nonce, *_head(env, SID_B)))
+        SID_B, b.challenge(SID_B, "ck-1").nonce, *_head(env, SID_B)))
 
     def ask(sid: str) -> int:
         n = len(b.events[sid])
@@ -5466,7 +5793,7 @@ def test_T154_tool_call_keys_are_scoped_to_the_session_across_a_restart():
     assert b.forwarded == []
     env.reattach()
     b.client_reattach(SID_B, env.key.request(
-        SID_B, b.challenge(SID_B).nonce, *_head(env, SID_B)))
+        SID_B, b.challenge(SID_B, "ck-1").nonce, *_head(env, SID_B)))
     assert sorted(b.forwarded) == [(SID, "k1", "git push"),
                                    (SID_B, "k1", "rm -rf build")]
     b.delivered(SID, "k1")                        # A's acknowledgement
@@ -5586,6 +5913,1288 @@ def test_T158_a_held_call_is_hashed_as_the_call_a_client_is_shown():
     assert env.bridge.events[SID][-1].kind == GE.TOOL_CALL_REJECTED
     env.bridge.answer_tool_call(SID, "k2", want, True)
     assert env.bridge.forwarded == [(SID, "k2", "cat")]
+
+
+# ----------------------------------------------------------------------
+# Nonce binding: a nonce belongs to the key id it was issued for
+# ----------------------------------------------------------------------
+
+def _refusal(call) -> BridgeError:
+    with pytest.raises(BridgeError) as exc:
+        call()
+    return exc.value
+
+
+def _last(env: Env) -> Event:
+    return env.bridge.events[env.sid][-1]
+
+
+def test_T152b_a_nonce_is_bound_to_the_key_id_it_was_issued_for():
+    """I11(b), I15(d): a nonce issued for one key id is refused when another
+    registered key presents it, for a join, a registration and a re-attach,
+    though the signature verifies.  The caller is answered as for a bad
+    signature, the log records nonce_binding, and the nonce stays live for
+    the key it was issued for."""
+    env = Env()
+    env.add_device("ck-2")                       # registered, not connected
+    b = env.bridge
+    n1 = b.challenge(SID, "ck-1").nonce
+    n = len(env.kinds())
+    err = _refusal(lambda: b.join(SID, env.request("ck-2", op="join",
+                                                   nonce=n1)))
+    assert err.reason == "bad_signature"
+    assert env.kinds()[n:] == [GE.RESUME_REJECTED]
+    assert _last(env).payload["reason"] == "nonce_binding"
+    assert not b._nonces[SID][n1].used
+    forged = env.request("ck-2", op="join")
+    forged.signature = "00" * 64
+    assert str(_refusal(lambda: b.join(SID, forged))) == str(err)  # uniform
+    n2 = b.challenge(SID, "ck-2").nonce
+    new = ClientKey("ck-3").public()
+    _refused_add(env, "ck-1", new, n2,
+                 env.key.sign_add_client(SID, new, n2), "bad_signature")
+    assert not b._nonces[SID][n2].used
+    env.disconnect()
+    n3 = b.challenge(SID, "ck-2").nonce
+    _rejects(env, env.request("ck-1", nonce=n3), "nonce_binding")
+    assert not b._nonces[SID][n3].used
+    # each nonce still serves the key it was issued for
+    b.client_reattach(SID, env.request("ck-2", nonce=n3))
+    assert b.client_set(SID) == {"ck-2"}
+    b.join(SID, env.request("ck-1", op="join", nonce=n1))
+    assert b.client_set(SID) == {"ck-1", "ck-2"}
+    b.add_client_key(SID, "ck-2", new, n2,
+                     env.keys["ck-2"].sign_add_client(SID, new, n2))
+    assert _last(env).kind == GE.CLIENT_ADDED
+
+
+def test_T152c_a_nonce_issued_before_the_key_was_registered_never_verifies():
+    """I11(b), I11(d): a device whose key is not registered yet asks for a
+    challenge (it is answered like any other), signs a join and is refused;
+    the nonce is not spent.  After the key is registered, the captured
+    request is still refused, as a join and as a re-attach, and so is a new
+    request signed over that nonce: a request that was presented and refused
+    is not accepted later.  A nonce issued after the registration works."""
+    env = Env()
+    b = env.bridge
+    late = ClientKey("ck-2")
+    seq, h = env.tip()
+    nonce = b.challenge(SID, "ck-2").nonce
+    early = late.request(SID, nonce, seq, h, "join")
+    err = _refusal(lambda: b.join(SID, early))
+    assert err.reason == "bad_signature"
+    assert _last(env).payload["reason"] == "unknown_key"
+    record = b._nonces[SID][nonce]
+    assert not record.used and not record.eligible
+    add_client(b, SID, env.key, late.public())      # the key is registered
+    env.keys["ck-2"] = late
+    assert record.key_id == "ck-2" and not record.eligible   # as at issue
+    for _ in range(2):                              # the captured bytes
+        err = _refusal(lambda: b.join(SID, early))
+        assert err.reason == "bad_signature"
+        assert _last(env).payload["reason"] == "nonce_binding"
+    seq2, h2 = env.tip()
+    again = late.request(SID, nonce, seq2, h2, "join")   # signed after it
+    assert _refusal(lambda: b.join(SID, again)).reason == "bad_signature"
+    assert GE.CLIENT_JOINED not in env.kinds()
+    assert b.client_set(SID) == {"ck-1"}
+    env.disconnect()
+    _rejects(env, late.request(SID, nonce, seq2, h2), "nonce_binding")
+    assert env.cell() == (DET, NONE, ACTIVE)
+    env.sync("ck-2")
+    env.reattach("ck-2")                            # a nonce issued now
+    assert b.client_set(SID) == {"ck-2"}
+
+
+def test_T152d_a_request_refused_on_a_key_exhausted_session_is_not_replayed():
+    """I11(b), I11-REVOKE: on a key_exhausted session a re-attach is
+    verified like any other: a key that is not registered is answered as a
+    bad signature and a revoked one as revoked, never as key_exhausted.
+    When the operator then adds the key, the request that was refused
+    before is refused again; only a nonce issued after the addition lets
+    the new key in."""
+    env = Env()
+    b = env.bridge
+    op_revoke(b, SID, "ck-1", "compromise")          # exhausted, detached
+    recovery = ClientKey("ck-2")
+    seq, h = env.tip()
+    early = recovery.request(SID, b.challenge(SID, "ck-2").nonce, seq, h)
+    err = _refusal(lambda: b.client_reattach(SID, early))
+    assert err.reason == "bad_signature"
+    assert _last(env).payload["reason"] == "unknown_key"
+    err = _refusal(lambda: b.begin_resume(SID, env.request("ck-1")))
+    assert err.reason == "revoked_key"
+    op_add_key(b, SID, "ck-2", recovery.public_key.hex())
+    err = _refusal(lambda: b.client_reattach(SID, early))
+    assert err.reason == "bad_signature"
+    assert _last(env).payload["reason"] == "nonce_binding"
+    assert env.cell() == (DET, NONE, ACTIVE)
+    assert b.client_set(SID) == frozenset()
+    seq, h = env.tip()
+    b.client_reattach(SID, recovery.request(
+        SID, b.challenge(SID, "ck-2").nonce, seq, h))
+    assert b.client_set(SID) == {"ck-2"}
+
+
+def test_T152e_challenge_answers_the_same_for_every_key_id():
+    """I11(b), I11a, I11f: `challenge` issues a nonce of the same form and
+    lifetime, at the same time and against the same limit, whether the key
+    id it names is registered, revoked, unknown or empty; no answer of
+    `challenge` depends on the registry.  Whether the key was an active key
+    at issue is recorded with the nonce and never answered."""
+    import string
+    import wire
+    import wire_server
+    env = Env()
+    env.add_device("ck-2")
+    b = env.bridge
+    op_revoke(b, SID, "ck-2")
+    n = len(env.kinds())
+    ids = ("ck-1", "ck-2", "ck-9", "", "x" * 200)
+    got = {kid: b.challenge(SID, kid) for kid in ids}
+    shapes = {(len(c.nonce), set(c.nonce) <= set(string.hexdigits),
+               c.ttl_seconds) for c in got.values()}
+    assert shapes == {(32, True, env.config.t_nonce)}
+    assert len({c.nonce for c in got.values()}) == len(ids)
+    assert len(env.kinds()) == n                    # no event for any
+    book = b._nonces[SID]
+    assert {r.issued_at for r in book.values()} == {b._now()}
+    assert {kid: book[c.nonce].eligible for kid, c in got.items()} == {
+        "ck-1": True, "ck-2": False, "ck-9": False, "": False,
+        "x" * 200: False}
+    # the limit counts every key id alike, and its refusal is one refusal
+    full = Env().reach(DET, NONE)
+    for i in range(NONCE_RECORDS):
+        full.bridge.challenge(SID, f"nobody-{i}")
+    refusals = {(str(e), e.reason) for e in (
+        _refusal(lambda: full.bridge.challenge(SID, kid))
+        for kid in ("ck-1", "nobody"))}
+    assert len(refusals) == 1
+    # so is the refusal for a session that is unknown or over
+    over = Env()
+    over.bridge.terminate(SID)
+    assert len({str(_refusal(lambda: over.bridge.challenge(sid, kid)))
+                for sid in (SID, "no-such-session")
+                for kid in ("ck-1", "ck-9")}) == 1
+    # on the wire the response has the same fields for either key id, and
+    # a challenge that names no key id is malformed
+    server = wire_server.WireServer(Env().bridge)
+    r1, r2 = (wire_server.send(server, wire.op_challenge(
+        session_id=SID, key_id=kid)) for kid in ("ck-1", "ck-9"))
+    assert set(r1) == set(r2) == {"status", "session_id", "nonce",
+                                  "ttl_seconds"}
+    assert (r1["status"], r1["ttl_seconds"]) == (r2["status"],
+                                                 r2["ttl_seconds"])
+    with pytest.raises(wire_server.WireRejected) as exc:
+        wire_server.send(server, wire.encode_message("challenge",
+                                                     session_id=SID))
+    assert exc.value.reason == "bad_canonical"
+
+
+_P4_KEYS = ("ck-1", "ck-2", "ck-3", "ck-x")
+_P4_OPS = ["challenge", "present", "present_forged", "present_flagged",
+           "replay", "register", "operator_add", "revoke", "disconnect",
+           "complete", "advance", "restart"]
+
+
+@given(st.lists(st.tuples(st.sampled_from(_P4_OPS), st.integers(0, 7),
+                          st.integers(0, 7)), min_size=1, max_size=40))
+@settings(max_examples=150, deadline=None)
+def test_T152f_a_request_that_was_presented_is_never_accepted_later(actions):
+    """I11(b), I11(d): over random interleavings of challenges for any key
+    id, requests by registered, unregistered and revoked keys (well signed,
+    forged, or flagged by the transport), registrations, operator key
+    additions, revocations, detachments, clock steps and restarts, a
+    request is accepted at most on its first presentation: one that was
+    presented before, whether it was then accepted or refused, is refused."""
+    env = Env(Config(t_detach=10**6, t_total=10**7))
+    keys = {k: (env.key if k == "ck-1" else ClientKey(k)) for k in _P4_KEYS}
+    pool: list[str] = []                 # nonces the bridge issued
+    seen: list[tuple[str, ResumeRequest]] = []    # every request presented
+
+    def present(op: str, req: ResumeRequest, flagged: bool = False) -> bool:
+        try:
+            env.bridge.begin_resume(SID, req, op=op, transport_replay=flagged)
+            return True
+        except BridgeError:
+            return False
+
+    for kind, x, y in actions:
+        b = env.bridge
+        k = _P4_KEYS[x % len(_P4_KEYS)]
+        try:
+            if kind == "challenge":
+                pool.append(b.challenge(
+                    SID, _P4_KEYS[y % len(_P4_KEYS)]).nonce)
+            elif kind.startswith("present"):
+                nonce = pool[y % len(pool)] if pool else "ab" * 16
+                op = "join" if b.cell_of(SID).att == ATT else "reattach"
+                req = keys[k].request(SID, nonce, *env.tip(), op)
+                if kind == "present_forged":
+                    req.signature = "00" * 64
+                first = (op, req) not in seen
+                accepted = present(op, req, kind == "present_flagged")
+                seen.append((op, req))
+                assert first or not accepted
+            elif kind == "replay" and seen:
+                op, req = seen[(8 * x + y) % len(seen)]
+                assert not present(op, req)
+            elif kind == "register":
+                conn = sorted(b.client_set(SID))
+                if conn:
+                    add_client(b, SID, keys[conn[0]], keys[k].public())
+            elif kind == "operator_add":
+                op_add_key(b, SID, k, keys[k].public_key.hex())
+            elif kind == "revoke":
+                op_revoke(b, SID, k, REVOKE_REASONS[y % 2])
+            elif kind == "disconnect":
+                b.client_disconnect(SID)
+            elif kind == "complete":
+                b.complete_resume(SID)
+            elif kind == "advance":
+                env.clock.advance(10 * y)
+                b.tick()
+            elif kind == "restart":
+                env.restart()
+        except BridgeError:
+            pass
+
+
+def test_T152g_a_request_the_transport_flags_spends_its_nonce():
+    """I8, I11(d): a request the transport reports as a replay is refused as
+    transport_replay whatever else is true of it.  If it is authentic it has
+    spent its nonce, so the same bytes presented again without the flag are
+    refused; if it is not authentic the nonce is left alone."""
+    env = Env()
+    env.disconnect()
+    req = env.request()
+    _rejects(env, req, "transport_replay", transport_replay=True)
+    assert env.bridge._nonces[SID][req.nonce].used
+    _rejects(env, req, "nonce_used")
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
+    forged = ResumeRequest("ck-1", nonce, *env.seen["ck-1"], "00" * 64)
+    _rejects(env, forged, "transport_replay", transport_replay=True)
+    assert not env.bridge._nonces[SID][nonce].used
+    assert env.cell() == (DET, NONE, ACTIVE)
+    env.bridge.client_reattach(SID, env.request(nonce=nonce))
+    assert env.cell() == (ATT, NONE, ACTIVE)
+
+
+def test_T152h_the_bounds_hold_with_nonces_bound_to_key_ids():
+    """I11f, I11g: the limit on live nonces counts the nonces of every key
+    id, registered or not, and a nonce a genuine client holds stays valid
+    under a flood for other key ids.  A request refused for the binding of
+    its nonce is of the unauthenticated class: it is logged only up to the
+    bound, leaves the nonce alone and does not restore the allowance."""
+    env = Env().reach(DET, NONE)
+    b = env.bridge
+    genuine = env.request()
+    for i in range(NONCE_RECORDS - 1):
+        b.challenge(SID, f"nobody-{i}")
+    for kid in ("ck-1", "nobody"):
+        with pytest.raises(BridgeError, match="challenge budget"):
+            b.challenge(SID, kid)
+    b.begin_resume(SID, genuine)                     # still accepted
+    b.complete_resume(SID)
+    env = Env()
+    env.add_device("ck-2")
+    env.disconnect()
+    b = env.bridge
+    n0 = len(env.kinds())
+    other = b.challenge(SID, "ck-2").nonce
+    for _ in range(3 * UNAUTH_LOG_LIMIT):
+        err = _refusal(lambda: b.begin_resume(
+            SID, env.request("ck-1", nonce=other)))
+        assert err.reason == "bad_signature"
+    assert len(env.kinds()) - n0 == UNAUTH_LOG_LIMIT
+    assert {e.payload["reason"] for e in b.events[SID][n0:]} == {
+        "nonce_binding"}
+    assert not b._nonces[SID][other].used
+    _rejects(env, env.key.request(SID, "0" * 32, 0, "0" * 64),
+             "nonce_unknown")                        # a key holder speaks
+    _rejects(env, env.request("ck-1", nonce=other), "nonce_binding")
+
+
+# ----------------------------------------------------------------------
+# Verification comes before anything the session's state decides
+# ----------------------------------------------------------------------
+
+def test_T141b_a_join_is_verified_before_the_attachment_is_answered():
+    """I11a, I15(c): a join whose signature does not verify gets the same
+    answer and the same logged event whether the session is attached,
+    detached or resuming, so `join` tells an unauthenticated caller nothing
+    about the attachment.  A join that verified is refused as not_attached
+    on a detached session and as resume_in_progress while a re-attach is
+    verified; it has spent its nonce, and a join proof never starts a
+    re-attach."""
+    answers = set()
+    for att in (ATT, DET, RES):
+        env = Env()
+        env.add_device("ck-2")
+        if att != ATT:
+            env.disconnect()
+        if att == RES:
+            env.begin_resume("ck-1")
+        garbage = env.request("ck-2", op="join")
+        garbage.signature = "00" * 64
+        n = len(env.kinds())
+        err = _refusal(lambda: env.bridge.join(SID, garbage))
+        answers.add((str(err), err.reason, tuple(env.kinds()[n:]),
+                     _last(env).payload["reason"]))
+        assert env.cell()[0] == att
+    assert answers == {("re-attach rejected: bad_signature (I4/I8/I9/I11)",
+                        "bad_signature", (GE.RESUME_REJECTED,),
+                        "bad_signature")}
+    env = Env()
+    env.add_device("ck-2")
+    env.disconnect()
+    req = env.request("ck-2", op="join")
+    n = len(env.kinds())
+    assert _refusal(lambda: env.bridge.join(SID, req)).reason == "not_attached"
+    assert env.kinds()[n:] == [GE.RESUME_REJECTED]   # no RESUME_STARTED
+    assert _last(env).payload["reason"] == "not_attached"
+    assert env.cell() == (DET, NONE, ACTIVE)
+    assert env.bridge._nonces[SID][req.nonce].used
+    assert _refusal(lambda: env.bridge.begin_resume(
+        SID, req, op="join")).reason == "nonce_used"
+    env.begin_resume("ck-1")
+    assert _refusal(lambda: env.bridge.join(SID, env.request(
+        "ck-2", op="join"))).reason == "resume_in_progress"
+    env.bridge.complete_resume(SID)
+    env.bridge.join(SID, env.request("ck-2", op="join"))
+    assert env.bridge.client_set(SID) == {"ck-1", "ck-2"}
+
+
+def test_T71b_a_key_exhausted_session_answers_a_request_like_any_other():
+    """I11a, I11-REVOKE: a re-attach that does not verify gets the same
+    answer on a key_exhausted session as on one with active keys, so the
+    refusal does not say that the session has no key left; a holder of a
+    revoked key learns that its key is revoked."""
+    def answers(env: Env) -> list[str]:
+        seq, h = env.seen["ck-1"]
+        stranger = ClientKey("ck-9")
+        unknown = stranger.request(
+            SID, env.bridge.challenge(SID, "ck-9").nonce, seq, h)
+        forged = env.request("ck-1")
+        forged.signature = "00" * 64
+        return [str(_refusal(lambda: env.bridge.begin_resume(SID, r)))
+                for r in (unknown, forged)]
+    live = Env()
+    live.add_device("ck-2")
+    live.disconnect()
+    gone = Env()
+    gone.add_device("ck-2")
+    gone.disconnect()
+    for kid in ("ck-1", "ck-2"):
+        op_revoke(gone.bridge, SID, kid)
+    assert gone.bridge._sess[SID].key_exhausted
+    assert answers(gone) == answers(live)
+    assert "bad_signature" in answers(gone)[0]
+    err = _refusal(lambda: gone.bridge.begin_resume(SID, gone.request("ck-1")))
+    assert err.reason == "revoked_key"
+    assert _last(gone).payload["reason"] == "revoked_key"
+
+
+def test_T26b_a_request_in_the_tick_of_a_timer_is_processed_first():
+    """L1, L2, I11: when T_detach (or the cumulative cap) expires in the
+    very tick of a re-attach, the request is processed first: if it is
+    accepted the timer no longer applies and does not fire; if it is
+    refused the timer fires after it.  A timer that expired before the
+    request has ended the session, and the answer is the uniform refusal.
+    A human timer of the same tick still applies after the re-attach."""
+    env = Env(Config(t_detach=600))
+    env.disconnect()
+    env.clock.advance(600)                         # the tick of T_detach
+    env.reattach()
+    assert env.cell() == (ATT, NONE, ACTIVE)
+    assert GE.DETACH_TIMEOUT not in env.kinds()
+
+    env = Env(Config(t_detach=600))
+    env.disconnect()
+    env.clock.advance(600)
+    forged = env.request()
+    forged.signature = "00" * 64
+    n = len(env.kinds())
+    err = _refusal(lambda: env.bridge.client_reattach(SID, forged))
+    assert err.reason == "bad_signature"
+    assert env.kinds()[n:] == [GE.RESUME_REJECTED, GE.DETACH_TIMEOUT,
+                               GE.TERMINATION]
+
+    env = Env(Config(t_detach=600))
+    env.disconnect()
+    env.clock.advance(601)                         # a tick too late
+    late = env.request()
+    n = len(env.kinds())
+    err = _refusal(lambda: env.bridge.client_reattach(SID, late))
+    assert (str(err), err.reason) == (RESUME_REFUSED, "refused")
+    assert env.kinds()[n:] == [GE.DETACH_TIMEOUT, GE.TERMINATION]
+
+    env = Env(Config(t_detach=600, t_total=1000))
+    env.disconnect()
+    env.clock.advance(500)
+    env.reattach()
+    env.disconnect()
+    env.clock.advance(500)                         # the tick of the cap
+    env.reattach()
+    assert env.cell() == (ATT, NONE, ACTIVE)
+
+    env = Env(Config(t_detach=600, t_human=600, t_call=600))
+    env.bridge.escalate_to_human(SID)
+    env.disconnect()
+    env.clock.advance(600)                         # both timers, one tick
+    req = env.request()
+    n = len(env.kinds())
+    with pytest.raises(BridgeError, match="TERMINATED"):
+        env.bridge.client_reattach(SID, req)
+    assert env.kinds()[n:] == [GE.RESUME_STARTED, GE.HUMAN_TIMEOUT,
+                               GE.TERMINATION]
+    assert env.bridge.events[SID][-1].payload["reason"] == "human_timeout"
+
+
+# ----------------------------------------------------------------------
+# Approval freshness is kept per call
+# ----------------------------------------------------------------------
+
+def _two_escalations(env: Env) -> None:
+    """Escalation one approves k1 while the client is away and lapses;
+    an unrelated escalation two then approves k2."""
+    b = env.bridge
+    b.submit_tool_call(SID, "shell:git push", key="k1")
+    env.resolve()
+    env.clock.advance(150)                         # k1's approval lapses
+    b.escalate_to_human(SID)
+    b.submit_tool_call(SID, "shell:ls", key="k2")
+    env.resolve()
+    env.clock.advance(50)
+
+
+def test_T43b_a_later_approval_does_not_revive_a_lapsed_one():
+    """I13: the approval expiry is kept per call, set by the resolution of
+    the escalation the call was queued under.  A call whose approval lapsed
+    while the client was away expires at the drain though a later,
+    unrelated escalation was resolved in between; the call of that later
+    escalation drains.  The same holds when the bridge restarts before the
+    drain, since the expiry is read from the log."""
+    for restart in (False, True):
+        env = Env(Config(t_approve=100, t_detach=10_000)).reach(DET, PEND)
+        _two_escalations(env)
+        if restart:
+            env.restart()
+        env.reattach()
+        fate = [(e.kind, e.payload["key"], e.payload.get("reason"))
+                for e in env.bridge.events[SID]
+                if e.kind in (GE.TOOL_CALL_EXPIRED, GE.TOOL_CALL_DRAINED)]
+        assert fate == [(GE.TOOL_CALL_EXPIRED, "k1", "approval_ttl"),
+                        (GE.TOOL_CALL_DRAINED, "k2", None)], restart
+        assert [k for _, k, _ in env.bridge.forwarded] == ["k2"]
+
+
+def test_T43c_an_approval_is_valid_strictly_before_t_approve():
+    """I13: an approval is valid while less than T_approve has passed since
+    the resolution: a drain at exactly T_approve finds it expired, one a
+    second earlier forwards the call."""
+    for wait, kind in ((100, GE.TOOL_CALL_EXPIRED), (99, GE.TOOL_CALL_DRAINED)):
+        env = Env(Config(t_approve=100, t_detach=10_000)).reach(DET, PEND)
+        env.bridge.submit_tool_call(SID, "shell:git push", key="k1")
+        env.resolve()
+        env.clock.advance(wait)
+        env.reattach()
+        assert _last(env).kind == kind, wait
+        assert bool(env.bridge.forwarded) == (kind == GE.TOOL_CALL_DRAINED)
+    assert _last(env).payload["key"] == "k1"
+
+
+# ----------------------------------------------------------------------
+# Checkpoints on: lifecycle, quarantine and chain verification come first
+# ----------------------------------------------------------------------
+
+def _cp_env(n: int = 1, t: float = float("inf"), **cfg) -> Env:
+    """An Env that runs with checkpoints on: one after every ``n`` events
+    or ``t`` seconds."""
+    return Env(Config(n_checkpoint=n, t_checkpoint=t, **cfg),
+               checkpoints=True)
+
+
+def _check_checkpoints(env: Env) -> None:
+    """Every CHECKPOINT covers exactly the events before it and carries
+    their Merkle tree hash."""
+    from merkle import merkle_root
+    log = env.bridge.events[env.sid]
+    for ev in log:
+        if ev.kind == GE.CHECKPOINT:
+            assert ev.payload["tree_size"] == ev.sequence
+            leaves = [bytes.fromhex(e.event_hash())
+                      for e in log[:ev.sequence]]
+            assert ev.payload["root"] == merkle_root(leaves).hex()
+
+
+def test_T66b_no_checkpoint_follows_a_termination():
+    """I-CHECKPOINT, I6: TERMINATION is the last event of a session also
+    when a checkpoint is due: after an explicit termination, after a
+    timeout, at a later tick, and under the default configuration when the
+    time threshold has passed."""
+    env = _cp_env()
+    env.bridge.escalate_to_human(SID)
+    assert env.kinds()[-2:] == [GE.HUMAN_PENDING, GE.CHECKPOINT]
+    env.bridge.terminate(SID)
+    assert env.kinds()[-1] == GE.TERMINATION
+    env.clock.advance(10_000)
+    env.bridge.tick()
+    _no_events_after_termination(env)
+
+    env = _cp_env(t_detach=600)
+    env.disconnect()
+    assert env.kinds()[-1] == GE.CHECKPOINT
+    env.clock.advance(600)
+    env.bridge.tick()
+    assert env.kinds()[-2:] == [GE.DETACH_TIMEOUT, GE.TERMINATION]
+
+    env = Env(Config(), checkpoints=True)          # N = 1000, T_cp = 300 s
+    env.clock.advance(301)                         # the time threshold
+    env.bridge.terminate(SID)
+    assert env.kinds() == [GE.ATTACHED, GE.TERMINATION]
+    _check_checkpoints(env)
+
+
+def test_T66c_no_checkpoint_on_a_quarantined_session():
+    """I-CHECKPOINT, rule Q: nothing but a TERMINATION follows the failure
+    event of a quarantined session, so no checkpoint is appended to it,
+    at the failure, at a tick or after a restart, also when the chain
+    verifies again (the fault in storage was transient): the quarantine
+    stands until an operator ends the session."""
+    env = _cp_env()
+    env.disconnect()
+    assert env.kinds()[-1] == GE.CHECKPOINT
+    good = env.storage.logs[SID][1].prev_hash
+    env.storage.logs[SID][1].prev_hash = "00" * 32
+    with pytest.raises(BridgeError, match="I5"):
+        env.reattach()
+    assert env.kinds()[-2:] == [GE.RESUME_STARTED, GE.RESUME_FAILED]
+    assert env.bridge.is_quarantined(SID)
+    n = len(env.kinds())
+    env.clock.advance(10_000)
+    env.bridge.tick()
+    env.storage.logs[SID][1].prev_hash = good      # the chain verifies again
+    env.bridge._verify_event_chain(SID)
+    env.bridge.tick()
+    env.restart()
+    env.bridge.tick()
+    assert env.bridge.is_quarantined(SID)
+    assert len(env.kinds()) == n
+    env.bridge.terminate(SID)                      # the operator's way out
+    assert env.kinds()[n:] == [GE.TERMINATION]
+
+
+def test_T66d_no_checkpoint_over_a_log_that_does_not_verify():
+    """I-CHECKPOINT, I5: the root is taken only over a log whose hash chain
+    verifies.  On a log that was tampered with no checkpoint is emitted,
+    neither when a re-attach starts (before its chain verification) nor at
+    any other commit; an intact log is checkpointed as before."""
+    env = _cp_env()
+    env.disconnect()
+    env.storage.logs[SID][1].prev_hash = "00" * 32
+    env.begin_resume()                             # authentic: Res
+    assert env.kinds()[-1] == GE.RESUME_STARTED    # and no CHECKPOINT
+    env.bridge.escalate_to_human(SID)
+    assert env.kinds()[-1] == GE.HUMAN_PENDING
+    assert env.kinds().count(GE.CHECKPOINT) == 1   # the one before tampering
+
+    env = _cp_env()
+    env.disconnect()
+    env.begin_resume()
+    assert env.kinds()[-2:] == [GE.RESUME_STARTED, GE.CHECKPOINT]
+    env.bridge.complete_resume(SID)
+    assert env.kinds()[-2:] == [GE.RESUME_VERIFIED, GE.CHECKPOINT]
+    _check_checkpoints(env)
+
+
+@given(st.lists(_action_strategy(), min_size=1, max_size=40))
+@settings(max_examples=60, deadline=None)
+def test_T66e_the_invariants_hold_with_checkpoints_on(actions):
+    """I-CHECKPOINT, I5, I6: with checkpoints on (by count and by time) the
+    invariants of T9 hold after every random action, no event follows a
+    TERMINATION, and every CHECKPOINT carries the size and the Merkle tree
+    hash of the events before it."""
+    env, stale, rejected = _cp_env(3, 120.0), [], []
+    for a in actions:
+        _apply_action(env, a, stale, rejected)
+        _check_invariants(env)
+        _check_checkpoints(env)
+
+
+def test_T66f_the_checkpoint_root_is_the_tree_hash_of_rfc_9162():
+    """I-CHECKPOINT: the root is the Merkle tree hash of RFC 9162, Section
+    2.1.1, over the event hashes: the empty tree hashes the empty string, a
+    leaf is hashed under the prefix 0x00 and an interior node under 0x01,
+    and a tree is split at the largest power of two below its size, with no
+    node repeated.  The roots and audit paths are pinned in
+    vectors/bytes_kat.json, which the Rust crate reads too. [trace: wire]"""
+    import merkle
+    sha = lambda data: hashlib.sha256(data).digest()      # noqa: E731
+    d = [sha(bytes([i])) for i in range(8)]
+    leaf = [sha(b"\x00" + x) for x in d]
+    node = lambda left, right: sha(b"\x01" + left + right)  # noqa: E731
+    assert merkle.merkle_root([]) == sha(b"")
+    assert merkle.merkle_root(d[:1]) == leaf[0] != d[0]
+    assert merkle.merkle_root(d[:2]) == node(leaf[0], leaf[1])
+    assert merkle.merkle_root(d[:3]) == node(node(leaf[0], leaf[1]), leaf[2])
+    assert merkle.merkle_root(d[:5]) == node(
+        node(node(leaf[0], leaf[1]), node(leaf[2], leaf[3])), leaf[4])
+    assert merkle.merkle_root(d[:7]) == node(
+        node(node(leaf[0], leaf[1]), node(leaf[2], leaf[3])),
+        node(node(leaf[4], leaf[5]), leaf[6]))
+    # no last node is repeated, and an interior node is not a leaf
+    assert merkle.merkle_root(d[:3]) != merkle.merkle_root(d[:3] + d[2:3])
+    assert merkle.merkle_root(d[:2]) != merkle.merkle_root(
+        [leaf[0] + leaf[1]])
+    kat = _bytes_kat()["merkle"]
+    for c in kat["roots"]:
+        leaves = [bytes.fromhex(x) for x in c["leaves"]]
+        assert merkle.merkle_root(leaves).hex() == c["root"], c["name"]
+        assert merkle.merkle_root_hex(c["leaves"]) == c["root"]
+    for c in kat["inclusion"]:
+        leaves = [bytes.fromhex(x) for x in c["leaves"]]
+        root = bytes.fromhex(c["root"])
+        path = merkle.inclusion_proof(leaves, c["index"])
+        assert [p.hex() for p in path] == c["path"], c["name"]
+        assert merkle.verify_inclusion(leaves[c["index"]], c["index"],
+                                       len(leaves), path, root)
+        assert not merkle.verify_inclusion(
+            leaves[c["index"]], c["index"] ^ 1, len(leaves), path, root)
+        assert not merkle.verify_inclusion(
+            sha(b"other"), c["index"], len(leaves), path, root)
+    # the checkpoint of a real log carries this root and its size
+    env = _cp_env(3)
+    env.bridge.escalate_to_human(SID)
+    env.bridge.submit_tool_call(SID, "tool:1", key="k1")
+    assert env.kinds()[-1] == GE.CHECKPOINT
+    _check_checkpoints(env)
+
+
+# ----------------------------------------------------------------------
+# Revocation, quarantine and the operator operations
+# ----------------------------------------------------------------------
+
+def test_T128b_a_soft_revocation_of_the_only_key_in_res_does_not_strand_it():
+    """I11-REVOKE, L1: a soft revocation of the only key while its
+    re-attach is being verified returns the session to Det, key_exhausted;
+    T_detach runs again from that detachment and ends the session unless
+    the operator adds a key."""
+    env = Env()
+    env.disconnect()
+    env.begin_resume("ck-1")
+    op_revoke(env.bridge, SID, "ck-1", "rotation")
+    assert env.kinds()[-3:] == [GE.KEY_REVOKED, GE.DETACHMENT,
+                                GE.RESUME_PREPARED]
+    assert env.cell() == (DET, NONE, ACTIVE)
+    assert env.bridge._sess[SID].key_exhausted
+    with pytest.raises(BridgeError):
+        env.bridge.complete_resume(SID)
+    env.clock.advance(env.config.t_detach - 1)
+    env.bridge.tick()
+    assert env.cell() == (DET, NONE, ACTIVE)
+    env.clock.advance(1)
+    env.bridge.tick()
+    assert env.kinds()[-2:] == [GE.DETACH_TIMEOUT, GE.TERMINATION]
+
+
+def test_T146b_no_key_is_added_to_a_quarantined_session():
+    """Rule Q, I11-REVOKE: a quarantined session takes no event but a
+    TERMINATION, so an operator key addition with a valid signature is
+    refused as quarantined and registers nothing; without the operator's
+    signature the answer is the one every session gets. [trace: rule Q]"""
+    env = Env()
+    op_revoke(env.bridge, SID, "ck-1", reason="compromise")
+    env.storage.logs[SID][1].prev_hash = "00" * 32
+    env.restart()
+    b = env.bridge
+    assert b.is_quarantined(SID) and b._sess[SID].key_exhausted
+    n = len(env.kinds())
+    err = _refusal(lambda: op_add_key(b, SID, "ck-2", "cd" * 32))
+    assert err.reason == "quarantined"
+    with pytest.raises(OperatorSignatureInvalid):
+        b.operator_add_key(SID, "ck-2", "cd" * 32, signature="00" * 64)
+    assert len(env.kinds()) == n
+    assert (SID, "ck-2") not in env.storage.client_keys
+    assert b._sess[SID].keys == {"ck-1"}
+    b.terminate(SID)
+    assert env.kinds()[n:] == [GE.TERMINATION]
+
+
+def test_T69b_a_revoked_key_cannot_join_and_revocation_follows_the_signature():
+    """I11-REVOKE, I11(d): a revoked key is refused for a join as for a
+    re-attach.  The revocation is looked at only after the signature
+    verified: a request that names a revoked key and does not verify is a
+    bad signature and leaves the nonce alone, while the key holder's own
+    request is refused as revoked and spends the nonce issued to it."""
+    env = Env()
+    env.add_device("ck-2")
+    b = env.bridge
+    nonce = b.challenge(SID, "ck-2").nonce          # while ck-2 is active
+    op_revoke(b, SID, "ck-2", "rotation")
+    forged = env.request("ck-2", op="join", nonce=nonce)
+    forged.signature = "00" * 64
+    err = _refusal(lambda: b.join(SID, forged))
+    assert err.reason == "bad_signature"
+    assert _last(env).payload["reason"] == "bad_signature"
+    assert not b._nonces[SID][nonce].used
+    err = _refusal(lambda: b.join(SID, env.request("ck-2", op="join",
+                                                   nonce=nonce)))
+    assert err.reason == "revoked_key"
+    assert _last(env).payload["reason"] == "revoked_key"
+    assert b._nonces[SID][nonce].used
+    # it spends its own nonce only: one issued to another key stays live
+    other = b.challenge(SID, "ck-1").nonce
+    err = _refusal(lambda: b.join(SID, env.request("ck-2", op="join",
+                                                   nonce=other)))
+    assert err.reason == "revoked_key"
+    assert not b._nonces[SID][other].used
+    assert GE.CLIENT_JOINED not in env.kinds()
+    assert b.client_set(SID) == {"ck-1"}
+
+
+def test_T19d_a_request_for_an_unregistered_key_leaves_the_nonce():
+    """I11(d), I15: a request that names a key id the session does not
+    register is not authentic and does not consume the nonce it presents;
+    the client the nonce was issued to still uses it."""
+    env = Env()
+    env.disconnect()
+    nonce = env.bridge.challenge(SID, "ck-1").nonce
+    stranger = ClientKey("ck-9")
+    _rejects(env, stranger.request(SID, nonce, *env.seen["ck-1"]),
+             "unknown_key")
+    assert not env.bridge._nonces[SID][nonce].used
+    env.bridge.client_reattach(SID, env.request(nonce=nonce))
+    assert env.cell() == (ATT, NONE, ACTIVE)
+
+
+def test_T99b_refusals_of_a_revoked_key_are_logged_up_to_the_bound():
+    """I11g, I11-REVOKE: a holder of a revoked key needs no nonce to be
+    refused, so its refusals are of the bounded class: at most
+    UNAUTH_LOG_LIMIT are logged between two requests of an active key, and
+    they do not restore the allowance for other unauthenticated failures."""
+    env = Env()
+    env.add_device("ck-2")
+    env.disconnect()
+    b = env.bridge
+    op_revoke(b, SID, "ck-1")
+    n0 = len(env.kinds())
+    stale = env.key.request(SID, "0" * 32, 0, "0" * 64)     # no nonce needed
+    for _ in range(3 * UNAUTH_LOG_LIMIT):
+        assert _refusal(lambda: b.begin_resume(SID, stale)).reason == \
+            "revoked_key"
+    assert len(env.kinds()) - n0 == UNAUTH_LOG_LIMIT
+    forged = ResumeRequest("ck-2", "0" * 32, 0, "0" * 64, "00" * 64)
+    assert _refusal(lambda: b.begin_resume(SID, forged)).reason == \
+        "bad_signature"
+    assert len(env.kinds()) - n0 == UNAUTH_LOG_LIMIT        # not logged
+    env.reattach("ck-2")                            # an active key speaks
+    n1 = len(env.kinds())
+    assert _refusal(lambda: b.begin_resume(SID, stale)).reason == \
+        "revoked_key"
+    assert env.kinds()[n1:] == [GE.RESUME_REJECTED]
+
+
+def test_T89b_a_revocation_names_a_known_kind_and_is_made_once():
+    """I11-REVOKE: the reason of a revocation is rotation or compromise;
+    any other string is a malformed request, signed or not, and commits
+    nothing.  A key that is revoked is not revoked again, by either kind,
+    and a request for its revocation is refused too."""
+    env = Env()
+    env.add_device("ck-2")
+    b = env.bridge
+    n = len(env.kinds())
+    for why in ("", "lost", "Rotation", "compromise "):
+        for kw in ({"signature": op_sig(b, "revoke", SID, "ck-1", why)},
+                   {"signature": "", "requested_by": "ck-1"}):
+            err = _refusal(lambda: b.revoke_key(SID, "ck-1", why, **kw))
+            assert err.reason == "bad_canonical", why
+    assert len(env.kinds()) == n and not b._sess[SID].revoked_keys
+    op_revoke(b, SID, "ck-1", "rotation")
+    n = len(env.kinds())
+    for why in REVOKE_REASONS:
+        err = _refusal(lambda: op_revoke(b, SID, "ck-1", why))
+        assert err.reason == "revoked_key"
+    err = _refusal(lambda: b.revoke_key(SID, "ck-1", "rotation",
+                                        signature="", requested_by="ck-2"))
+    assert err.reason == "revoked_key"
+    assert len(env.kinds()) == n
+    assert env.kinds().count(GE.KEY_REVOKED) == 1
+
+
+def test_T150b_operator_operations_check_the_signature_first():
+    """I-OPERATOR, I11a: a revocation, a key addition and a termination
+    verify the operator's signature before anything is said about the
+    session: without it the answer is operator_signature_invalid for an
+    unknown session, an unknown or registered key, a session with active
+    keys, a terminated and a quarantined one alike, and nothing is
+    committed.  With it the state is named, and a termination of a session
+    that is already over is refused."""
+    bad = "00" * 64
+    env = Env()
+    b = env.bridge
+
+    def unsigned(bridge: Bridge, sid: str) -> set[str]:
+        return {_refusal(call).reason for call in (
+            lambda: bridge.revoke_key(sid, "ck-1", "rotation", signature=bad),
+            lambda: bridge.revoke_key(sid, "ck-9", "rotation", signature=bad),
+            lambda: bridge.revoke_key(sid, "ck-1", "rotation",
+                                      signature=None),
+            lambda: bridge.operator_add_key(sid, "ck-2", "cd" * 32,
+                                            signature=bad),
+            lambda: bridge.operator_add_key(sid, "ck-1", "cd" * 32,
+                                            signature=bad),
+            lambda: bridge.operator_terminate(sid, signature=bad),
+            lambda: bridge.operator_terminate(sid, signature=None))}
+
+    n = len(env.kinds())
+    assert unsigned(b, SID) == {"operator_signature_invalid"}
+    assert unsigned(b, "no-such-session") == {"operator_signature_invalid"}
+    assert len(env.kinds()) == n
+    quarantined = Env().reach(RES, NONE)
+    quarantined.storage.logs[SID][0].payload["principal_id"] = "mallory"
+    with pytest.raises(BridgeError):
+        quarantined.bridge.complete_resume(SID)
+    assert unsigned(quarantined.bridge, SID) == {"operator_signature_invalid"}
+    b.terminate(SID)
+    n = len(env.kinds())
+    assert unsigned(b, SID) == {"operator_signature_invalid"}
+    for call in (lambda: op_terminate(b, SID),
+                 lambda: op_add_key(b, SID, "ck-2", "cd" * 32),
+                 lambda: op_revoke(b, SID, "ck-1")):
+        assert _refusal(call).reason == "terminated"
+    assert len(env.kinds()) == n
+    over_nothing = TEST_OPERATOR.terminate(
+        b.bridge_id, "no-such-session", "all_keys_revoked", -1, "")
+    assert _refusal(lambda: b.operator_terminate(
+        "no-such-session", signature=over_nothing)).reason == "unknown_session"
+
+
+# ----------------------------------------------------------------------
+# Small rules: the chain, resolve, disconnect, the resume record
+# ----------------------------------------------------------------------
+
+def test_T5b_the_chain_check_reads_the_sequence_numbers():
+    """I5: an event carries its position as its sequence number.  A wrong
+    sequence number on the last event changes no later prev_hash, so only
+    the check of the number finds it: at a re-attach (the session is
+    quarantined) and at recovery. [trace: I5 rule Q]"""
+    env = Env()
+    env.disconnect()
+    env.storage.logs[SID][-1].sequence += 7
+    with pytest.raises(BridgeError, match="I5"):
+        env.bridge._verify_event_chain(SID)
+    with pytest.raises(BridgeError, match="I5"):
+        env.reattach()
+    assert env.kinds()[-2:] == [GE.RESUME_STARTED, GE.RESUME_FAILED]
+    assert env.bridge.is_quarantined(SID)
+    env = Env()
+    env.disconnect()
+    env.storage.logs[SID][-1].sequence += 7
+    assert env.restart().is_quarantined(SID)
+    assert env.kinds()[-1] == GE.RECOVERY_FAILED
+
+
+def test_T61b_a_resolution_needs_a_pending_escalation():
+    """I2, I13: `resolve` is refused while no escalation is pending, in
+    every attachment, and commits nothing: an approval cannot be made in
+    advance of the escalation it is for."""
+    for att in (ATT, DET, RES):
+        env = Env().reach(att, NONE)
+        n = len(env.kinds())
+        with pytest.raises(BridgeError, match="Human=Pend"):
+            env.bridge.human_resolve(SID)
+        assert len(env.kinds()) == n and env.cell() == (att, NONE, ACTIVE)
+
+
+def test_T21b_the_disconnect_of_another_key_does_not_abandon_a_reattach():
+    """I15(b), I1: while a re-attach is being verified only the loss of the
+    re-attaching client's transport returns the session to Det; a
+    disconnect that names another key changes nothing."""
+    env = Env()
+    env.add_device("ck-2")
+    env.disconnect()
+    env.begin_resume("ck-1")
+    n = len(env.kinds())
+    env.bridge.client_disconnect(SID, "ck-2")
+    assert len(env.kinds()) == n and env.cell() == (RES, NONE, ACTIVE)
+    env.bridge.complete_resume(SID)
+    assert env.bridge.client_set(SID) == {"ck-1"}
+    env.disconnect()
+    env.begin_resume("ck-1")
+    env.bridge.client_disconnect(SID, "ck-1")      # its own transport
+    assert env.kinds()[-2:] == [GE.DETACHMENT, GE.RESUME_PREPARED]
+
+
+def test_T45b_the_resume_record_carries_the_scope_in_force():
+    """I1, I10: RESUME_PREPARED records the scope and the scope version in
+    force at the detachment, and the authority hash over that scope, also
+    after narrowings made while attached and while away, and at a restart."""
+    env = Env()
+    b = env.bridge
+    b.narrow_authority_scope(SID, ("read:docs",))
+    env.disconnect()
+    rec = b.resume_record(SID).payload
+    assert (rec["scope_version"], rec["authority_scope"]) == (1, ["read:docs"])
+    assert rec["authority_hash"] == _authority_hash(
+        "user-alice", ("read:docs",), ("root",))
+    b.narrow_authority_scope(SID, ())               # while away
+    env.reattach()
+    env.disconnect()
+    rec = b.resume_record(SID).payload
+    assert (rec["scope_version"], rec["authority_scope"]) == (2, [])
+    rec = env.restart().resume_record(SID).payload
+    assert (rec["scope_version"], rec["authority_scope"]) == (2, [])
+    assert rec["reason"] == "bridge_restart"
+
+
+# ----------------------------------------------------------------------
+# Tool calls: keys, the direct path, completion
+# ----------------------------------------------------------------------
+
+def test_T41b_a_duplicate_key_returns_the_queued_call_and_commits_nothing():
+    """I13: a second submission under a key that is queued is not queued
+    again, whether its content is the same or not: the bridge answers
+    DUPLICATE (`duplicate_key` on the wire), the first call keeps its
+    content and its hash, and no event is committed, not even a rejection."""
+    import wire
+    import wire_server
+    env = Env().reach(ATT, PEND)
+    b = env.bridge
+    assert b.submit_tool_call(SID, "a", key="k1", content={"n": 1}) == "QUEUED"
+    before = list(b.events[SID])
+    shown = b.shown_hash_of(SID, "k1")
+    assert b.submit_tool_call(SID, "a", key="k1", content={"n": 1}) == \
+        "DUPLICATE"
+    assert b.submit_tool_call_keyed(SID, "b", key="k1", content={"n": 2}) == (
+        "DUPLICATE", "k1")
+    server = wire_server.WireServer(b)
+    with pytest.raises(wire_server.WireRejected) as exc:
+        wire_server.send(server, wire.op_submit_tool_call(
+            session_id=SID, tool="c", content={"n": 3}, key="k1"))
+    assert exc.value.reason == "duplicate_key"
+    assert b.events[SID] == before
+    assert [(c["key"], c["tool"], c["content"]) for c in b._sess[SID].queue] \
+        == [("k1", "a", {"n": 1})]
+    assert b.shown_hash_of(SID, "k1") == shown
+
+
+def test_T41c_a_generated_key_never_collides_with_a_supplied_one():
+    """I13: when the runtime supplies no key the bridge generates one that
+    the session has not used, also when the runtime has used keys of the
+    bridge's own form, so a distinct call is never taken for a duplicate."""
+    env = Env().reach(ATT, PEND)
+    b = env.bridge
+    assert b.submit_tool_call(SID, "a", key="tc-0002") == "QUEUED"
+    assert b.submit_tool_call(SID, "b") == "QUEUED"        # not a duplicate
+    assert b.submit_tool_call(SID, "c", key="tc-0004") == "QUEUED"
+    status, key = b.submit_tool_call_keyed(SID, "d")
+    assert status == "QUEUED"
+    keys = [c["key"] for c in b._sess[SID].queue]
+    assert b.queued_tools(SID) == ["a", "b", "c", "d"]
+    assert len(set(keys)) == 4 and keys[3] == key
+    assert env.kinds().count(GE.TOOL_CALL_QUEUED) == 4
+
+
+def test_T25b_a_direct_call_outside_the_scope_is_refused_and_recorded():
+    """I3, I2: with a client attached and no escalation pending a call
+    whose permission is not in the current scope is not forwarded: it is
+    refused with the reason scope and recorded as TOOL_CALL_REJECTED
+    (marked direct, with the permission asked for).  A call inside the
+    scope, or one that names no permission, is forwarded as before and
+    leaves no event.  A queued call under the same key is not disturbed."""
+    import wire
+    import wire_server
+    env = Env()
+    b = env.bridge
+    b.narrow_authority_scope(SID, ("read:docs",))
+    n = len(env.kinds())
+    for perm in ("exec:shell", "never:granted"):       # narrowed away, never
+        err = _refusal(lambda: b.submit_tool_call(
+            SID, "rm", key="k-" + perm, permission=perm))
+        assert err.reason == "scope"
+    assert env.kinds()[n:] == [GE.TOOL_CALL_REJECTED] * 2
+    assert _last(env).payload == {
+        "key": "k-never:granted", "tool": "rm", "permission": "never:granted",
+        "reason": "scope", "direct": True}
+    assert b.forwarded == []
+    assert b.submit_tool_call(SID, "cat", key="k1",
+                              permission="read:docs") == "FORWARDED"
+    assert b.submit_tool_call(SID, "noop") == "FORWARDED"
+    assert len(env.kinds()) == n + 2                   # no event for those
+    _refusal(lambda: b.submit_tool_call(SID, "rm", permission="exec:shell"))
+    assert _last(env).payload["key"].startswith("tc-")  # a key all the same
+    server = wire_server.WireServer(b)
+    with pytest.raises(wire_server.WireRejected) as exc:
+        wire_server.send(server, wire.op_submit_tool_call(
+            session_id=SID, tool="rm", content={}, key="w1",
+            permission="exec:shell"))
+    assert exc.value.reason == "scope"
+    assert _last(env).kind == GE.TOOL_CALL_REJECTED
+    # a call held under the queue policy keeps its place in the queue
+    env = Env(Config(detached_calls="queue"))
+    env.disconnect()
+    env.bridge.submit_tool_call(SID, "ls", key="k1", permission="read:docs")
+    env.reattach()
+    assert _refusal(lambda: env.bridge.submit_tool_call(
+        SID, "rm", key="k1", permission="admin")).reason == "scope"
+    assert env.bridge.queued_tools(SID) == ["ls"]
+    assert env.restart().queued_tools(SID) == ["ls"]   # and in the fold
+
+
+def test_T60e_a_forwarded_call_is_completed_once_and_no_other_call_is():
+    """I13, rule D: the runtime's report that a call finished is accepted
+    once for every call the bridge forwarded, at a drain or directly, and
+    refused a second time; a call that was never forwarded (still queued,
+    denied, unknown) has nothing to complete."""
+    env = Env()
+    b = env.bridge
+    assert b.submit_tool_call(SID, "ls", key="d1") == "FORWARDED"   # direct
+    b.completed(SID, "d1", "ab" * 32)
+    assert env.kinds()[-1] == GE.TOOL_CALL_COMPLETED
+    with pytest.raises(BridgeError):
+        b.completed(SID, "d1")                         # at most once
+    _drain_one(env)                                    # k1, at a drain
+    b.completed(SID, "k1")
+    with pytest.raises(BridgeError):
+        b.completed(SID, "k1")
+    b.escalate_to_human(SID)
+    b.submit_tool_call(SID, "rm", key="k2")
+    with pytest.raises(BridgeError):
+        b.completed(SID, "k2")                         # still queued
+    b.answer_tool_call(SID, "k2", b.shown_hash_of(SID, "k2"), False)
+    b.human_resolve(SID)
+    assert _last(env).payload["reason"] == "denied"
+    for key in ("k2", "never-submitted"):
+        with pytest.raises(BridgeError):
+            b.completed(SID, key)                      # never forwarded
+    assert env.kinds().count(GE.TOOL_CALL_COMPLETED) == 2
+
+
+# ----------------------------------------------------------------------
+# Authority: the scope is a set; an observed widening is always recorded
+# ----------------------------------------------------------------------
+
+def test_T14b_the_scope_is_recorded_as_a_sorted_set():
+    """I3, I10: a scope is a set of permissions.  The bridge records it
+    without repetitions and sorted, at attach and at every narrowing, so
+    the authority hash is the same for one scope however a caller wrote
+    it; the grant and the attach proof still bind the scope as presented.
+    The hash of a scope is pinned in vectors/bytes_kat.json."""
+    resumed = []
+    for scope in (("read:docs", "exec:shell"),
+                  ("exec:shell", "read:docs", "exec:shell")):
+        bridge, storage, _, key = _grant_env()
+        ident = SessionIdentity("sess-g", "user-alice", scope, ("root",))
+        attach_as(bridge, ident, key)                  # as presented
+        assert storage.logs["sess-g"][0].payload["authority_scope"] == [
+            "exec:shell", "read:docs"]
+        assert bridge.scope_of("sess-g") == ("exec:shell", "read:docs")
+        bridge.client_disconnect("sess-g")
+        resumed.append(bridge.resume_record("sess-g").payload)
+    assert resumed[0]["authority_hash"] == resumed[1]["authority_hash"] == \
+        _authority_hash("user-alice", ("exec:shell", "read:docs"), ("root",))
+    assert resumed[0]["authority_scope"] == ["exec:shell", "read:docs"]
+    assert canonical_scope(("b", "a", "b", "A")) == ("A", "a", "b")
+    env = Env(scope=("c", "a", "b"))
+    b = env.bridge
+    with pytest.raises(BridgeError, match="I10"):      # the same set
+        b.narrow_authority_scope(SID, ("b", "c", "a", "a"))
+    assert b.narrow_authority_scope(SID, ("c", "a", "c")) == 1
+    assert _last(env).payload["new_scope"] == ["a", "c"]
+    assert b.scope_of(SID) == ("a", "c")
+    for case in _bytes_kat()["authority_hashes"]:
+        assert _authority_hash(
+            case["principal"], canonical_scope(case["scope"]),
+            case["lineage"]) == case["hash"], case["name"]
+        assert list(canonical_scope(case["scope"])) == case["canonical_scope"]
+
+
+def test_T14c_a_narrowing_that_is_not_strict_is_named():
+    """I10, I3: a `narrow` that proposes the current scope, or more than
+    it, is refused with the reason not_a_strict_narrowing, in the bridge
+    and on the wire; the first is recorded as AUTHORITY_NARROWING_REJECTED,
+    the second as AUTHORITY_EXTENSION_REJECTED."""
+    import wire
+    import wire_server
+    env = Env()
+    server = wire_server.WireServer(env.bridge)
+    for proposed, kind in ((SCOPE, GE.AUTHORITY_NARROWING_REJECTED),
+                           (SCOPE + ("admin",),
+                            GE.AUTHORITY_EXTENSION_REJECTED)):
+        err = _refusal(lambda: env.bridge.narrow_authority_scope(
+            SID, proposed))
+        assert err.reason == "not_a_strict_narrowing"
+        assert _last(env).kind == kind
+        with pytest.raises(wire_server.WireRejected) as exc:
+            wire_server.send(server, wire.op_narrow(
+                session_id=SID, new_scope=list(proposed)))
+        assert exc.value.reason == "not_a_strict_narrowing"
+    assert env.bridge.scope_versions[SID] == 0
+
+
+def test_T56b_an_observed_widening_is_recorded_on_a_key_exhausted_session():
+    """I3, I11-REVOKE: a widening the runtime announces is a report about
+    the runtime, not a client operation: on a key_exhausted session it is
+    still recorded with source observed and a revert is requested, while a
+    widening asked for through the bridge is refused as key_exhausted."""
+    env = Env()
+    b = env.bridge
+    op_revoke(b, SID, "ck-1")                          # exhausted, attached
+    assert b._sess[SID].key_exhausted
+    n = len(env.kinds())
+    assert b.attempt_authority_extension(
+        SID, SCOPE + ("exec:sudo",), source="observed") == "REVERT"
+    assert env.kinds()[n:] == [GE.AUTHORITY_EXTENSION_REJECTED]
+    assert _last(env).payload["source"] == "observed"
+    assert b.revert_requests == [(SID, SCOPE)] and b.scope_of(SID) == SCOPE
+    with pytest.raises(BridgeError, match="KEY_EXHAUSTED"):
+        b.attempt_authority_extension(SID, SCOPE + ("exec:sudo",))
+    assert len(env.kinds()) == n + 1
+
+
+def test_T27b_a_timeout_names_the_timer_that_fired():
+    """L1, L2: when the cumulative cap ends a session whose own detachment
+    bound has not been reached, DETACH_TIMEOUT and TERMINATION name
+    detach_total_timeout, also when a human timeout fires in the same
+    tick; when the detachment bound itself is reached they name
+    detach_timeout."""
+    env = Env(Config(t_detach=600, t_total=1000, t_human=500, t_call=500))
+    env.disconnect()
+    env.clock.advance(500)
+    env.reattach()                                     # 500 s away so far
+    env.bridge.escalate_to_human(SID)
+    env.disconnect()
+    env.clock.advance(500)                             # the cap and T_human
+    env.bridge.tick()
+    assert env.kinds()[-3:] == [GE.HUMAN_TIMEOUT, GE.DETACH_TIMEOUT,
+                                GE.TERMINATION]
+    log = env.bridge.events[SID]
+    assert log[-2].payload["reason"] == "detach_total_timeout"
+    assert log[-1].payload["reason"] == \
+        "human_timeout+detach_total_timeout (simultaneous)"
+    env = Env(Config(t_detach=600, t_total=600))
+    env.disconnect()
+    env.clock.advance(600)                             # both bounds at once
+    env.bridge.tick()
+    assert [e.payload["reason"] for e in env.bridge.events[SID][-2:]] == [
+        "detach_timeout", "detach_timeout"]
+
+
+# ----------------------------------------------------------------------
+# The wire server: nesting bound, response shapes
+# ----------------------------------------------------------------------
+
+def test_T151b_a_deeply_nested_request_is_refused_not_parsed():
+    """Appendix B: a request nested deeper than the server's bound is
+    refused as bad_canonical before it is parsed, so no nesting depth makes
+    the server fail; a tool call's content within the bound passes, and
+    brackets inside strings do not count. [trace: wire]"""
+    import wire
+    import wire_server
+    env = Env()
+    server = wire_server.WireServer(env.bridge)
+    for depth in (wire_server.MAX_DEPTH + 1, 500, 100_000):
+        for opening, closing in ((b"[", b"]"), (b'{"a":', b"}")):
+            for tail in (closing * depth + b"}", b""):     # closed or not
+                data = (b'{"op":"challenge","session_id":'
+                        + opening * depth + tail)
+                resp = wire.decode_response(server.handle(data))
+                assert (resp["status"], resp["reason"]) == (
+                    "rejected", "bad_canonical")
+
+    def nested(depth: int):
+        value: Any = 1
+        for _ in range(depth):
+            value = {"a": value}
+        return value
+    ok = wire.op_submit_tool_call(
+        session_id=SID, tool="t", content=nested(wire_server.MAX_DEPTH - 1))
+    assert wire_server.nesting_depth(ok) == wire_server.MAX_DEPTH
+    assert wire_server.send(server, ok)["status"] == "forwarded"
+    over = wire.op_submit_tool_call(
+        session_id=SID, tool="t", content=nested(wire_server.MAX_DEPTH))
+    with pytest.raises(wire_server.WireRejected) as exc:
+        wire_server.send(server, over)
+    assert exc.value.reason == "bad_canonical"
+    quoted = wire.op_submit_tool_call(
+        session_id=SID, tool="t", content={"s": "[{" * 200 + '"\\'})
+    assert wire_server.nesting_depth(quoted) == 2
+    assert wire_server.send(server, quoted)["status"] == "forwarded"
+
+
+def test_T149b_wire_responses_carry_what_their_schemas_require():
+    """Appendix B: `verified` and `joined` carry the replayed events as
+    event objects (the events of the log, hash for hash), `narrowed` the new
+    scope version, and `queued` and `forwarded` the idempotency key of the
+    call; each response matches its schema in schemas/messages. [trace: wire]"""
+    import pathlib
+    import jsonschema
+    import wire
+    import wire_server
+    schemas = pathlib.Path(__file__).parent / "schemas" / "messages"
+
+    def checked(op: str, resp: dict) -> dict:
+        jsonschema.Draft7Validator(json.loads(
+            (schemas / f"{op}.response.schema.json").read_text())
+        ).validate(resp)
+        return resp
+
+    env = Env()
+    b = env.bridge
+    server = wire_server.WireServer(b)
+    env.add_device("ck-2")
+    b.escalate_to_human(SID)
+    req = env.request("ck-2", op="join")
+    resp = checked("join", wire_server.send(server, wire.op_join(
+        session_id=SID, key_id=req.key_id, nonce=req.nonce, seq=req.seq,
+        hash=req.hash, signature=req.signature)))
+    assert [e["kind"] for e in resp["events"]] == [
+        "HUMAN_PENDING", "CLIENT_JOINED"]
+    for e in resp["events"]:
+        assert set(e) == {"kind", "session_id", "sequence", "prev_hash",
+                          "payload", "timestamp"}
+        assert Event(GovernanceEvent(e["kind"]), e["session_id"],
+                     e["sequence"], e["prev_hash"], e["payload"],
+                     e["timestamp"]).event_hash() == \
+            b.events[SID][e["sequence"]].event_hash()
+    b.human_resolve(SID)
+    env.disconnect()
+    req = env.request("ck-1")
+    resp = checked("reattach", wire_server.send(server, wire.op_reattach(
+        session_id=SID, key_id=req.key_id, nonce=req.nonce, seq=req.seq,
+        hash=req.hash, signature=req.signature)))
+    assert [e["kind"] for e in resp["events"]] == [
+        "DETACHMENT", "RESUME_PREPARED", "RESUME_STARTED", "RESUME_VERIFIED"]
+    assert resp["events"][0]["sequence"] == req.seq + 1
+    resp = checked("narrow", wire_server.send(server, wire.op_narrow(
+        session_id=SID, new_scope=["read:docs"])))
+    assert resp["new_version"] == 1 == b.scope_versions[SID]
+    resp = checked("submit_tool_call", wire_server.send(
+        server, wire.op_submit_tool_call(
+            session_id=SID, tool="t", content={}, key="k9")))
+    assert (resp["status"], resp["key"]) == ("forwarded", "k9")
+    b.escalate_to_human(SID)
+    resp = checked("submit_tool_call", wire_server.send(
+        server, wire.op_submit_tool_call(
+            session_id=SID, tool="t", content={})))
+    assert resp["status"] == "queued"
+    assert resp["key"] == b._sess[SID].queue[-1]["key"] != ""
+
+
+def test_T101b_the_challenge_message_is_pinned():
+    """The bytes of a challenge request, which names the key id the nonce
+    is for, are fixed in vectors/bytes_kat.json; both bridges read the
+    file. [trace: wire]"""
+    import wire
+    for c in _bytes_kat()["challenge_messages"]:
+        data = wire.op_challenge(session_id=c["session_id"],
+                                 key_id=c["key_id"])
+        assert data.decode() == c["canonical"], c["name"]
+        assert data.hex() == c["hex"], c["name"]
+        assert wire.decode_message(data) == {
+            "op": "challenge", "session_id": c["session_id"],
+            "key_id": c["key_id"]}
 
 
 # ----------------------------------------------------------------------

@@ -25,7 +25,8 @@
     },
     "signature": {
       "type": "string",
-      "pattern": "^[0-9a-f]+$"
+      "pattern": "^[0-9a-f]+$",
+      "description": "Signature by key_id over canonical JSON of [\"bc/v1/join\", session_id, key_id, nonce, seq, hash]."
     }
   },
   "required": [

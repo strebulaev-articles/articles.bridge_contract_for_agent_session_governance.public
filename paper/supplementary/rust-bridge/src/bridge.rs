@@ -65,6 +65,9 @@ struct Queued {
     answer: Option<(bool, String)>,
     /// Queued with no escalation pending (G1 `Queue`): waits for its answer.
     held: bool,
+    /// The expiry of the approval of the escalation this call was queued
+    /// under, set by the HUMAN_RESOLVED that ends it (I13).
+    approved_until: Option<f64>,
 }
 
 /// Per-session state. It is derived from the log only (see `apply`).
@@ -91,7 +94,9 @@ struct Session {
     record: Option<Event>,
     queue: Vec<Queued>,
     used_keys: HashSet<String>,
-    approval_until: f64,
+    /// Keys forwarded at a drain, and keys whose completion was reported.
+    drained: HashSet<String>,
+    completed: HashSet<String>,
     /// Drained calls whose delivery the runtime has not acknowledged: key -> tool.
     unacked: BTreeMap<String, ForwardedCall>,
     /// Keys revoked by KEY_REVOKED; they stay in `keys` (I11-REVOKE).
@@ -114,6 +119,11 @@ struct NonceRec {
     nonce: String,
     issued: f64,
     used: bool,
+    /// The key id the challenge named, and whether that key was registered
+    /// and unrevoked when the nonce was issued. Neither changes afterwards:
+    /// a nonce issued for a key that was not an active key never verifies.
+    key_id: String,
+    eligible: bool,
 }
 
 pub struct Bridge {
@@ -169,7 +179,8 @@ impl Session {
             record: None,
             queue: vec![],
             used_keys: HashSet::new(),
-            approval_until: 0.0,
+            drained: HashSet::new(),
+            completed: HashSet::new(),
             unacked: BTreeMap::new(),
             revoked: BTreeSet::new(),
             key_exhausted: false,
@@ -184,7 +195,7 @@ impl Session {
 /// rejection does not say which key ids a session registers; the log keeps
 /// the true reason.
 fn public_reason(reason: &'static str) -> &'static str {
-    if reason == "unknown_key" {
+    if reason == "unknown_key" || reason == "nonce_binding" {
         "bad_signature"
     } else {
         reason
@@ -319,7 +330,8 @@ impl Bridge {
                     record: None,
                     queue: vec![],
                     used_keys: HashSet::new(),
-                    approval_until: 0.0,
+                    drained: HashSet::new(),
+            completed: HashSet::new(),
                     unacked: BTreeMap::new(),
                     revoked: BTreeSet::new(),
                     key_exhausted: false,
@@ -394,7 +406,12 @@ impl Bridge {
             Kind::HUMAN_RESOLVED => {
                 s.cell.human = Human::None;
                 s.human_deadline = None;
-                s.approval_until = p["valid_until"].as_f64().unwrap_or(0.0);
+                // I13: the approval belongs to the calls of the escalation
+                // it ends; a call approved earlier keeps the earlier expiry
+                let until = p["valid_until"].as_f64().unwrap_or(0.0);
+                for c in s.queue.iter_mut().filter(|c| !c.held && c.approved_until.is_none()) {
+                    c.approved_until = Some(until);
+                }
             }
             Kind::AUTHORITY_NARROWED => {
                 s.scope = strs(&p["new_scope"]);
@@ -412,6 +429,7 @@ impl Bridge {
                     shown_hash: p["shown_hash"].as_str().unwrap_or("").to_string(),
                     answer: None,
                     held: p["held"].as_bool().unwrap_or(false),
+                    approved_until: None,
                 });
             }
             Kind::TOOL_CALL_ANSWERED => {
@@ -425,9 +443,12 @@ impl Bridge {
             }
             Kind::TOOL_CALL_DRAINED | Kind::TOOL_CALL_REJECTED | Kind::TOOL_CALL_EXPIRED => {
                 let key = p["key"].as_str().unwrap_or("");
-                s.queue.retain(|c| c.key != key);
+                if p["direct"].as_bool() != Some(true) {
+                    s.queue.retain(|c| c.key != key); // a direct call was never queued
+                }
                 s.used_keys.insert(key.to_string());
                 if ev.kind == Kind::TOOL_CALL_DRAINED {
+                    s.drained.insert(key.to_string());
                     s.unacked.insert(
                         key.to_string(),
                         ForwardedCall {
@@ -439,7 +460,11 @@ impl Bridge {
                 }
             }
             Kind::TOOL_CALL_DELIVERED | Kind::TOOL_CALL_COMPLETED => {
-                s.unacked.remove(p["key"].as_str().unwrap_or(""));
+                let key = p["key"].as_str().unwrap_or("");
+                s.unacked.remove(key);
+                if ev.kind == Kind::TOOL_CALL_COMPLETED {
+                    s.completed.insert(key.to_string());
+                }
             }
             Kind::TERMINATION => s.cell.life = Life::Terminated,
             // Audit-only events do not move the cell.
@@ -483,7 +508,7 @@ impl Bridge {
                 Kind::ATTACHED,
                 json!({
                     "principal_id": id.principal_id,
-                    "authority_scope": id.authority_scope,
+                    "authority_scope": canonical_scope(&id.authority_scope),
                     "task_lineage": id.task_lineage,
                     "client_key_id": key.key_id,
                     "scheme": key.scheme,
@@ -520,25 +545,31 @@ impl Bridge {
             Err(BridgeError::with_reason(format!("add_client rejected: {reason} (I15d)"), reason))
         };
         let s = self.enter(sid)?;
-        if !s.conn.contains(via_key_id) {
-            return refuse("via_not_connected");
-        }
         let msg = add_client_message(sid, via_key_id, new_key_id, scheme, &hex::encode(material), nonce);
-        let ok = match self.storage.key_record(sid, via_key_id)? {
+        let record = if s.keys.contains(via_key_id) { self.storage.key_record(sid, via_key_id)? } else { None };
+        let ok = match record {
             Some(m) => self.verifier.verify(&m.scheme, &m.material, &msg, signature),
             None => false,
         };
         if !ok {
             return refuse("bad_signature");
         }
-        if s.revoked.contains(via_key_id) {
-            return refuse("revoked_key");
-        }
         let now = self.now();
         let t_nonce = self.cfg.t_nonce;
-        let Some(rec) = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == nonce)) else {
+        let rec = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == nonce));
+        let bound = rec.as_ref().is_some_and(|r| r.key_id == via_key_id && r.eligible);
+        if s.revoked.contains(via_key_id) {
+            if let (Some(rec), true) = (rec, bound) {
+                rec.used = true; // as in I11-REVOKE
+            }
+            return refuse("revoked_key");
+        }
+        let Some(rec) = rec else {
             return refuse("nonce_unknown");
         };
+        if !bound {
+            return refuse("bad_signature"); // not this key's nonce
+        }
         let was_used = rec.used;
         rec.used = true; // spent by the first authentic presentation, as in I11d
         if was_used {
@@ -546,6 +577,9 @@ impl Bridge {
         }
         if now - rec.issued >= t_nonce {
             return refuse("nonce_expired");
+        }
+        if !s.conn.contains(via_key_id) {
+            return refuse("via_not_connected");
         }
         if s.keys.contains(new_key_id) {
             return refuse("key_already_registered");
@@ -611,13 +645,44 @@ impl Bridge {
         permission: Option<&str>,
         content: Option<&Value>,
     ) -> Result<ToolOutcome> {
+        self.submit_tool_call_keyed(sid, tool, key, permission, content).map(|(o, _)| o)
+    }
+
+    /// An idempotency key for a call that came without one: the next
+    /// `tc-NNNN` the session has not used, so a generated key never
+    /// collides with one the runtime supplied (I13).
+    fn fresh_key(s: &Session) -> String {
+        let mut n = s.used_keys.len() + 1;
+        while s.used_keys.contains(&format!("tc-{n:04}")) {
+            n += 1;
+        }
+        format!("tc-{n:04}")
+    }
+
+    /// Submit a tool call; returns the outcome and the idempotency key the
+    /// call carries (the caller's, or the one the bridge generated; empty
+    /// for a call forwarded directly without one).
+    pub fn submit_tool_call_keyed(
+        &mut self,
+        sid: &str,
+        tool: &str,
+        key: Option<&str>,
+        permission: Option<&str>,
+        content: Option<&Value>,
+    ) -> Result<(ToolOutcome, String)> {
+        // the content is hashed and logged, so it must have a canonical form
+        // (no integer beyond 2^53, no NaN or infinity); the answer depends on
+        // the call alone
+        if let Some(c) = content {
+            if crate::wire::try_canonical_bytes(c).is_err() {
+                return Err(BridgeError::with_reason("tool call content has no canonical form", "bad_canonical"));
+            }
+        }
         let s = self.enter(sid)?;
         if s.cell.human == Human::Pend {
-            let key = key
-                .map(String::from)
-                .unwrap_or_else(|| format!("tc-{:04}", s.used_keys.len() + 1));
+            let key = key.map(String::from).unwrap_or_else(|| Self::fresh_key(&s));
             if s.used_keys.contains(&key) {
-                return Ok(ToolOutcome::Duplicate);
+                return Ok((ToolOutcome::Duplicate, key));
             }
             if s.queue.len() >= self.cfg.q_max {
                 self.commit(
@@ -627,7 +692,7 @@ impl Bridge {
                         json!({"key": key, "tool": tool, "reason": "queue_full"}),
                     )],
                 )?;
-                return Ok(ToolOutcome::Rejected);
+                return Ok((ToolOutcome::Rejected, key));
             }
             let content = content.cloned().unwrap_or(Value::Null);
             let shown_hash = call_hash(tool, permission, &content);
@@ -640,16 +705,34 @@ impl Bridge {
                            "shown_hash": shown_hash, "expires_at": expires_at}),
                 )],
             )?;
-            return Ok(ToolOutcome::Queued);
+            return Ok((ToolOutcome::Queued, key));
         }
         if s.cell.att == Attachment::Att {
+            if permission.is_some_and(|p| !s.scope.iter().any(|x| x == p)) {
+                // I3 on the direct path: a call outside the current scope is
+                // not forwarded; the refusal is recorded (it was never
+                // queued, so the event is marked `direct`)
+                let key = key.map(String::from).unwrap_or_else(|| Self::fresh_key(&s));
+                self.commit(
+                    sid,
+                    vec![(
+                        Kind::TOOL_CALL_REJECTED,
+                        json!({"key": key, "tool": tool, "permission": permission,
+                               "reason": "scope", "direct": true}),
+                    )],
+                )?;
+                return Err(BridgeError::with_reason(
+                    format!("tool call needs {:?}, which is not in the current scope (I3)", permission.unwrap_or("")),
+                    "scope",
+                ));
+            }
             let call = ForwardedCall {
                 tool: tool.to_string(),
                 permission: permission.map(String::from),
                 content: content.cloned().unwrap_or(Value::Null),
             };
             self.send(sid, key.unwrap_or(""), call);
-            return Ok(ToolOutcome::Forwarded);
+            return Ok((ToolOutcome::Forwarded, key.unwrap_or("").to_string()));
         }
         self.detached_call(sid, &s, tool, key, permission, content)
     }
@@ -666,23 +749,23 @@ impl Bridge {
         key: Option<&str>,
         permission: Option<&str>,
         content: Option<&Value>,
-    ) -> Result<ToolOutcome> {
+    ) -> Result<(ToolOutcome, String)> {
         let policy = self.cfg.detached_calls;
         let in_scope = permission.is_none_or(|p| s.scope.iter().any(|x| x == p));
         let allowed = permission.is_some_and(|p| self.cfg.detached_allow.contains(p));
         if policy == DetachedCalls::Refuse || !in_scope || (policy == DetachedCalls::Forward && !allowed) {
             return Err(BridgeError::new("tool call not allowed in this cell (detached_calls policy)"));
         }
-        let key = key.map(String::from).unwrap_or_else(|| format!("tc-{:04}", s.used_keys.len() + 1));
+        let key = key.map(String::from).unwrap_or_else(|| Self::fresh_key(s));
         if s.used_keys.contains(&key) {
-            return Ok(ToolOutcome::Duplicate);
+            return Ok((ToolOutcome::Duplicate, key));
         }
         if s.queue.len() >= self.cfg.q_max {
             self.commit(
                 sid,
                 vec![(Kind::TOOL_CALL_REJECTED, json!({"key": key, "tool": tool, "reason": "queue_full"}))],
             )?;
-            return Ok(ToolOutcome::Rejected);
+            return Ok((ToolOutcome::Rejected, key));
         }
         let content = content.cloned().unwrap_or(Value::Null);
         let shown_hash = call_hash(tool, permission, &content);
@@ -694,7 +777,7 @@ impl Bridge {
         );
         if policy == DetachedCalls::Queue {
             self.commit(sid, vec![queued])?;
-            return Ok(ToolOutcome::Queued);
+            return Ok((ToolOutcome::Queued, key));
         }
         self.commit(
             sid,
@@ -715,7 +798,7 @@ impl Bridge {
         )?;
         let call = ForwardedCall { tool: tool.to_string(), permission: permission.map(String::from), content };
         self.send(sid, &key, call); // only after the batch is durable (I12)
-        Ok(ToolOutcome::Forwarded)
+        Ok((ToolOutcome::Forwarded, key))
     }
 
     /// Hand the request to the runtime: the tool, permission and content
@@ -739,7 +822,11 @@ impl Bridge {
     /// The runtime reports that a call finished (`TOOL_CALL_COMPLETED`).
     pub fn completed(&mut self, sid: &str, key: &str, result_hash: &str) -> Result<()> {
         let s = self.enter(sid)?;
-        if !s.unacked.contains_key(key) && !s.used_keys.contains(key) {
+        // accepted once for a call the bridge forwarded, at a drain (the log
+        // says so) or directly (this process says so); a call that was never
+        // forwarded has nothing to complete
+        let forwarded = s.drained.contains(key) || self.sent.contains(&(sid.to_string(), key.to_string()));
+        if s.completed.contains(key) || !forwarded {
             return Err(BridgeError::new(format!("no call {key:?} to complete")));
         }
         self.commit(sid, vec![(Kind::TOOL_CALL_COMPLETED, json!({"key": key, "result_hash": result_hash}))])
@@ -806,7 +893,7 @@ impl Bridge {
                 let base = |reason: &str| json!({"key": c.key, "tool": c.tool, "reason": reason});
                 if now >= c.expires_at {
                     (Kind::TOOL_CALL_EXPIRED, base("call_ttl"))
-                } else if now >= s.approval_until && !c.held {
+                } else if !c.held && c.approved_until.is_none_or(|u| now >= u) {
                     (Kind::TOOL_CALL_EXPIRED, base("approval_ttl"))
                 } else if c.permission.as_ref().is_some_and(|p| !s.scope.contains(p)) {
                     (Kind::TOOL_CALL_REJECTED, base("scope"))
@@ -945,35 +1032,40 @@ impl Bridge {
     }
 
     fn check_timers(&mut self, sid: &str) -> Result<()> {
+        self.check_timers_mode(sid, false)
+    }
+
+    /// With `overdue_only` only the timers whose expiry lies before the
+    /// present instant fire: one that expires in the very tick of an
+    /// incoming request waits until the request has been processed.
+    fn check_timers_mode(&mut self, sid: &str, overdue_only: bool) -> Result<()> {
         let s = self.sessions[sid].clone();
         if s.cell.life == Life::Terminated || s.quarantined {
             return Ok(());
         }
         let now = self.now();
-        let detach = s.cell.att == Attachment::Det && s.detach_deadline.is_some_and(|d| now >= d);
+        let due = |elapsed: f64, limit: f64| if overdue_only { elapsed > limit } else { elapsed >= limit };
+        let detach = s.cell.att == Attachment::Det && s.detach_deadline.is_some_and(|d| due(now - d, 0.0));
         let total = s.cell.att == Attachment::Det
-            && s.det_since.is_some_and(|since| s.det_total + (now - since) >= self.cfg.t_total);
-        let human = s.cell.human == Human::Pend && s.human_deadline.is_some_and(|d| now >= d);
+            && s.det_since.is_some_and(|since| due(s.det_total + (now - since), self.cfg.t_total));
+        let human = s.cell.human == Human::Pend && s.human_deadline.is_some_and(|d| due(now - d, 0.0));
+        // the reason names the detach-side timer that fired
+        let away = if detach { "detach_timeout" } else { "detach_total_timeout" };
         let items: Vec<Item> = match (detach || total, human) {
             (true, true) => vec![
                 (Kind::HUMAN_TIMEOUT, json!({"reason": "human_timeout"})),
-                (Kind::DETACH_TIMEOUT, json!({"reason": "detach_timeout"})),
-                (
-                    Kind::TERMINATION,
-                    json!({"reason": "human_timeout+detach_timeout (simultaneous)"}),
-                ),
+                (Kind::DETACH_TIMEOUT, json!({"reason": away})),
+                (Kind::TERMINATION, json!({"reason": format!("human_timeout+{away} (simultaneous)")})),
             ],
             (false, true) => vec![
                 (Kind::HUMAN_TIMEOUT, json!({"reason": "human_timeout"})),
                 (Kind::TERMINATION, json!({"reason": "human_timeout"})),
             ],
-            (true, false) => {
-                let reason = if detach { "detach_timeout" } else { "detach_total_timeout" };
-                vec![
-                    (Kind::DETACH_TIMEOUT, json!({"reason": reason})),
-                    (Kind::TERMINATION, json!({"reason": reason})),
-                ]
-            }
+            (true, false) => vec![
+                (Kind::DETACH_TIMEOUT, json!({"reason": away})),
+                (Kind::TERMINATION, json!({"reason": away})),
+            ],
+            (false, false) if overdue_only => vec![],
             (false, false) => s
                 .queue
                 .iter()
@@ -996,14 +1088,16 @@ impl Bridge {
 
     /// Issue a fresh single-use nonce (I11b). Not a governance event;
     /// volatile, so a restart voids every nonce.
-    pub fn challenge(&mut self, sid: &str) -> Result<Challenge> {
+    pub fn challenge(&mut self, sid: &str, key_id: &str) -> Result<Challenge> {
         // I11a: one rejection for an unknown, a terminated and a quarantined
         // session, so the op confirms neither existence nor lifecycle state
         // to an unauthenticated caller.
-        match self.sessions.get(sid) {
-            Some(s) if s.cell.life != Life::Terminated && !s.quarantined => {}
+        let eligible = match self.sessions.get(sid) {
+            Some(s) if s.cell.life != Life::Terminated && !s.quarantined => {
+                s.keys.contains(key_id) && !s.revoked.contains(key_id)
+            }
             _ => return Err(BridgeError::with_reason(CHALLENGE_REFUSED, "refused")),
-        }
+        };
         let mut raw = [0u8; 16];
         getrandom::getrandom(&mut raw).map_err(|e| BridgeError::new(format!("no randomness: {e}")))?;
         let nonce = hex::encode(raw);
@@ -1019,7 +1113,7 @@ impl Bridge {
                 return Err(BridgeError::new("challenge budget exhausted (I11f)"));
             }
         }
-        book.push_back(NonceRec { nonce: nonce.clone(), issued, used: false });
+        book.push_back(NonceRec { nonce: nonce.clone(), issued, used: false, key_id: key_id.to_string(), eligible });
         Ok(Challenge { nonce, ttl_seconds: self.cfg.t_nonce })
     }
 
@@ -1033,50 +1127,72 @@ impl Bridge {
     }
 
     fn begin_resume_as(&mut self, op: ResumeOp, sid: &str, req: &ResumeRequest, transport_replay: bool) -> Result<Vec<Event>> {
+        // A sequence number is a non-negative integer; another value is
+        // malformed, answered the same for every session and not logged.
+        if req.seq < 0 || req.seq > (1i64 << 53) {
+            return Err(BridgeError::with_reason("malformed re-attach request", "bad_canonical"));
+        }
         self.refuse_unavailable(sid)?;
-        let s = self.enter(sid)?;
-        let mut reason = self.reject_reason(op, sid, &s, req, transport_replay)?;
+        // A timer that expired before this instant has ended the session;
+        // one that expires in the very tick of the request waits for it.
+        self.check_timers_mode(sid, true)?;
+        self.refuse_unavailable(sid)?;
+        let s = self.sessions[sid].clone();
+        let mut reason = self.reject_reason(op, sid, &s, req)?;
+        if transport_replay {
+            reason = Some("transport_replay"); // I8
+        }
         if reason.is_none() && s.cell.att == Attachment::Res {
             reason = Some("resume_in_progress");
         }
         if reason.is_none() && s.cell.att == Attachment::Att && op == ResumeOp::Reattach {
             reason = Some("already_attached");
         }
-        if matches!(reason, Some("transport_replay" | "unknown_key" | "bad_signature")) {
-            // I11g: the caller proved nothing; bound what it can write
-            let logged = self.unauth_logged.entry(sid.to_string()).or_insert(0);
-            if *logged >= UNAUTH_LOG_LIMIT {
-                let shown = public_reason(reason.unwrap());
-                return Err(BridgeError::with_reason(
-                    format!("re-attach rejected: {shown} (I4/I8/I9/I11)"),
-                    shown,
-                ));
-            }
-            *logged += 1;
-        } else {
-            self.unauth_logged.remove(sid); // a key holder spoke
+        if reason.is_none() && s.cell.att != Attachment::Att && op == ResumeOp::Join {
+            reason = Some("not_attached"); // I15c
         }
         if let Some(reason) = reason {
-            self.commit(
-                sid,
-                vec![(
-                    Kind::RESUME_REJECTED,
-                    json!({"reason": reason, "key_id": req.key_id, "seq": req.seq}),
-                )],
-            )?;
             let shown = public_reason(reason);
+            let unauthenticated = matches!(
+                reason,
+                "transport_replay" | "unknown_key" | "bad_signature" | "nonce_binding" | "revoked_key"
+            );
+            let mut write = true;
+            if unauthenticated {
+                // I11g: the caller is not shown to hold an active key; bound what it can write
+                let logged = self.unauth_logged.entry(sid.to_string()).or_insert(0);
+                if *logged >= UNAUTH_LOG_LIMIT {
+                    write = false;
+                } else {
+                    *logged += 1;
+                }
+            } else {
+                self.unauth_logged.remove(sid); // a key holder spoke
+            }
+            if write {
+                self.commit(
+                    sid,
+                    vec![(
+                        Kind::RESUME_REJECTED,
+                        json!({"reason": reason, "key_id": req.key_id, "seq": req.seq}),
+                    )],
+                )?;
+            }
+            self.check_timers(sid)?; // the tick's timers, after the request
             return Err(BridgeError::with_reason(
                 format!("re-attach rejected: {shown} (I4/I8/I9/I11)"),
                 shown,
             ));
         }
+        self.unauth_logged.remove(sid); // a key holder spoke
         let body = json!({"key_id": req.key_id, "seq": req.seq, "hash": req.hash,
                           "nonce_digest": digest(&req.nonce)});
-        if s.cell.att == Attachment::Att {
-            self.commit(sid, vec![(Kind::CLIENT_JOINED, body)])?;
+        let joined = s.cell.att == Attachment::Att;
+        self.commit(sid, vec![(if joined { Kind::CLIENT_JOINED } else { Kind::RESUME_STARTED }, body)])?;
+        self.check_timers(sid)?;
+        if joined {
             return self.replay_after(sid, req.seq);
         }
-        self.commit(sid, vec![(Kind::RESUME_STARTED, body)])?;
         Ok(vec![])
     }
 
@@ -1092,25 +1208,21 @@ impl Bridge {
     }
 
     pub fn join(&mut self, sid: &str, req: &ResumeRequest, transport_replay: bool) -> Result<Vec<Event>> {
-        self.refuse_unavailable(sid)?;
-        let s = self.enter(sid)?;
-        if s.cell.att != Attachment::Att {
-            return Err(BridgeError::new("join requires Att"));
-        }
         self.begin_resume_as(ResumeOp::Join, sid, req, transport_replay)
     }
 
+    /// Why the request does not verify, or None. The order is fixed: the
+    /// key and the signature, revocation, the binding of the nonce to the
+    /// key, the nonce, the prefix. Before the nonce step no nonce is touched,
+    /// except that a revoked key spends the nonce bound to it; from the nonce
+    /// step on the request has spent its nonce (I11d).
     fn reject_reason(
         &mut self,
         op: ResumeOp,
         sid: &str,
         s: &Session,
         req: &ResumeRequest,
-        replay: bool,
     ) -> Result<Option<&'static str>> {
-        if replay {
-            return Ok(Some("transport_replay")); // I8
-        }
         if !s.keys.contains(&req.key_id) {
             return Ok(Some("unknown_key")); // I15
         }
@@ -1121,19 +1233,24 @@ impl Bridge {
         if !ok {
             return Ok(Some("bad_signature")); // I11c
         }
+        let now = self.now();
+        let t_nonce = self.cfg.t_nonce;
+        let rec = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == req.nonce));
+        let bound = rec.as_ref().is_some_and(|r| r.key_id == req.key_id && r.eligible);
         // I11-REVOKE: after the signature, before the nonce; the request is
-        // authentic, so it spends its nonce (I11d)
+        // authentic, so it spends the nonce bound to its key (I11d)
         if s.revoked.contains(&req.key_id) {
-            if let Some(rec) = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == req.nonce)) {
+            if let (Some(rec), true) = (rec, bound) {
                 rec.used = true;
             }
             return Ok(Some("revoked_key"));
         }
-        let now = self.now();
-        let t_nonce = self.cfg.t_nonce;
-        let Some(rec) = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == req.nonce)) else {
+        let Some(rec) = rec else {
             return Ok(Some("nonce_unknown")); // I11b
         };
+        if !bound {
+            return Ok(Some("nonce_binding")); // I11b
+        }
         let was_used = rec.used;
         rec.used = true; // I11d: spent by the first authentic presentation
         if was_used {
@@ -1196,32 +1313,37 @@ impl Bridge {
         proposed: &[String],
         source: Source,
     ) -> Result<AuthorityOutcome> {
-        let s = self.enter(sid)?;
+        // an observed widening is a report about the runtime, not a client
+        // operation: it is recorded on a key-exhausted session too
+        let s = self.enter_with(sid, source == Source::Observed)?;
+        let proposed = canonical_scope(proposed);
         if proposed.iter().all(|p| s.scope.contains(p)) {
             return Ok(AuthorityOutcome::NoChange);
         }
         match source {
             Source::Observed => {
-                self.reject_extension(sid, &s, proposed, "observed")?;
+                self.reject_extension(sid, &s, &proposed, "observed")?;
                 self.revert_requests.push((sid.to_string(), s.scope.clone()));
                 Ok(AuthorityOutcome::Revert)
             }
             Source::Requested => {
-                self.reject_extension(sid, &s, proposed, "requested")?;
+                self.reject_extension(sid, &s, &proposed, "requested")?;
                 Err(BridgeError::with_reason("authority extension rejected (I3)", "extension_rejected"))
             }
         }
     }
 
-    pub fn narrow_authority_scope(&mut self, sid: &str, proposed: &[String]) -> Result<()> {
+    /// Replace the scope by a strict subset of it (I10); returns the new
+    /// scope version. A proposal that equals or widens the scope is refused
+    /// as `not_a_strict_narrowing` and recorded.
+    pub fn narrow_authority_scope(&mut self, sid: &str, proposed: &[String]) -> Result<u64> {
         let s = self.enter(sid)?;
-        let narrower = proposed.iter().all(|p| s.scope.contains(p));
-        if !narrower {
-            self.reject_extension(sid, &s, proposed, "requested")?;
-            return Err(BridgeError::new("authority extension rejected (I3)"));
+        let proposed = canonical_scope(proposed);
+        if !proposed.iter().all(|p| s.scope.contains(p)) {
+            self.reject_extension(sid, &s, &proposed, "requested")?;
+            return Err(BridgeError::with_reason("authority extension rejected (I3)", "not_a_strict_narrowing"));
         }
-        let same = s.scope.iter().all(|c| proposed.contains(c));
-        if same {
+        if s.scope.iter().all(|c| proposed.contains(c)) {
             self.commit(
                 sid,
                 vec![(
@@ -1230,14 +1352,14 @@ impl Bridge {
                            "reason": "not a strict narrowing"}),
                 )],
             )?;
-            return Err(BridgeError::new("authority narrowing rejected (I10)"));
+            return Err(BridgeError::with_reason("authority narrowing rejected (I10)", "not_a_strict_narrowing"));
         }
         let version = s.scope_version + 1;
         self.commit(
             sid,
             vec![(Kind::AUTHORITY_NARROWED, json!({"new_scope": proposed, "new_version": version}))],
-        )
-        .map(|_| ())
+        )?;
+        Ok(version)
     }
 
     // ---- key lifecycle (I11-REVOKE) -----------------------------------------
@@ -1261,13 +1383,18 @@ impl Bridge {
         signature: &str,
         requested_by: Option<&str>,
     ) -> Result<Revocation> {
+        if reason != "rotation" && reason != "compromise" {
+            return Err(BridgeError::with_reason(format!("unknown revocation reason {reason:?}"), "bad_canonical"));
+        }
+        if !signature.is_empty() || requested_by.is_none() {
+            self.operator_checked(sid, signature, |b, seq, head| revoke_message(b, sid, key_id, reason, seq, head))?;
+        }
         let s = self.enter(sid)?;
         if !s.keys.contains(key_id) {
             return Err(BridgeError::with_reason(format!("unknown key {key_id:?}"), "unknown_key"));
         }
-        if !signature.is_empty() || requested_by.is_none() {
-            let (seq, head) = self.head_of(sid);
-            self.operator_verified(&revoke_message(&self.bridge_id, sid, key_id, reason, seq, &head), signature)?;
+        if s.revoked.contains(key_id) {
+            return Err(BridgeError::with_reason(format!("key {key_id:?} is already revoked"), "revoked_key"));
         }
         let now = self.now();
         if let Some(by) = requested_by {
@@ -1293,9 +1420,12 @@ impl Bridge {
             Kind::KEY_REVOKED,
             json!({"key_id": key_id, "reason": reason, "revoked_at": now, "signature": signature}),
         )];
+        // a hard revocation of the last connected key, or a revocation of
+        // either kind of the key whose re-attach is being verified (the
+        // verification is abandoned): detach
         let last_connected = s.cell.att == Attachment::Att && s.conn.len() == 1 && s.conn.contains(key_id);
         let verifying = s.cell.att == Attachment::Res && s.resuming.as_deref() == Some(key_id);
-        if reason == "compromise" && (last_connected || verifying) {
+        if (reason == "compromise" && last_connected) || verifying {
             items.push((Kind::DETACHMENT, json!({"reason": "key_revoked"})));
             items.push(self.prepared(&s, "key_revoked"));
         }
@@ -1320,11 +1450,24 @@ impl Bridge {
 
     /// The operator events are authenticated by the deployment's verifier
     /// (the one that checks scope grants); without one, or with a signature
-    /// that does not verify over `message` (which names this bridge and the
-    /// current log position), they are refused.
-    fn operator_verified(&self, message: &[u8], signature: &str) -> Result<()> {
+    /// that does not verify over the message (which names this bridge and
+    /// the current log position), they are refused. The check comes before
+    /// anything is said about the session. The timers that are due fire
+    /// first, as at any tick, so the position the signature names is the one
+    /// the operator's event follows and an expired session is over.
+    fn operator_checked(
+        &mut self,
+        sid: &str,
+        signature: &str,
+        build: impl FnOnce(&str, u64, &str) -> Vec<u8>,
+    ) -> Result<()> {
+        if self.sessions.contains_key(sid) {
+            self.check_timers(sid)?;
+        }
+        let (seq, head) = self.head_of(sid);
+        let message = build(&self.bridge_id, seq, &head);
         let ok = match &self.grant_verifier {
-            Some(v) => v.verify_operation(message, Some(signature)),
+            Some(v) => v.verify_operation(&message, Some(signature)),
             None => false,
         };
         if ok {
@@ -1341,13 +1484,19 @@ impl Bridge {
     /// key's scheme tag and public key. A key id already registered, revoked
     /// or not, is refused: a revoked key never returns.
     pub fn operator_add_key(&mut self, sid: &str, key: &ClientPublicKey, signature: &str) -> Result<()> {
-        if !self.sessions.contains_key(sid) {
+        let public_hex = hex::encode(&key.material);
+        self.operator_checked(sid, signature, |b, seq, head| {
+            add_key_message(b, sid, &key.key_id, &key.scheme, &public_hex, seq, head)
+        })?;
+        let Some(s) = self.sessions.get(sid) else {
             return Err(BridgeError::with_reason(format!("unknown session {sid}"), "unknown_session"));
-        }
-        self.check_timers(sid)?; // an expired session is over (L1)
-        let s = &self.sessions[sid];
+        };
         if s.cell.life == Life::Terminated {
             return Err(BridgeError::with_reason("session is TERMINATED (I6)", "terminated"));
+        }
+        if s.quarantined {
+            // rule Q: only a TERMINATION may follow the failure event
+            return Err(BridgeError::with_reason("session is QUARANTINED", "quarantined"));
         }
         if !s.key_exhausted {
             return Err(BridgeError::with_reason("session is not key_exhausted", "not_key_exhausted"));
@@ -1355,11 +1504,6 @@ impl Bridge {
         if s.keys.contains(&key.key_id) {
             return Err(BridgeError::with_reason("client key already registered", "key_already_registered"));
         }
-        let (seq, head) = self.head_of(sid);
-        self.operator_verified(
-            &add_key_message(&self.bridge_id, sid, &key.key_id, &key.scheme, &hex::encode(&key.material), seq, &head),
-            signature,
-        )?;
         self.storage.register_key(sid, &key.key_id, &key.scheme, &key.material)?;
         let committed = self.commit(
             sid,
@@ -1382,19 +1526,16 @@ impl Bridge {
 
     /// OPERATOR_TERMINATION: the operator's way out of key_exhausted.
     pub fn operator_terminate(&mut self, sid: &str, reason: &str, signature: &str) -> Result<()> {
-        if !self.sessions.contains_key(sid) {
+        self.operator_checked(sid, signature, |b, seq, head| terminate_message(b, sid, reason, seq, head))?;
+        let Some(s) = self.sessions.get(sid) else {
             return Err(BridgeError::with_reason(format!("unknown session {sid}"), "unknown_session"));
-        }
-        self.check_timers(sid)?;
-        let s = &self.sessions[sid];
+        };
         if s.cell.life == Life::Terminated {
-            return Ok(());
+            return Err(BridgeError::with_reason("session is TERMINATED (I6)", "terminated"));
         }
         if !s.key_exhausted {
             return Err(BridgeError::with_reason("session is not key_exhausted", "not_key_exhausted"));
         }
-        let (seq, head) = self.head_of(sid);
-        self.operator_verified(&terminate_message(&self.bridge_id, sid, reason, seq, &head), signature)?;
         self.commit(
             sid,
             vec![

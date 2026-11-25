@@ -1,0 +1,60 @@
+{
+  "id": "V27b",
+  "title": "A widening the runtime announces is recorded on a key-exhausted session; one asked for is refused as key_exhausted",
+  "covers": [
+    "I3",
+    "I11-REVOKE"
+  ],
+  "session": {
+    "session_id": "sess-27b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "rotation"
+    },
+    {
+      "do": "extend",
+      "scope": [
+        "read:docs",
+        "exec:shell",
+        "exec:sudo"
+      ],
+      "source": "observed"
+    },
+    {
+      "do": "extend",
+      "scope": [
+        "read:docs",
+        "exec:shell",
+        "exec:sudo"
+      ],
+      "error": true,
+      "wire_reason": "key_exhausted"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "KEY_REVOKED",
+      "AUTHORITY_EXTENSION_REJECTED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "reverts": 1,
+    "key_exhausted": true,
+    "revoked": [
+      "ck-1"
+    ]
+  }
+}

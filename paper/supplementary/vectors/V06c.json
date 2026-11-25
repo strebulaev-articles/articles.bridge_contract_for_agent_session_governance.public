@@ -1,0 +1,58 @@
+{
+  "id": "V06c",
+  "title": "A narrowing that is not strict is refused as not_a_strict_narrowing, whether it repeats the scope or widens it",
+  "covers": [
+    "I10",
+    "I3"
+  ],
+  "session": {
+    "session_id": "sess-06c",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "narrow",
+      "scope": [
+        "exec:shell",
+        "read:docs",
+        "read:docs"
+      ],
+      "error": true,
+      "wire_reason": "not_a_strict_narrowing"
+    },
+    {
+      "do": "narrow",
+      "scope": [
+        "read:docs",
+        "exec:shell",
+        "admin"
+      ],
+      "error": true,
+      "wire_reason": "not_a_strict_narrowing"
+    },
+    {
+      "do": "narrow",
+      "scope": [
+        "read:docs"
+      ]
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "AUTHORITY_NARROWING_REJECTED",
+      "AUTHORITY_EXTENSION_REJECTED",
+      "AUTHORITY_NARROWED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 1
+  }
+}

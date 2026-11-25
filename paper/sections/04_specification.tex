@@ -184,7 +184,9 @@ change the cell. \\
 \texttt{TOOL\_CALL\_COMPLETED} & On the runtime's report that a delivered
 call finished (forwarding acknowledgement, rule~D). Does not change the
 cell. \\
-\texttt{TOOL\_CALL\_REJECTED} & On a call refused at a full queue, or
+\texttt{TOOL\_CALL\_REJECTED} & On a call refused at a full queue, on a
+direct call whose permission is not in the current scope (payload
+\texttt{direct}; I3), or
 dropped at drain because the current scope no longer permits it (I13),
 or because it is unanswered, denied or answered with a different hash
 (I14). \\
@@ -197,13 +199,15 @@ restart (Section~\ref{sec:recovery}). \\
 quarantined (rule~Q), not terminated, and only an operator's
 \texttt{TERMINATION} may follow. \\
 \texttt{CHECKPOINT} & Periodically (SHOULD, I-CHECKPOINT); carries the
-signed Merkle root over the preceding events. \\
+tree size and the Merkle tree hash (RFC~9162, \S2.1.1) over the preceding
+events, signed. \\
 \texttt{KEY\_REVOKED} & On operator-signed revocation of a registered
 client key (I11-REVOKE); carries \texttt{key\_id}, \texttt{reason}
 (\texttt{rotation} or \texttt{compromise}), \texttt{revoked\_at},
 \texttt{signature} (over the bridge, the operation and the log position; verified before commit; \texttt{operator\_signature\_invalid}). Soft revocation (\texttt{rotation}) does not
 detach active connections; hard revocation (\texttt{compromise})
-forcibly detaches. \\
+forcibly detaches. Either kind abandons a re-attach that is verifying the
+revoked key (the cell returns to $\textsc{Det}$). \\
 \texttt{KEY\_REVOCATION\_REQUESTED} & On a client requesting
 revocation (operator must approve); carries \texttt{key\_id},
 \texttt{requested\_by}, \texttt{reason}. Informational; does not
@@ -286,13 +290,16 @@ in authentication.
 $(\mathit{seq}, \mathit{hash})$ of the last event it observed on the
 event stream. To reconnect:
 \begin{enumerate}[leftmargin=2em]
-\item the client requests a challenge; the bridge returns a fresh nonce
-valid for $T_{\text{nonce}}$ (I9, I11);
+\item the client requests a challenge, naming the key identifier it will
+sign with; the bridge returns a fresh nonce valid for $T_{\text{nonce}}$,
+bound to that identifier (I9, I11). The answer has the same form and
+lifetime for every identifier, registered or not;
 \item the client sends $(\mathit{nonce}, \mathit{seq}, \mathit{hash})$ and
 a signature over $(\mathit{sid}, \mathit{nonce}, \mathit{seq},
 \mathit{hash})$ under a registered client key (I11);
-\item the bridge accepts iff the signature verifies, the nonce is live
-and unused, and $\mathit{hash}$ is the hash of the event at
+\item the bridge accepts iff the signature verifies, the nonce is live,
+unused and bound to the signing key, which was a registered, unrevoked key of
+the session when the nonce was issued, and $\mathit{hash}$ is the hash of the event at
 $\mathit{seq}$ in its chain (I4); it then emits \texttt{RESUME\_STARTED},
 verifies the chain (I5), emits \texttt{RESUME\_VERIFIED}, and replays
 every event after $\mathit{seq}$ to the client.
@@ -308,7 +315,8 @@ signature scope, and the error reasons) is specified in
 Appendix~\ref{app:wire-format}.
 
 \begin{lstlisting}
--> {"op": "challenge", "session_id": "sess-001"}
+-> {"op": "challenge", "session_id": "sess-001",
+    "key_id": "ck-7f3a"}
 <- {"status": "nonce", "session_id": "sess-001",
     "nonce": "9c1f5e0a77d24b3e8a6f21d0c4b7e913",
     "ttl_seconds": 60}
@@ -386,16 +394,16 @@ I7 & T1, T11, T32, T39 & \texttt{I7-mutate-before-append} & TLC step property. O
 I8 & T16 & \texttt{I8-ignore-replay} & Tests only. QUIC 0-RTT; transport-reported replay flag. \\
 I9 & T13, T13b, T31 & \texttt{I9-ignore-expiry} & TLC state invariant and step property. Nonce lifetime and timer bounds. \\
 I10 & T14, T15b, T50 & \texttt{I10-version-not-incremented} & TLC state invariant and step property. \\
-I11 & T17--T19c, T13b, T35, T51, T97--T112, T126, T127, T131, T133, T141--T143, V86, V87, V90--V96, V102--V104, V109, V110, V114, V127--V129 & \texttt{Q-malformed-log-aborts-recovery}, \texttt{I11-drop-proof-check}, \texttt{I11-resume-domain-tag-dropped}, \texttt{I11-resume-key-id-dropped}, \texttt{I11-challenge-evicts-live-nonce}, \texttt{I11-challenge-leaks-state}, \texttt{registry-global-by-key-id}, \texttt{registry-recovery-leaves-differing-entries}, \texttt{registry-recovery-leaves-extra-entries}, \texttt{I11-reattach-on-attached-session-joins} & TLC state invariants and step properties: single use and spending; possession (a signature verifies only for the key, nonce and prefix verdict it names, and the attacker of Appendix~\ref{app:attacker} holds no client key); \texttt{NoForgery} checks that an accepted signature was produced by an honest client, not that an honest client presented it, so it admits a replayed honest signature with a live nonce (the pre-registration replay of Table~\ref{tab:limitations}); (f) the bound on the nonce book is checked, but the no-eviction property reads over an empty set in every configuration (\texttt{LiveLimit} is one), so no-eviction is not meaningfully TLC-checked and rests on tests and mutants; (g) a bounded record of unauthenticated failures. The unforgeability of the scheme itself is assumed (UF). \\
+I11 & T17--T19c, T13b, T35, T51, T97--T112, T126, T127, T131, T133, T141--T143, V86, V87, V90--V96, V102--V104, V109, V110, V114, V127--V129 & \texttt{Q-malformed-log-aborts-recovery}, \texttt{I11-drop-proof-check}, \texttt{I11-resume-domain-tag-dropped}, \texttt{I11-resume-key-id-dropped}, \texttt{I11-challenge-evicts-live-nonce}, \texttt{I11-challenge-leaks-state}, \texttt{registry-global-by-key-id}, \texttt{registry-recovery-leaves-differing-entries}, \texttt{registry-recovery-leaves-extra-entries}, \texttt{I11-reattach-on-attached-session-joins} & TLC state invariants and step properties: single use and spending; possession (a signature verifies only for the key, nonce and prefix verdict it names, and the attacker of Appendix~\ref{app:attacker} holds no client key); \texttt{NoForgery} checks that an accepted signature was produced by an honest client, not that an honest client presented it, so the step properties \texttt{SP\_Honest} (every accepted request was presented by an honest client) and \texttt{SP\_NoReplay} (a request that was presented and refused is never accepted later) are checked as well; (f) the bound on the nonce book is checked, but the no-eviction property reads over an empty set in every configuration (\texttt{LiveLimit} is one), so no-eviction is not meaningfully TLC-checked and rests on tests and mutants; (g) a bounded record of unauthenticated failures. The unforgeability of the scheme itself is assumed (UF). \\
 I12 & T32, T33, T34, T38, T39 & \texttt{I12-forward-before-commit} & TLC step property for forwarding after commit; append failure tested only. \\
 I13 & T41--T45 & \texttt{I13-no-queue-limit} & TLC state invariant and step property. \\
 I14 & T53--T55, T129, T130, V112, V113 & \texttt{I14-hash-equality-not-checked}, \texttt{I14-hash-omits-tool-and-permission}, \texttt{I14-forwards-without-hashed-content}, \texttt{I14-queued-content-not-retained} & Abstracted: answer flag, not the hash. \\
 I15 & T47--T50, T119--T123, V105--V108 & \texttt{I15-partial-departure-detaches}, \texttt{I15-add-client-skip-verify}, \texttt{I15-add-client-nonce-not-spent}, \texttt{I15-add-client-domain-tag-dropped} & TLC state invariant and step property. Authorising a registration by signature: abstracted in the model; tests, vectors and mutants only. \\
-I11-REVOKE & T67--T76, T85--T89, T128, T132, T134--T137, V63--V74, V111, V115--V120 & \texttt{I11-REVOKE-accept-revoked-key}, \texttt{TIMERS-key-exhausted-timers-frozen}, \texttt{I11-REVOKE-key-exhausted-restart-skipped}, \texttt{I11-REVOKE-requests-unbounded} & TLC state invariant (\texttt{IRev}) and step properties: a revoked key is refused and its nonce spent, revoked keys stay registered, a hard revocation detaches a connected client and abandons a re-attach it is verifying, a key\_exhausted session serves no client operation and changes only by time, a restart or a lost transport, the operator, or a new key (its timers run: L1, L2). Abstracted: the operator signature on the revocation. Tests only: the wire form and the vectors. \\
+I11-REVOKE & T67--T76, T85--T89, T128, T132, T134--T137, V63--V74, V111, V115--V120 & \texttt{I11-REVOKE-accept-revoked-key}, \texttt{TIMERS-key-exhausted-timers-frozen}, \texttt{I11-REVOKE-key-exhausted-restart-skipped}, \texttt{I11-REVOKE-requests-unbounded} & TLC state invariant (\texttt{IRev}) and step properties: a revoked key is refused and its nonce spent, revoked keys stay registered, a hard revocation detaches a connected client, a revocation of either kind abandons a re-attach that is verifying the revoked key, a key\_exhausted session serves no client operation and changes only by time, a restart or a lost transport, the operator, or a new key (its timers run: L1, L2). Abstracted: the operator signature on the revocation. Tests only: the wire form and the vectors. \\
 I-OPERATOR & T90--T96, T138--T140, V75--V85, V121--V126 & \texttt{IOPERATOR-revoke-skip-verify}, \texttt{IOPERATOR-revoke-not-bound-to-bridge}, \texttt{IOPERATOR-revoke-not-bound-to-position} & Partly TLC: OPERATOR\_ADD\_KEY is a step property (only on a key\_exhausted session; revoked keys stay revoked). Tests only: the operator signature, which the model abstracts; the reference verifier is the operator key that signs grants. \\
 I-GRANT & T77--T81, T113--T118, V55--V58, V97--V100 & \texttt{IGRANT-skip-verify}, \texttt{IGRANT-grant-omits-public-key}, \texttt{IGRANT-attach-skip-possession} & Tests only. The model does not represent attach, key registration or more than one session; the reference verifier is an operator signature. \\
 I-SIGN-JWKS & --- (inspection) & --- & Inspection only; no test, vector or mutant. \\
-I-CHECKPOINT & T63--T66, V52--V54, V88, V89 & \texttt{ICHECK-drop-checkpoint-emission}, \texttt{ICHECK-wrong-root}, \texttt{ICHECK-count-trigger-total-length}, \texttt{ICHECK-missed-deadline} & Tests only. Local emission tested, by the Python bridge only (the vectors need emission, which the Rust crate lacks); SCITT anchoring not tested. \\
+I-CHECKPOINT & T63--T66, V52--V54c, V88, V89 & \texttt{ICHECK-drop-checkpoint-emission}, \texttt{ICHECK-wrong-root}, \texttt{ICHECK-count-trigger-total-length}, \texttt{ICHECK-missed-deadline} & Tests only. Local emission tested, by the Python bridge only (the vectors need emission, which the Rust crate lacks); SCITT anchoring not tested. \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -458,7 +466,8 @@ separate a call that is committed as drained from one that the runtime
 received and from one that finished, so a restart knows which calls to
 forward again. \\
 \texttt{TOOL\_CALL\_REJECTED} & Required for I13; makes refusals at a
-full queue or at drain auditable. \\
+full queue, of a direct call outside the current scope, or at drain
+auditable. \\
 \texttt{TOOL\_CALL\_EXPIRED} & Required for I13; makes expiry of calls
 and approvals auditable. \\
 \texttt{BRIDGE\_RECOVERED} & Required for I12 and the recovery rules;
@@ -536,11 +545,11 @@ emitted when $\to$ invariant.}
 \texttt{TOOL\_CALL\_DRAINED} & \texttt{TOOL\_CALL\_DRAINED.schema.json} & Draining of the tool queue (rule~D); one event per drained call; repeats $h_q$. & I7, I12, I13, I14 \\
 \texttt{TOOL\_CALL\_DELIVERED} & \texttt{TOOL\_CALL\_DELIVERED.schema.json} & Runtime acknowledges receipt of a drained call. & I12, I13 \\
 \texttt{TOOL\_CALL\_COMPLETED} & \texttt{TOOL\_CALL\_COMPLETED.schema.json} & Runtime reports a delivered call finished. & I2, I13 \\
-\texttt{TOOL\_CALL\_REJECTED} & \texttt{TOOL\_CALL\_REJECTED.schema.json} & Call refused at full queue, or dropped at drain (scope, unanswered, denied, hash mismatch). & I13, I14 \\
+\texttt{TOOL\_CALL\_REJECTED} & \texttt{TOOL\_CALL\_REJECTED.schema.json} & Call refused at full queue or, as a direct call, outside the current scope (I3); or dropped at drain (scope, unanswered, denied, hash mismatch). & I3, I13, I14 \\
 \texttt{TOOL\_CALL\_EXPIRED} & \texttt{TOOL\_CALL\_EXPIRED.schema.json} & Queued call outlived $T_{\text{call}}$, or approval outlived $T_{\text{approve}}$. & I13 \\
 \texttt{BRIDGE\_RECOVERED} & \texttt{BRIDGE\_RECOVERED.schema.json} & Recovery of a session after a bridge restart; names the key ids whose registry entry was repaired from the log. & I12 \\
 \texttt{RECOVERY\_FAILED} & \texttt{RECOVERY\_FAILED.schema.json} & Failed recovery (broken chain); session quarantined (rule~Q). & I5, I12 \\
-\texttt{CHECKPOINT} & \texttt{CHECKPOINT.schema.json} & Periodically (SHOULD, I-CHECKPOINT); carries signed Merkle root. & I-CHECKPOINT \\
+\texttt{CHECKPOINT} & \texttt{CHECKPOINT.schema.json} & Periodically (SHOULD, I-CHECKPOINT); carries the tree size and the signed Merkle tree hash (RFC~9162). & I-CHECKPOINT \\
 \texttt{KEY\_REVOKED} & \texttt{KEY\_REVOKED.schema.json} & Operator-signed revocation of a client key. & I11-REVOKE \\
 \texttt{KEY\_REVOCATION\_REQUESTED} & \texttt{KEY\_REVOCATION\_REQUESTED.schema.json} & Client requests revocation (operator must approve). & I11-REVOKE \\
 \texttt{OPERATOR\_ADD\_KEY} & \texttt{OPERATOR\_ADD\_KEY.schema.json} & Operator adds key to \texttt{key\_exhausted} session. & I11-REVOKE, I15 \\

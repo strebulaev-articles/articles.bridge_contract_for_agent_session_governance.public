@@ -1,0 +1,80 @@
+{
+  "id": "V90d",
+  "title": "A join while a re-attach is being verified: unverified it is a bad signature, verified it is refused as resume_in_progress",
+  "covers": [
+    "I11",
+    "I11a",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-90d",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1",
+      "complete": false,
+      "then_cell": [
+        "Res",
+        "None"
+      ]
+    },
+    {
+      "do": "join",
+      "client": "ck-2",
+      "proof": "invalid",
+      "error": true,
+      "wire_reason": "bad_signature",
+      "log_reason": "bad_signature"
+    },
+    {
+      "do": "join",
+      "client": "ck-2",
+      "error": true,
+      "wire_reason": "resume_in_progress",
+      "log_reason": "resume_in_progress"
+    },
+    {
+      "do": "complete_resume"
+    },
+    {
+      "do": "join",
+      "client": "ck-2"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_STARTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_VERIFIED",
+      "CLIENT_JOINED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1",
+      "ck-2"
+    ]
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "id": "V13b",
+  "title": "A generated key does not collide with a key the runtime supplied",
+  "covers": [
+    "I13"
+  ],
+  "session": {
+    "session_id": "sess-13b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "escalate"
+    },
+    {
+      "do": "tool_call",
+      "key": "tc-0002",
+      "tool": "a"
+    },
+    {
+      "do": "tool_call",
+      "tool": "b"
+    },
+    {
+      "do": "tool_call",
+      "tool": "c"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "HUMAN_PENDING",
+      "TOOL_CALL_QUEUED",
+      "TOOL_CALL_QUEUED",
+      "TOOL_CALL_QUEUED"
+    ],
+    "cell": [
+      "Att",
+      "Pend"
+    ],
+    "scope_version": 0,
+    "queue": [
+      "tc-0002",
+      "tc-0003",
+      "tc-0004"
+    ]
+  }
+}

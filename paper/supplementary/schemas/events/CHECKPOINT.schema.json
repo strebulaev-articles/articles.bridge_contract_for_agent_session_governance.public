@@ -3,22 +3,22 @@
   "$id": "https://example.org/bridge-contract/schemas/events/CHECKPOINT.schema.json",
   "title": "CHECKPOINT payload",
   "x-invariants": "I-CHECKPOINT (SHOULD)",
-  "description": "Merkle root over all preceding event hashes, with tree size, operator signature, and optional external receipt. Emitted periodically (every N events or T_cp).",
+  "description": "Merkle tree hash over all preceding event hashes, with the tree size, the operator signature and an optional external receipt. Emitted periodically (every N events or T_cp) on an active, unquarantined session whose hash chain verifies.",
   "type": "object",
   "properties": {
     "root": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",
-      "description": "SHA-256 Merkle root over the event_hash values of all preceding events in this session."
+      "description": "Merkle tree hash (RFC 9162, Section 2.1.1) over the event hashes of the events 0..tree_size-1 of this session: a leaf is SHA-256(0x00 || event_hash), an interior node SHA-256(0x01 || left || right), a tree of more than one leaf is split at the largest power of two smaller than its size, and the hash of the empty tree is SHA-256 of the empty string."
     },
     "tree_size": {
       "type": "integer",
       "minimum": 0,
-      "description": "Number of events covered by this checkpoint (the tree has this many leaves)."
+      "description": "Number of events covered by this checkpoint (the tree has this many leaves); the CHECKPOINT event itself is the next one."
     },
     "signature": {
       "type": "string",
-      "description": "Ed25519 signature under the operator key, over canonical JSON of [root, tree_size]. Hex-encoded."
+      "description": "Ed25519 signature under the operator key, over canonical JSON of [root, tree_size]. Hex-encoded. The reference bridge writes a placeholder."
     },
     "receipt": {
       "type": "string",

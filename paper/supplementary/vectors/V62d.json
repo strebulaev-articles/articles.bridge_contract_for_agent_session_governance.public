@@ -1,0 +1,63 @@
+{
+  "id": "V62d",
+  "title": "A nonce issued for one key is refused for another registered key and stays live for its own",
+  "covers": [
+    "I11",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-62d",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "challenge",
+      "client": "ck-1",
+      "as": "n1"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2",
+      "nonce": "n1",
+      "error": true,
+      "wire_reason": "bad_signature",
+      "log_reason": "nonce_binding"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1",
+      "nonce": "n1"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_REJECTED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1"
+    ]
+  }
+}

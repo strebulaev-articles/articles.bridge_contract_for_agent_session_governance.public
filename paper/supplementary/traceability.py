@@ -57,9 +57,7 @@ ROW_IDS = [r for r, _ in ROWS]
 # formal model), and the cross-references in the paper point there.
 LIMITS: dict[tuple[str, str], str] = {
     ("I2", "tla"): "the model's mutant for this check is filed under I12",
-    ("L1", "tla"): "fairness removal makes it fail; not a mutant",
     ("L2", "rust"): "liveness is checked by TLC only",
-    ("L2", "tla"): "fairness removal makes it fail; not a mutant",
     ("I8", "model"): "transport flag; not modelled",
     ("I-GRANT", "model"): "attach and grants not modelled",
     ("I-CHECKPOINT", "model"): "not modelled",
@@ -235,10 +233,6 @@ def tla_log() -> Path:
     return logs[-1]
 
 
-# Mutants added with the key-exhausted timer change; the newest TLC log
-# predates the model change.  Remove each name once the rerun records it.
-TLC_RERUN_PENDING = {"key_exhausted freezes the timers",
-                     "key_exhausted: a timeout does not fire"}
 
 
 def parse_tla_mutants() -> dict[str, list[str]]:
@@ -251,8 +245,6 @@ def parse_tla_mutants() -> dict[str, list[str]]:
         row = TLA_PREFIX.get(pre, pre)
         if row not in out:
             raise SystemExit(f"traceability: TLA+ mutant {name!r}: unknown row {row}")
-        if name in TLC_RERUN_PENDING:
-            continue       # model changed; not yet in a TLC log
         if name not in killed:
             raise SystemExit(f"traceability: TLA+ mutant {name!r} is not killed in "
                              f"{tla_log().relative_to(ROOT)}")

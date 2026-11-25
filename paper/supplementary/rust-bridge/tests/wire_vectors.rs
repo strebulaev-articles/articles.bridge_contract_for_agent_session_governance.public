@@ -14,7 +14,7 @@ fn decode(data: &[u8]) -> Value {
 #[test]
 fn test_v44_simplest_detach_reattach() {
     // V44: simplest detach and reattach (no escalation)
-    let challenge = op_challenge("sess-44");
+    let challenge = op_challenge("sess-44", "ck-1");
     let d = decode(&challenge);
     assert_eq!(d["op"], "challenge");
     assert_eq!(d["session_id"], "sess-44");

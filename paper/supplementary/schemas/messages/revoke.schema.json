@@ -23,7 +23,7 @@
     "signature": {
       "type": "string",
       "pattern": "^[0-9a-f]*$",
-      "description": "Operator signature over canonical JSON of [\"bc/v1/revoke\", bridge_id, session_id, key_id, reason, seq, head]; empty with requested_by records only a request."
+      "description": "Operator signature over canonical JSON of [\"bc/v1/revoke\", bridge_id, session_id, key_id, reason, seq, head]; absent or empty with requested_by, the message is a client's request for a revocation: an unsigned op that records only the request."
     },
     "requested_by": {
       "type": "string"

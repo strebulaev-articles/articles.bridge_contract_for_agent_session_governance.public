@@ -1,5 +1,5 @@
 {
-  "comment": "Byte-level known answers. canonical: the RFC 8785 bytes of the JSON text (also as hex). reject: inputs with no portable canonical form. ed25519_seed, public_key, resume_proofs: the exact bytes a re-attach or join proof signs and the Ed25519 signature over them (deterministic, so pinned). resume_negatives: signatures that must not verify for the stated fields. events, content_hashes: the canonical bytes and SHA-256 of an event and of tool-call content. add_client_proofs, add_client_negatives: the bytes a connected client signs to authorise a further key, and signatures that must not verify for the stated fields. attach_proofs, attach_negatives: the bytes the attaching key signs to prove it holds its private key (a bridge-bound tuple with the scheme tag), and signatures that must not verify for the stated fields. operator_seed, operator_public_key, operator_proofs, operator_negatives: the bytes an operator signs for a revocation, a key addition and a termination (bridge id, session, the operation's fields, and the sequence and hash of the last event at signing) and signatures that must not verify for the stated fields.",
+  "comment": "Byte-level known answers. canonical: the RFC 8785 bytes of the JSON text (also as hex). reject: inputs with no portable canonical form. ed25519_seed, public_key, resume_proofs: the exact bytes a re-attach or join proof signs and the Ed25519 signature over them (deterministic, so pinned). resume_negatives: signatures that must not verify for the stated fields. events, content_hashes: the canonical bytes and SHA-256 of an event and of tool-call content. add_client_proofs, add_client_negatives: the bytes a connected client signs to authorise a further key, and signatures that must not verify for the stated fields. attach_proofs, attach_negatives: the bytes the attaching key signs to prove it holds its private key (a bridge-bound tuple with the scheme tag), and signatures that must not verify for the stated fields. operator_seed, operator_public_key, operator_proofs, operator_negatives: the bytes an operator signs for a revocation, a key addition and a termination (bridge id, session, the operation's fields, and the sequence and hash of the last event at signing) and signatures that must not verify for the stated fields. merkle: the Merkle tree hash of RFC 9162, Section 2.1.1, that a CHECKPOINT carries (roots: leaves in hex and the root, for event hashes and for the test tree of the Certificate Transparency implementations, whose leaves are of mixed length; inclusion: the audit path of Section 2.1.3 for one leaf, lowest sibling first). challenge_messages: the canonical bytes of a challenge request, which names the key id the nonce is issued for. authority_hashes: the authority hash (the first 16 hex digits of the SHA-256 of the canonical JSON of principal, scope and lineage) over the scope in canonical form, that is without repetition and sorted by code point.",
   "canonical": [
     {
       "name": "key order",
@@ -756,6 +756,362 @@
       "head": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
       "name": "a revoke signature is not a termination signature",
       "signature": "74a1089483afb3026bdc6a596e7d5435d2059abd35f391edbb6fcfd6d9e1e76d701c58bb245cce2ecbfae6cf00e573cf4c22948f13776651c24ff2a9040e7003"
+    }
+  ],
+  "merkle": {
+    "roots": [
+      {
+        "name": "0 event hashes",
+        "leaves": [],
+        "root": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "1 event hash",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+        ],
+        "root": "d9de27625445003d8a9739a851e3ff8d41c0683630b4d63a88327a6aaa37c409"
+      },
+      {
+        "name": "2 event hashes",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+        ],
+        "root": "604d540f09268b91672ab011394d5266ccd7d4484d0d109411a55848126a1b2c"
+      },
+      {
+        "name": "3 event hashes",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+          "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        ],
+        "root": "d1f13800048f5909d4043fc0c152f6643280cba608b672715e56ce159a20629f"
+      },
+      {
+        "name": "4 event hashes",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+          "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+          "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5"
+        ],
+        "root": "0dcc2b645c00dfa2338e1c7ac2c4b570beda5a476d58836e55e28bde55e6bee1"
+      },
+      {
+        "name": "5 event hashes",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+          "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+          "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+          "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71"
+        ],
+        "root": "6b313b611b40676b9e1dfd70c4503f2379f88f0f1c2740fb7e1cacc32c113465"
+      },
+      {
+        "name": "6 event hashes",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+          "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+          "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+          "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+          "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db"
+        ],
+        "root": "33d501ae67e6e5745c0aa49e3aff95130969b568208b07210c508caa5ff39b3c"
+      },
+      {
+        "name": "7 event hashes",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+          "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+          "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+          "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+          "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
+          "67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6"
+        ],
+        "root": "bee2275db16667589a4515f63e0d053a2fa602c1d9f9703e98920a5bdad59baf"
+      },
+      {
+        "name": "8 event hashes",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+          "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+          "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+          "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+          "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
+          "67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6",
+          "ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879"
+        ],
+        "root": "80e139b44c90f91edebec705cc7586c3d90f4bdadd49628d25c20d4b03419287"
+      },
+      {
+        "name": "Certificate Transparency test tree, first 1",
+        "leaves": [
+          ""
+        ],
+        "root": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+      },
+      {
+        "name": "Certificate Transparency test tree, first 2",
+        "leaves": [
+          "",
+          "00"
+        ],
+        "root": "fac54203e7cc696cf0dfcb42c92a1d9dbaf70ad9e621f4bd8d98662f00e3c125"
+      },
+      {
+        "name": "Certificate Transparency test tree, first 3",
+        "leaves": [
+          "",
+          "00",
+          "10"
+        ],
+        "root": "aeb6bcfe274b70a14fb067a5e5578264db0fa9b51af5e0ba159158f329e06e77"
+      },
+      {
+        "name": "Certificate Transparency test tree, first 4",
+        "leaves": [
+          "",
+          "00",
+          "10",
+          "2021"
+        ],
+        "root": "d37ee418976dd95753c1c73862b9398fa2a2cf9b4ff0fdfe8b30cd95209614b7"
+      },
+      {
+        "name": "Certificate Transparency test tree, first 5",
+        "leaves": [
+          "",
+          "00",
+          "10",
+          "2021",
+          "3031"
+        ],
+        "root": "4e3bbb1f7b478dcfe71fb631631519a3bca12c9aefca1612bfce4c13a86264d4"
+      },
+      {
+        "name": "Certificate Transparency test tree, first 6",
+        "leaves": [
+          "",
+          "00",
+          "10",
+          "2021",
+          "3031",
+          "40414243"
+        ],
+        "root": "76e67dadbcdf1e10e1b74ddc608abd2f98dfb16fbce75277b5232a127f2087ef"
+      },
+      {
+        "name": "Certificate Transparency test tree, first 7",
+        "leaves": [
+          "",
+          "00",
+          "10",
+          "2021",
+          "3031",
+          "40414243",
+          "5051525354555657"
+        ],
+        "root": "ddb89be403809e325750d3d263cd78929c2942b7942a34b77e122c9594a74c8c"
+      },
+      {
+        "name": "Certificate Transparency test tree, first 8",
+        "leaves": [
+          "",
+          "00",
+          "10",
+          "2021",
+          "3031",
+          "40414243",
+          "5051525354555657",
+          "606162636465666768696a6b6c6d6e6f"
+        ],
+        "root": "5dc9da79a70659a9ad559cb701ded9a2ab9d823aad2f4960cfe370eff4604328"
+      }
+    ],
+    "inclusion": [
+      {
+        "name": "leaf 0 of 1",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+        ],
+        "index": 0,
+        "path": [],
+        "root": "d9de27625445003d8a9739a851e3ff8d41c0683630b4d63a88327a6aaa37c409"
+      },
+      {
+        "name": "leaf 1 of 2",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+        ],
+        "index": 1,
+        "path": [
+          "d9de27625445003d8a9739a851e3ff8d41c0683630b4d63a88327a6aaa37c409"
+        ],
+        "root": "604d540f09268b91672ab011394d5266ccd7d4484d0d109411a55848126a1b2c"
+      },
+      {
+        "name": "leaf 2 of 3",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+          "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986"
+        ],
+        "index": 2,
+        "path": [
+          "604d540f09268b91672ab011394d5266ccd7d4484d0d109411a55848126a1b2c"
+        ],
+        "root": "d1f13800048f5909d4043fc0c152f6643280cba608b672715e56ce159a20629f"
+      },
+      {
+        "name": "leaf 4 of 5",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+          "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+          "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+          "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71"
+        ],
+        "index": 4,
+        "path": [
+          "0dcc2b645c00dfa2338e1c7ac2c4b570beda5a476d58836e55e28bde55e6bee1"
+        ],
+        "root": "6b313b611b40676b9e1dfd70c4503f2379f88f0f1c2740fb7e1cacc32c113465"
+      },
+      {
+        "name": "leaf 3 of 7",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+          "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+          "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+          "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+          "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
+          "67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6"
+        ],
+        "index": 3,
+        "path": [
+          "27d02c8f713c90ea0c37901129db86ac03186ee22a1f6f13da67e6b5bcee2044",
+          "604d540f09268b91672ab011394d5266ccd7d4484d0d109411a55848126a1b2c",
+          "8da0dadfa0aaea7d9f4cd621d80cfbda617c8d13798abb8c3854351059e33be0"
+        ],
+        "root": "bee2275db16667589a4515f63e0d053a2fa602c1d9f9703e98920a5bdad59baf"
+      },
+      {
+        "name": "leaf 5 of 8",
+        "leaves": [
+          "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+          "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+          "dbc1b4c900ffe48d575b5da5c638040125f65db0fe3e24494b76ea986457d986",
+          "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5",
+          "e52d9c508c502347344d8c07ad91cbd6068afc75ff6292f062a09ca381c89e71",
+          "e77b9a9ae9e30b0dbdb6f510a264ef9de781501d7b6b92ae89eb059c5ab743db",
+          "67586e98fad27da0b9968bc039a1ef34c939b9b8e523a8bef89d478608c5ecf6",
+          "ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879"
+        ],
+        "index": 5,
+        "path": [
+          "12d24297164ffddfd8febbd02275c3c5ff24916dc71d5f3476931480854b3113",
+          "c9e643a3a8ebe49a4a4041781da4279b465b41bcd68b3f5c71ea93b090ca54f0",
+          "0dcc2b645c00dfa2338e1c7ac2c4b570beda5a476d58836e55e28bde55e6bee1"
+        ],
+        "root": "80e139b44c90f91edebec705cc7586c3d90f4bdadd49628d25c20d4b03419287"
+      }
+    ]
+  },
+  "challenge_messages": [
+    {
+      "name": "a challenge names the key id",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "ck-kat",
+      "canonical": "{\"key_id\":\"ck-kat\",\"op\":\"challenge\",\"session_id\":\"sess-kat-\u00e9\"}",
+      "hex": "7b226b65795f6964223a22636b2d6b6174222c226f70223a226368616c6c656e6765222c2273657373696f6e5f6964223a22736573732d6b61742dc3a9227d"
+    },
+    {
+      "name": "an empty key id is a key id",
+      "session_id": "sess-kat-\u00e9",
+      "key_id": "",
+      "canonical": "{\"key_id\":\"\",\"op\":\"challenge\",\"session_id\":\"sess-kat-\u00e9\"}",
+      "hex": "7b226b65795f6964223a22222c226f70223a226368616c6c656e6765222c2273657373696f6e5f6964223a22736573732d6b61742dc3a9227d"
+    }
+  ],
+  "authority_hashes": [
+    {
+      "name": "already canonical",
+      "principal": "user-kat-\u00e9",
+      "scope": [
+        "exec:shell",
+        "read:docs"
+      ],
+      "lineage": [
+        "root",
+        "task-1"
+      ],
+      "canonical_scope": [
+        "exec:shell",
+        "read:docs"
+      ],
+      "hash": "1be0411a466c8527"
+    },
+    {
+      "name": "order and repetition do not matter",
+      "principal": "user-kat-\u00e9",
+      "scope": [
+        "read:docs",
+        "exec:shell",
+        "read:docs"
+      ],
+      "lineage": [
+        "root",
+        "task-1"
+      ],
+      "canonical_scope": [
+        "exec:shell",
+        "read:docs"
+      ],
+      "hash": "1be0411a466c8527"
+    },
+    {
+      "name": "sorted by code point, not by UTF-16 code unit",
+      "principal": "user-kat-\u00e9",
+      "scope": [
+        "z",
+        "\ud83d\ude00",
+        "\uffff",
+        "Z",
+        "\u00e9",
+        "a"
+      ],
+      "lineage": [
+        "root",
+        "task-1"
+      ],
+      "canonical_scope": [
+        "Z",
+        "a",
+        "z",
+        "\u00e9",
+        "\uffff",
+        "\ud83d\ude00"
+      ],
+      "hash": "9b03ce0b4d248cab"
+    },
+    {
+      "name": "the empty scope",
+      "principal": "user-kat-\u00e9",
+      "scope": [],
+      "lineage": [
+        "root",
+        "task-1"
+      ],
+      "canonical_scope": [],
+      "hash": "6f553367bc05c55a"
     }
   ]
 }

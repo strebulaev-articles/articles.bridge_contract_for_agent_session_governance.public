@@ -1,0 +1,76 @@
+{
+  "id": "V38b",
+  "title": "Completion is accepted once for a call forwarded directly and refused for a call that was denied",
+  "covers": [
+    "I13",
+    "rule D"
+  ],
+  "session": {
+    "session_id": "sess-38b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "tool_call",
+      "key": "d1",
+      "tool": "ls"
+    },
+    {
+      "do": "completed",
+      "key": "d1"
+    },
+    {
+      "do": "completed",
+      "key": "d1",
+      "error": true
+    },
+    {
+      "do": "escalate"
+    },
+    {
+      "do": "tool_call",
+      "key": "k2",
+      "tool": "rm"
+    },
+    {
+      "do": "answer",
+      "key": "k2",
+      "approve": false
+    },
+    {
+      "do": "resolve"
+    },
+    {
+      "do": "completed",
+      "key": "k2",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "TOOL_CALL_COMPLETED",
+      "HUMAN_PENDING",
+      "TOOL_CALL_QUEUED",
+      "TOOL_CALL_ANSWERED",
+      "HUMAN_RESOLVED",
+      "TOOL_CALL_REJECTED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "forwarded": [
+      "d1"
+    ],
+    "last_event_payload": {
+      "reason": "denied"
+    }
+  }
+}

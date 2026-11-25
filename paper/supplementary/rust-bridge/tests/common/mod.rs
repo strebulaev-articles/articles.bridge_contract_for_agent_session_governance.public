@@ -5,13 +5,55 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bridge_contract::*;
 use serde_json::{json, Value};
+
+/// A directory made for one test run, removed when the guard is dropped:
+/// on every exit, a panic included. The name is unique per run (process id,
+/// a counter and the clock), and the directory is created, not reused, so
+/// a leftover of an earlier run is never read.
+pub struct TempDir {
+    path: PathBuf,
+}
+
+impl TempDir {
+    pub fn new(label: &str) -> TempDir {
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        loop {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+            let path = std::env::temp_dir().join(format!("bridge-contract-{label}-{}-{n}-{nanos}", std::process::id()));
+            match fs::create_dir(&path) {
+                Ok(()) => return TempDir { path },
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => panic!("cannot create a test directory: {e}"),
+            }
+        }
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Make the creation or the replacement of a file in `dir` durable.
+fn sync_dir(dir: &std::path::Path) -> Result<()> {
+    File::open(dir).map_err(io)?.sync_all().map_err(io)
+}
 
 pub struct FileStorage {
     dir: PathBuf,
@@ -57,10 +99,15 @@ impl FileStorage {
         self.dir.join("keys.json")
     }
 
+    /// Replace the registry atomically: write a new file, sync it, rename it
+    /// over the old one and sync the directory.
     fn write_keys(&self, keys: &HashMap<String, String>) -> Result<()> {
-        let mut f = File::create(self.keys_path()).map_err(io)?;
+        let tmp = self.dir.join("keys.json.tmp");
+        let mut f = File::create(&tmp).map_err(io)?;
         f.write_all(serde_json::to_string(keys).map_err(io)?.as_bytes()).map_err(io)?;
-        f.sync_all().map_err(io)
+        f.sync_all().map_err(io)?;
+        fs::rename(&tmp, self.keys_path()).map_err(io)?;
+        sync_dir(&self.dir)
     }
 
     /// Test hook: replace the stored material of a key in a session.
@@ -102,15 +149,34 @@ impl Storage for FileStorage {
         // one write of the whole batch, then fsync: the batch is committed
         // when `sync_all` returns
         let body: String = events.iter().map(|e| encode(e) + "\n").collect();
-        let mut f = OpenOptions::new().create(true).append(true).open(self.log_path(sid)).map_err(io)?;
+        let path = self.log_path(sid);
+        let created = !path.exists();
+        let mut f = OpenOptions::new().create(true).append(true).open(&path).map_err(io)?;
         f.write_all(body.as_bytes()).map_err(io)?;
-        f.sync_all().map_err(io)
+        f.sync_all().map_err(io)?;
+        if created {
+            sync_dir(&self.dir.join("logs"))?; // the new file's directory entry is durable too
+        }
+        Ok(())
     }
 
     fn read_log(&self, sid: &str) -> Result<Vec<Event>> {
         let _g = self.lock.lock().unwrap();
-        let Ok(f) = File::open(self.log_path(sid)) else { return Ok(vec![]) };
-        BufReader::new(f).lines().map(|l| decode(&l.map_err(io)?)).collect()
+        let Ok(text) = fs::read_to_string(self.log_path(sid)) else { return Ok(vec![]) };
+        // A trailing record that is not fully durable (no newline, or a line
+        // that does not decode) is discarded: by I12 it had no externally
+        // visible effect. A damaged record anywhere else is an error.
+        let mut lines: Vec<&str> = text.split('\n').collect();
+        let tail = lines.pop().unwrap_or(""); // after the last newline: empty if the log ends cleanly
+        let mut out = Vec::with_capacity(lines.len());
+        for (i, l) in lines.iter().enumerate() {
+            match decode(l) {
+                Ok(ev) => out.push(ev),
+                Err(_) if i + 1 == lines.len() && tail.is_empty() => {} // a torn record that ends in a newline
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(out)
     }
 
     fn sessions(&self) -> Result<Vec<String>> {

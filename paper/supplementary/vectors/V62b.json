@@ -1,0 +1,69 @@
+{
+  "id": "V62b",
+  "title": "A join refused before its key was registered is refused again, byte for byte, after the registration",
+  "covers": [
+    "I11",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-62b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "join",
+      "client": "ck-2",
+      "as": "r1",
+      "error": true,
+      "wire_reason": "bad_signature",
+      "log_reason": "unknown_key"
+    },
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "join",
+      "replay_of": "r1",
+      "error": true,
+      "wire_reason": "bad_signature",
+      "log_reason": "nonce_binding"
+    },
+    {
+      "do": "join",
+      "client": "ck-2",
+      "nonce": "r1",
+      "error": true,
+      "wire_reason": "bad_signature",
+      "log_reason": "nonce_binding"
+    },
+    {
+      "do": "join",
+      "client": "ck-2"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "RESUME_REJECTED",
+      "CLIENT_ADDED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "CLIENT_JOINED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1",
+      "ck-2"
+    ]
+  }
+}

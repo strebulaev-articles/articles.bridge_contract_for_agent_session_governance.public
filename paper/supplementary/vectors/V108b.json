@@ -1,0 +1,61 @@
+{
+  "id": "V108b",
+  "title": "A client registration is verified before the connection is answered: an unregistered authorising key is a bad signature, a registered one that is not connected is via_not_connected",
+  "covers": [
+    "I11",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-108b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "add_client",
+      "client": "ck-3",
+      "via": "ck-9",
+      "error": true,
+      "reason": "bad_signature"
+    },
+    {
+      "do": "add_client",
+      "client": "ck-3",
+      "via": "ck-2",
+      "error": true,
+      "reason": "via_not_connected"
+    },
+    {
+      "do": "add_client",
+      "client": "ck-3"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "CLIENT_ADDED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1"
+    ],
+    "registry": [
+      "ck-1",
+      "ck-2",
+      "ck-3"
+    ]
+  }
+}

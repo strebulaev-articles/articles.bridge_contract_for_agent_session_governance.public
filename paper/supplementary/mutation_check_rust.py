@@ -46,6 +46,11 @@ CRATE = HERE / "rust-bridge"
 VECTORS = HERE / "vectors"
 
 
+# tests that run every vector on the file fixture: a mutant that only they
+# fail is not shown to be caught by a rule test
+STORAGE_ONLY = {"all_vectors_pass_on_file_storage"}
+
+
 @dataclass(frozen=True)
 class Mutant:
     name: str
@@ -86,11 +91,9 @@ MUTANTS = [
     Mutant("ADDCLIENT-nonce-not-spent", "I15", "src/bridge.rs",
            "        rec.used = true; // spent by the first authentic presentation, as in I11d",
            "        // nonce left unspent"),
-    Mutant("ADDCLIENT-revoked-key-authorises", "I15", "src/bridge.rs",
-           """        if s.revoked.contains(via_key_id) {
-            return refuse("revoked_key");""",
-           """        if false {
-            return refuse("revoked_key");"""),
+    Mutant('ADDCLIENT-revoked-key-authorises', 'I15', 'src/bridge.rs',
+           '        if s.revoked.contains(via_key_id) {',
+           '        if false && s.revoked.contains(via_key_id) {'),
     Mutant("ADDCLIENT-domain-tag-dropped", "I15", "src/types.rs",
            "canonical_bytes(&json!([ADD_CLIENT_DOMAIN, sid, via_key_id, new_key_id, scheme, public_key_hex, nonce]))",
            "canonical_bytes(&json!([sid, via_key_id, new_key_id, scheme, public_key_hex, nonce]))"),
@@ -123,16 +126,12 @@ MUTANTS = [
     Mutant("NONCE-expiry-ignored", "I9", "src/bridge.rs",
            "        if now - rec.issued >= t_nonce {\n            return Ok(Some(\"nonce_expired\"));",
            "        if false && now - rec.issued >= t_nonce {\n            return Ok(Some(\"nonce_expired\"));"),
-    Mutant("NONCE-unknown-accepted", "I11b", "src/bridge.rs",
-           """        let Some(rec) = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == req.nonce)) else {
-            return Ok(Some("nonce_unknown")); // I11b
-        };""",
-           """        let Some(rec) = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == req.nonce)) else {
-            return Ok(None);
-        };"""),
-    Mutant("REPLAY-transport-replay-accepted", "I8", "src/bridge.rs",
-           "        if replay {\n            return Ok(Some(\"transport_replay\"));",
-           "        if false {\n            return Ok(Some(\"transport_replay\"));"),
+    Mutant('NONCE-unknown-accepted', 'I11b', 'src/bridge.rs',
+           '            return Ok(Some("nonce_unknown")); // I11b',
+           '            return Ok(None);'),
+    Mutant('REPLAY-transport-replay-accepted', 'I8', 'src/bridge.rs',
+           '        if transport_replay {\n            reason = Some("transport_replay"); // I8',
+           '        if false {\n            reason = Some("transport_replay"); // I8'),
     # revoked-key rejection
     Mutant("REVOKE-revoked-key-accepted", "I11-REVOKE", "src/bridge.rs",
            "        if s.revoked.contains(&req.key_id) {",
@@ -143,9 +142,9 @@ MUTANTS = [
             return Ok(Some("revoked_key"));""",
            """            }
             return Ok(Some("revoked_key"));"""),
-    Mutant("REVOKE-hard-res-not-abandoned", "I11-REVOKE", "src/bridge.rs",
-           "if reason == \"compromise\" && (last_connected || verifying) {",
-           "if reason == \"compromise\" && last_connected {"),
+    Mutant('REVOKE-hard-res-not-abandoned', 'I11-REVOKE', 'src/bridge.rs',
+           'if (reason == "compromise" && last_connected) || verifying {',
+           'if reason == "compromise" && last_connected {'),
     # acknowledged prefix
     Mutant("PREFIX-hash-unchecked", "I4", "src/bridge.rs",
            ".is_some_and(|e| e.hash() == req.hash);",
@@ -241,9 +240,9 @@ MUTANTS = [
     Mutant("RESUME-reattach-on-attached-session-joins", "I11", "src/bridge.rs",
            "        if reason.is_none() && s.cell.att == Attachment::Att && op == ResumeOp::Reattach {",
            "        if false {"),
-    Mutant("RESUME-already-attached-before-authentication", "I11", "src/bridge.rs",
-           "        let mut reason = self.reject_reason(op, sid, &s, req, transport_replay)?;\n",
-           "        let mut reason = self.reject_reason(op, sid, &s, req, transport_replay)?;\n        if s.cell.att == Attachment::Att && op == ResumeOp::Reattach {\n            reason = Some(\"already_attached\");\n        }\n"),
+    Mutant('RESUME-already-attached-before-authentication', 'I11', 'src/bridge.rs',
+           '        let mut reason = self.reject_reason(op, sid, &s, req)?;\n',
+           '        let mut reason = self.reject_reason(op, sid, &s, req)?;\n        if s.cell.att == Attachment::Att && op == ResumeOp::Reattach {\n            reason = Some("already_attached");\n        }\n'),
     Mutant("RESUME-join-refused-as-already-attached", "I11", "src/bridge.rs",
            "        if reason.is_none() && s.cell.att == Attachment::Att && op == ResumeOp::Reattach {",
            "        if reason.is_none() && s.cell.att == Attachment::Att {"),
@@ -287,9 +286,9 @@ MUTANTS = [
     Mutant("EXHAUST-disconnect-refused", "L1", "src/bridge.rs",
            "        let s = self.enter_with(sid, true)?;",
            "        let s = self.enter_with(sid, false)?;"),
-    Mutant("EXHAUST-add-key-after-expiry", "L1", "src/bridge.rs",
-           "        self.check_timers(sid)?; // an expired session is over (L1)\n",
-           ""),
+    Mutant('EXHAUST-add-key-after-expiry', 'L1', 'src/bridge.rs',
+           '        if self.sessions.contains_key(sid) {\n            self.check_timers(sid)?;\n        }\n        let (seq, head) = self.head_of(sid);',
+           '        let (seq, head) = self.head_of(sid);'),
     # wire front-end (wire_server.rs, Appendix B)
     Mutant("WIRE-non-canonical-accepted", "WIRE", "src/wire_server.rs",
            "            Ok(c) if c == data => {}",
@@ -354,9 +353,9 @@ MUTANTS = [
     Mutant("EXHAUST-bare-terminate-skips-timers", "I11-REVOKE", "src/bridge.rs",
            "            self.check_timers(sid)?; // an expired session is over\n            if self.sessions[sid].cell.life == Life::Terminated {",
            "            if self.sessions[sid].cell.life == Life::Terminated {"),
-    Mutant("RESUME-unknown-key-distinguishable", "I11", "src/bridge.rs",
-           '    if reason == "unknown_key" {\n        "bad_signature"',
-           '    if false {\n        "bad_signature"'),
+    Mutant('RESUME-unknown-key-distinguishable', 'I11', 'src/bridge.rs',
+           '    if reason == "unknown_key" || reason == "nonce_binding" {',
+           '    if false {'),
     Mutant("WIRE-disconnect-ignores-key", "WIRE", "src/wire_server.rs",
            'b.client_disconnect(sid, m.get("key_id").and_then(Value::as_str), text(m, "reason")?)?;',
            'b.client_disconnect(sid, None, text(m, "reason")?)?;'),
@@ -365,16 +364,12 @@ MUTANTS = [
            "                if !auth(&op, &msg) {",
            "                if !auth(&op, &Value::Null) {"),
     # state a bridge keeps per session is not shared between sessions
-    Mutant("SESSION-nonce-looked-up-in-any-session", "I11", "src/bridge.rs",
-           """        let Some(rec) = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == req.nonce)) else {
-            return Ok(Some("nonce_unknown")); // I11b""",
-           """        let Some(rec) = self.nonces.values_mut().find_map(|b| b.iter_mut().find(|r| r.nonce == req.nonce)) else {
-            return Ok(Some("nonce_unknown")); // I11b"""),
-    Mutant("SESSION-add-client-nonce-looked-up-in-any-session", "I15", "src/bridge.rs",
-           """        let Some(rec) = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == nonce)) else {
-            return refuse("nonce_unknown");""",
-           """        let Some(rec) = self.nonces.values_mut().find_map(|b| b.iter_mut().find(|r| r.nonce == nonce)) else {
-            return refuse("nonce_unknown");"""),
+    Mutant('SESSION-nonce-looked-up-in-any-session', 'I11', 'src/bridge.rs',
+           '        let rec = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == req.nonce));',
+           '        let rec = self.nonces.values_mut().find_map(|b| b.iter_mut().find(|r| r.nonce == req.nonce));'),
+    Mutant('SESSION-add-client-nonce-looked-up-in-any-session', 'I15', 'src/bridge.rs',
+           '        let rec = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == nonce));',
+           '        let rec = self.nonces.values_mut().find_map(|b| b.iter_mut().find(|r| r.nonce == nonce));'),
     Mutant("SESSION-challenge-budget-shared", "I11f", "src/bridge.rs",
            """        let book = self.nonces.entry(sid.to_string()).or_default();
         if book.len() >= NONCE_RECORDS {
@@ -394,12 +389,9 @@ MUTANTS = [
     Mutant("SESSION-unauth-budget-restored-for-all", "I11g", "src/bridge.rs",
            "            self.unauth_logged.remove(sid); // a key holder spoke",
            "            self.unauth_logged.clear(); // a key holder spoke"),
-    Mutant("SESSION-unauth-budget-shared", "I11g", "src/bridge.rs",
-           """            let logged = self.unauth_logged.entry(sid.to_string()).or_insert(0);
-            if *logged >= UNAUTH_LOG_LIMIT {""",
-           """            let total: usize = self.unauth_logged.values().sum();
-            let logged = self.unauth_logged.entry(sid.to_string()).or_insert(0);
-            if total >= UNAUTH_LOG_LIMIT {"""),
+    Mutant('SESSION-unauth-budget-shared', 'I11g', 'src/bridge.rs',
+           '                let logged = self.unauth_logged.entry(sid.to_string()).or_insert(0);\n                if *logged >= UNAUTH_LOG_LIMIT {',
+           '                let total: usize = self.unauth_logged.values().sum();\n                let logged = self.unauth_logged.entry(sid.to_string()).or_insert(0);\n                if total >= UNAUTH_LOG_LIMIT {'),
     Mutant("SESSION-revocation-requests-shared", "I11-REVOKE", "src/bridge.rs",
            "            let asked = self.revocation_requests.get(sid).copied().unwrap_or(0);",
            "            let asked: usize = self.revocation_requests.values().sum();"),
@@ -409,6 +401,78 @@ MUTANTS = [
     Mutant("SESSION-forwarded-key-shared", "D", "src/bridge.rs",
            "            .filter(|(k, _)| !self.sent.contains(&(sid.to_string(), (*k).clone())))",
            "            .filter(|(k, _)| !self.sent.iter().any(|(_, sk)| sk == *k))"),
+    Mutant('NONCE-binding-ignored', 'I11b', 'src/bridge.rs',
+           '        let bound = rec.as_ref().is_some_and(|r| r.key_id == req.key_id && r.eligible);',
+           '        let bound = rec.as_ref().is_some_and(|r| r.eligible);'),
+    Mutant('NONCE-eligible-at-issue-ignored', 'I11b', 'src/bridge.rs',
+           '                s.keys.contains(key_id) && !s.revoked.contains(key_id)\n',
+           '                true\n'),
+    Mutant('ADDCLIENT-binding-ignored', 'I15', 'src/bridge.rs',
+           '        let bound = rec.as_ref().is_some_and(|r| r.key_id == via_key_id && r.eligible);',
+           '        let bound = rec.as_ref().is_some_and(|r| r.eligible);'),
+    Mutant('CHALLENGE-refuses-unregistered-key', 'I11', 'src/bridge.rs',
+           '                s.keys.contains(key_id) && !s.revoked.contains(key_id)\n',
+           '                if !s.keys.contains(key_id) {\n                    return Err(BridgeError::with_reason(CHALLENGE_REFUSED, "refused"));\n                }\n                !s.revoked.contains(key_id)\n'),
+    Mutant('RESUME-in-progress-before-authentication', 'I11', 'src/bridge.rs',
+           '        let mut reason = self.reject_reason(op, sid, &s, req)?;\n',
+           '        let mut reason = self.reject_reason(op, sid, &s, req)?;\n        if s.cell.att == Attachment::Res {\n            reason = Some("resume_in_progress");\n        }\n'),
+    Mutant('RESUME-same-tick-timer-not-awaited', 'L1', 'src/bridge.rs',
+           '        self.check_timers_mode(sid, true)?;\n        self.refuse_unavailable(sid)?;',
+           '        self.check_timers(sid)?;\n        self.refuse_unavailable(sid)?;'),
+    Mutant('RESUME-transport-replay-spends-no-nonce', 'I8', 'src/bridge.rs',
+           '        let mut reason = self.reject_reason(op, sid, &s, req)?;\n',
+           '        let mut reason = if transport_replay { None } else { self.reject_reason(op, sid, &s, req)? };\n'),
+    Mutant('RESUME-negative-seq-not-malformed', 'I4', 'src/bridge.rs',
+           '        if req.seq < 0 || req.seq > (1i64 << 53) {',
+           '        if false {'),
+    Mutant('RESUME-revoked-key-refusal-always-logged', 'I11g', 'src/bridge.rs',
+           '"transport_replay" | "unknown_key" | "bad_signature" | "nonce_binding" | "revoked_key"',
+           '"transport_replay" | "unknown_key" | "bad_signature" | "nonce_binding"'),
+    Mutant('REVOKE-soft-res-not-abandoned', 'I11-REVOKE', 'src/bridge.rs',
+           'if (reason == "compromise" && last_connected) || verifying {',
+           'if (reason == "compromise" && last_connected) || (verifying && reason == "compromise") {'),
+    Mutant('REVOKE-repeated-revocation-accepted', 'I11-REVOKE', 'src/bridge.rs',
+           '        if s.revoked.contains(key_id) {\n            return Err(BridgeError::with_reason(format!("key {key_id:?} is already revoked"), "revoked_key"));',
+           '        if false {\n            return Err(BridgeError::with_reason(format!("key {key_id:?} is already revoked"), "revoked_key"));'),
+    Mutant('OPERATOR-add-key-on-quarantined-session', 'I11-REVOKE', 'src/bridge.rs',
+           '        if s.quarantined {\n            // rule Q: only a TERMINATION may follow the failure event',
+           '        if false && s.quarantined {\n            // rule Q: only a TERMINATION may follow the failure event'),
+    Mutant('CALL-direct-out-of-scope-forwarded', 'I3', 'src/bridge.rs',
+           '            if permission.is_some_and(|p| !s.scope.iter().any(|x| x == p)) {',
+           '            if false && permission.is_some_and(|p| !s.scope.iter().any(|x| x == p)) {'),
+    Mutant('CALL-approval-boundary-inclusive', 'I13', 'src/bridge.rs',
+           'c.approved_until.is_none_or(|u| now >= u)',
+           'c.approved_until.is_none_or(|u| now > u)'),
+    Mutant('CALL-approval-revived-by-later-resolution', 'I13', 'src/bridge.rs',
+           'for c in s.queue.iter_mut().filter(|c| !c.held && c.approved_until.is_none()) {',
+           'for c in s.queue.iter_mut().filter(|c| !c.held) {'),
+    Mutant('CALL-generated-key-collides', 'I13', 'src/bridge.rs',
+           '        while s.used_keys.contains(&format!("tc-{n:04}")) {',
+           '        while false && s.used_keys.contains(&format!("tc-{n:04}")) {'),
+    Mutant('CALL-completion-accepted-twice', 'I12', 'src/bridge.rs',
+           '        if s.completed.contains(key) || !forwarded {',
+           '        if !forwarded {'),
+    Mutant('CALL-completion-of-unforwarded-call-accepted', 'I12', 'src/bridge.rs',
+           '        if s.completed.contains(key) || !forwarded {',
+           '        if s.completed.contains(key) {'),
+    Mutant('SCOPE-recorded-as-presented', 'I10', 'src/bridge.rs',
+           '"authority_scope": canonical_scope(&id.authority_scope),',
+           '"authority_scope": id.authority_scope,'),
+    Mutant('TIMER-reason-always-detach-timeout', 'L1', 'src/bridge.rs',
+           'let away = if detach { "detach_timeout" } else { "detach_total_timeout" };',
+           'let away = "detach_timeout";'),
+    Mutant('NUMERICS-content-without-canonical-form-panics', 'I14', 'src/bridge.rs',
+           '            if crate::wire::try_canonical_bytes(c).is_err() {',
+           '            if false && crate::wire::try_canonical_bytes(c).is_err() {'),
+    Mutant('CONFIG-infinite-timer-accepted', 'L1', 'src/types.rs',
+           '            if !value.is_finite() || value < 0.0 {',
+           '            if value.is_nan() || value < 0.0 {'),
+    Mutant('WIRE-nesting-unbounded', 'WIRE', 'src/wire_server.rs',
+           '        if nesting_depth(data) > MAX_DEPTH {',
+           '        if false && nesting_depth(data) > MAX_DEPTH {'),
+    Mutant('WIRE-revoke-request-not-authenticated', 'WIRE', 'src/wire_server.rs',
+           '            && msg.get("requested_by").is_some())',
+           '            && false)'),
 ]
 
 # each unsigned op is asked of the authentication hook; dropping any of
@@ -447,10 +511,12 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         target = Path(os.environ.get("MUTATION_TARGET_DIR") or tmp / "target")
-        shutil.copytree(VECTORS, tmp / "vectors")
+        shutil.copytree(VECTORS, tmp / "vectors", copy_function=shutil.copyfile)
         work = tmp / "rust-bridge"
         ignore = shutil.ignore_patterns("target")
-        shutil.copytree(CRATE, work, ignore=ignore)
+        # copyfile gives every file a new modification time, so a build kept in
+        # MUTATION_TARGET_DIR is never taken for current by a copy with older mtimes
+        shutil.copytree(CRATE, work, ignore=ignore, copy_function=shutil.copyfile)
         rc, out = cargo_test(work, target)
         if rc != 0:
             print("unmutated crate fails:\n" + out[-2000:], file=sys.stderr)
@@ -493,6 +559,12 @@ def main() -> int:
             elif rc == 101 and "test result: FAILED" in out and "could not compile" not in out:
                 failing = sorted(set(re.findall(r"^---- (\S+) stdout ----", out, re.M)))
                 shown = ",".join(failing[:4]) + ("..." if len(failing) > 4 else "")
+                if set(failing) <= STORAGE_ONLY:
+                    # a kill by the file-storage test alone says the mutant
+                    # breaks the fixture, not a rule of the contract
+                    print(f"NOT-KILLED-BY-A-RULE-TEST {m.rule:11s} {m.name}  <- {shown}")
+                    bad += 1
+                    continue
                 print(f"killed    {m.rule:11s} {m.name}  <- {shown}")
                 killed += 1
             else:

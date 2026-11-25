@@ -25,7 +25,7 @@
     },
     "nonce": {
       "type": "string",
-      "description": "Challenge nonce, single use."
+      "description": "Challenge nonce, single use, issued for via_key_id."
     },
     "signature": {
       "type": "string",

@@ -72,10 +72,8 @@ serves no client action, but its timers keep running, a restart treats it like
 any other session and a lost transport detaches it, so a detached
 key-exhausted session ends after $T_{\text{detach}}$ unless
 \texttt{OperatorAddKey} adds a key; \texttt{OperatorEnd} ends it at once. A revoked key
-is refused at re-attach, which still spends the nonce it names. Whether the
-hard revocation of the key being verified abandons the verification is a
-modelling choice, because the text is silent; the branch needs an event bound
-of at least 7 to fire, so only the runs with \texttt{MaxEvents}=7 reach it; both reference
+is refused at re-attach, which still spends the nonce it names. A revocation of the
+key being verified, hard or soft, abandons the verification; both reference
 bridges abandon the re-attach in the same way (T128, V111). Invariants carry
 the paper's names (\texttt{IRev}: a key revoked for compromise is neither
 connected nor being verified); step properties
@@ -101,16 +99,17 @@ bounded number were recorded since the last request whose signature verified
 
 SANY parses the module and TLC reports no error in every configuration
 (Table~\ref{tab:tlc}). The runs used the TLC build
-\texttt{2026.11.06.222357} (the revision of the TLA+ tools jar, \texttt{d8fb231}, not of this repository) from the v1.8.0 release URL
-of the TLA+ tools (sha256 \texttt{e1f11b75\ldots d7f}; the banner is a build
+\texttt{2026.11.19.180144} (the revision of the TLA+ tools jar, \texttt{bc1b506}, not of this repository) from the TLA+ tools release
+(sha256 \texttt{fdffef24\ldots 6713}; the banner is a build
 number, not a release number such as 2.19), OpenJDK 21 in the container
 \texttt{eclipse-temurin:21-jre} on 8 cores. The image digest is
-\texttt{sha256:0b99b3376fbb\ldots 901a}; the
-logs are in \texttt{docs/logs/tlc-2026-11-11/} of the repository. A second
-run of the same configurations (\texttt{docs/logs/tlc-freeze-2026-11-11/}) agrees
-on every verdict and on every count except the two-session row, where the
-view classes visited differ slightly (881,106 generated, 210,408 distinct): the counts are
-sizes, not values a rerun must reproduce to the last digit.
+\texttt{sha256:d77e090a\ldots de0d}; the
+logs are in \texttt{docs/logs/tlc-rerun-2026-11-22/} of the repository. The
+base configuration was killed twice by the host for lack of memory while other
+jobs ran (exit status 137; the logs are kept beside the others) and finished
+when run alone with a larger heap; the deep configuration ran to completion
+with its own workers. The counts are sizes, not values a rerun must reproduce
+to the last digit.
 
 \begin{table}[htbp]
 \centering
@@ -123,13 +122,14 @@ properties (see the text); the fair row runs without it.}
 \toprule
 \textbf{Configuration} & \textbf{Checks} & \textbf{Generated} & \textbf{Distinct} & \textbf{Depth} \\
 \midrule
-2 sessions, \texttt{MaxEvents}=2, no attacker & safety & 881,440 & 210,466 & 20 \\
-1 session, \texttt{MaxEvents}=7, no attacker & safety & 9,713,752 & 2,208,460 & 19 \\
-1 session, \texttt{MaxEvents}=7, attacker, \texttt{ObsMax}=2 & safety & 18,875,492 & 1,082,581 & 21 \\
-1 session, \texttt{MaxEvents}=5, fair & L1, L2, cap & 3,792,867 & 1,479,144 & 21 \\
-1 session, \texttt{MaxEvents}=5, policy \texttt{queue} & safety & 890,183 & 228,468 & 17 \\
-1 session, \texttt{MaxEvents}=6, policy \texttt{forward} & safety & 2,868,553 & 685,335 & 18 \\
-1 session, \texttt{MaxEvents}=5, $T_{\text{human}} > T_{\text{detach}}$ & safety & 1,069,099 & 275,159 & 17 \\
+2 sessions, \texttt{MaxEvents}=2, no attacker & safety & 13,591,683 & 2,883,227 & 21 \\
+1 session, \texttt{MaxEvents}=7, no attacker & safety & 42,612,174 & 7,896,325 & 21 \\
+1 session, \texttt{MaxEvents}=5, attacker, \texttt{ObsMax}=2 & safety & 17,166,848 & 444,499 & 18 \\
+1 session, \texttt{MaxEvents}=5, fair & L1, L1Res, L2, cap & 6,367,930 & 1,391,382 & 20 \\
+1 session, \texttt{MaxEvents}=5, policy \texttt{queue} & safety & 2,995,709 & 661,356 & 18 \\
+1 session, \texttt{MaxEvents}=6, policy \texttt{forward} & safety & 11,356,004 & 2,259,734 & 20 \\
+1 session, \texttt{MaxEvents}=5, $T_{\text{human}} > T_{\text{detach}}$ & safety & 3,720,407 & 821,343 & 18 \\
+1 session, \texttt{MaxEvents}=5, one permission, up to two live nonces and two recorded failures & safety & 2,676,469 & 425,861 & 18 \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -154,7 +154,11 @@ runs, which reach every cell and the key\_exhausted state. \texttt{SubmitAway} n
 \texttt{refuse}, because a refused call changes nothing. \texttt{Deliver},
 the delivery acknowledgement, fires only in the run with the larger event
 bound; the other runs do not exercise it, and the acknowledgement mutants
-are run on a deeper, narrower configuration for that reason.
+are run on a deeper, narrower configuration for that reason. The adversarial
+form of \texttt{Present} fires only in the attacker configuration, as the
+attacker is off in the others, and is left out of the table for that reason.
+The probes ran one configuration at a time, each as one uninterrupted run, and
+their results are in \texttt{docs/logs/tlc-coverage-2026-11-24/}.
 
 \begin{table}[htbp]
 \centering
@@ -173,8 +177,8 @@ $(\textsc{Res},\textsc{Pend})$ & \texttt{Answer}, \texttt{CompleteResume},
 \texttt{OperatorAddKey}, \texttt{OperatorEnd}, \texttt{Resolve}, \texttt{Submit},
 \texttt{SubmitAway} \\
 1 session, \texttt{MaxEvents}=7, no attacker & none & \texttt{SubmitAway} \\
-1 session, \texttt{MaxEvents}=7, attacker & quarantine &
-\texttt{Corrupt}, \texttt{SubmitAway} \\
+1 session, \texttt{MaxEvents}=5, attacker, \texttt{ObsMax}=2 & quarantine &
+\texttt{Corrupt}, \texttt{Deliver}, \texttt{SubmitAway} \\
 1 session, \texttt{MaxEvents}=5, fair & none & \texttt{Deliver},
 \texttt{SubmitAway} \\
 1 session, \texttt{MaxEvents}=5, policy \texttt{queue} & none &
@@ -183,6 +187,8 @@ $(\textsc{Res},\textsc{Pend})$ & \texttt{Answer}, \texttt{CompleteResume},
 \texttt{Deliver} \\
 1 session, \texttt{MaxEvents}=5, $T_{\text{human}} > T_{\text{detach}}$ &
 none & \texttt{Deliver}, \texttt{SubmitAway} \\
+1 session, \texttt{MaxEvents}=5, one permission, up to two live nonces and two recorded failures &
+quarantine & \texttt{Corrupt}, \texttt{Deliver}, \texttt{SubmitAway} \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -191,7 +197,7 @@ none & \texttt{Deliver}, \texttt{SubmitAway} \\
 every configuration made the deep run too large (it had not finished after
 five hours at over $10^8$ distinct states), so the model has two switches and
 a view. The attacker is on only in the attacker configuration (one session,
-one permission, one call key, no log tampering, \texttt{MaxEvents}=7); in
+one permission, one call key, no log tampering, \texttt{MaxEvents}=5); in
 the others it is off, so the configuration with two sessions has no attacker. The
 attacker remembers at most \texttt{ObsMax}=2 honest signatures. Hence the
 attacker checks (\texttt{NoForgery}, replay, forgery with its own keys) run
@@ -204,9 +210,7 @@ configurations use a view that drops the last presentation, the spent-nonce
 set and the countdowns of dead nonces, the approval countdown when it cannot
 be read, and all but the outcome of a terminated session; step properties are
 evaluated on every transition. The argument that the view is sound is in the
-README of the specification; the queue, forward and long human timeout configurations, small enough to
-run without the view, report no error
-there as well.
+README of the specification; the queue, forward and long human timeout configurations use it too.
 
 To check that the verdict is not vacuous, mutants of the module are
 defined (for example, for the key lifecycle, a revoked key accepted, a
@@ -221,7 +225,7 @@ hash, a widening applied, a chain failure that terminates instead of
 quarantining, a cap that a restart or a disconnect resets or that counts
 time attached, a delivered call forwarded again, a forward that ignores
 the operator's allowlist). TLC rejects every mutant in the set, run on one session with \texttt{MaxEvents}=6 under the same view (the attacker mutants with the attacker on; the last line of
-\texttt{docs/logs/tlc-2026-11-11/mutants.log} reports all killed; each yields a violation
+\texttt{docs/logs/tlc-rerun-2026-11-22/mutants.log} reports all killed; each yields a violation
 of an invariant or of the step properties), and removing the fairness of
 the timeout action makes L1 and L2 fail on this model. Findings from the
 model: L1 is verified in its per-episode form (a detached session leaves
@@ -280,17 +284,13 @@ checks is that, if UF holds, the attacker cannot build a signature of its
 own that is accepted. The step property
 \texttt{NoForgery} (the conjunct on entering \textsc{Res} or joining) states
 that every accepted request has a live nonce that it spends and a signature
-that an honest client produced for that key, nonce and verdict. It does not
-state that an honest client presented the request: a signature the attacker
-observed satisfies it. The model reaches such a step in the attacker
-configuration: an honest request for a key that is not yet registered is
-refused and its nonce is not spent (a nonce is spent only when the key is
-known), the key is then added, and the attacker presents the observed
-signature and joins. This is the pre-registration replay of the limitations
-register (Table~\ref{tab:limitations}); it was found by reading the model
-and replaying the trace in a transcription of it, not by a TLC run, and the
-stronger property (every accepted request was presented by an honest client)
-is not checked.
+that an honest client produced for that key, nonce and verdict. The step
+properties \texttt{SP\_Honest} and \texttt{SP\_NoReplay} add that an honest
+client presented every accepted request, and that a request that was presented
+and refused is never accepted later, whatever the registry has become. The
+nonce of an honest request for a key that is not yet registered is bound to
+that key as not eligible at issue, so adding the key afterwards does not make
+an observed signature acceptable.
 
 \paragraph{What TLC checks.} The model records who built a
 request. The checks are: a signature replayed under another nonce, or
@@ -386,10 +386,14 @@ Merkle tree over event hashes to enable $O(\log n)$ inclusion proofs.
 \begin{definition}[Merkle tree over event log]\label{def:merkle}
 Let $\mathit{log} = [e_0, e_1, \ldots, e_{n-1}]$ be the event log of a
 session, and let $h_i = \textit{event\_hash}(e_i)$. The Merkle tree
-$T(\mathit{log})$ is the binary tree whose leaves are $h_0, \ldots,
-h_{n-1}$ and whose internal nodes are $\textit{SHA-256}(\textit{left}
-\,\|\, \textit{right})$. The tree's root $\textit{root}(\mathit{log})$
-is the hash of the topmost node.
+$T(\mathit{log})$ is the Merkle tree hash of RFC~9162, \S2.1.1: the hash of
+a leaf is $\textit{SHA-256}(\texttt{0x00} \,\|\, h_i)$, the hash of an
+interior node is $\textit{SHA-256}(\texttt{0x01} \,\|\, \textit{left} \,\|\,
+\textit{right})$, a tree of $n>1$ leaves is split at the largest power of two
+below $n$ (no last node is duplicated), and the root of an empty log is
+$\textit{SHA-256}$ of the empty string. The tree's root
+$\textit{root}(\mathit{log})$ is the hash of the topmost node. The prefixes
+keep a leaf from standing for an interior node.
 
 An inclusion proof for event $e_i$ is the sequence of sibling hashes
 along the path from leaf $i$ to the root; verification requires
@@ -455,14 +459,14 @@ mutants killed on the Python bridge, on the Rust crate and in the TLA+
 module. It is generated by \texttt{supplementary/traceability.py} from the
 files that hold those facts (the tags in the pytest docstrings, the
 \texttt{covers} field of the vector files, the mutant registries of the Python bridge, the Rust crate and the TLA+ module, with
-the verdicts in \texttt{docs/logs/tlc-2026-11-11/mutants.log}, and the
+the verdicts in \texttt{docs/logs/tlc-rerun-2026-11-22/mutants.log}, and the
 \texttt{Inv}, \texttt{StepProps} and liveness definitions of
 \texttt{BridgeContract.tla}); \texttt{make traceability-check}, part of
 \texttt{make validate}, fails on a stale file, on a name that no longer
 exists and on an empty cell without a stated limit. An entry
 \texttt{Inv.X} is a state invariant and \texttt{StepProps[\ldots]} a
 labelled conjunct of the step property, both checked by every safety
-configuration of Table~\ref{tab:tlc}; \texttt{L1}, \texttt{L2} and
+configuration of Table~\ref{tab:tlc}; \texttt{L1}, \texttt{L1Res}, \texttt{L2} and
 \texttt{CapEnds} are checked by the fair configuration. A ranged entry lists
 only members that carry the row. Where a cell says ``---'' it states the
 limit that leaves it empty; how far the model covers a row (abstracted flag

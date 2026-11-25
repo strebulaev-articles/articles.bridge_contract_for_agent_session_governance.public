@@ -1,0 +1,81 @@
+{
+  "id": "V70b",
+  "title": "Refusals of a revoked key are logged only up to the bound, then the active key re-attaches",
+  "covers": [
+    "I11-REVOKE",
+    "I11g"
+  ],
+  "session": {
+    "session_id": "sess-70b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "rotation"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-1",
+      "nonce": "unknown",
+      "times": 20,
+      "error": true,
+      "wire_reason": "revoked_key"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "KEY_REVOKED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-2"
+    ],
+    "revoked": [
+      "ck-1"
+    ]
+  }
+}

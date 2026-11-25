@@ -1,6 +1,6 @@
 {
   "id": "V66",
-  "title": "Revoking the last key by compromise detaches and leaves the session key exhausted",
+  "title": "Revoking the last key by compromise detaches and leaves the session key exhausted; its re-attach is refused as revoked",
   "covers": [
     "I11-REVOKE",
     "B.4"
@@ -22,18 +22,22 @@
     },
     {
       "do": "escalate",
-      "error": true
+      "error": true,
+      "wire_reason": "key_exhausted"
     },
     {
       "do": "reattach",
       "client": "ck-1",
-      "error": true
+      "error": true,
+      "wire_reason": "revoked_key",
+      "log_reason": "revoked_key"
     },
     {
       "do": "revoke",
       "client": "ck-1",
       "reason": "compromise",
-      "error": true
+      "error": true,
+      "wire_reason": "key_exhausted"
     }
   ],
   "expect": {
@@ -41,7 +45,8 @@
       "ATTACHED",
       "KEY_REVOKED",
       "DETACHMENT",
-      "RESUME_PREPARED"
+      "RESUME_PREPARED",
+      "RESUME_REJECTED"
     ],
     "cell": [
       "Det",

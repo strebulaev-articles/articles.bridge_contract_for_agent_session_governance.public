@@ -6,11 +6,32 @@
   "description": "Operator adds a key to a key_exhausted session, clearing the predicate.",
   "type": "object",
   "properties": {
-    "key_id": {"type": "string"},
-    "scheme": {"type": "string", "enum": ["ed25519", "ecdsa-p256"], "description": "Scheme tag of the registered public key."},
-    "public_key": {"type": "string", "pattern": "^([0-9a-f]{64}|[0-9a-f]{130})$"},
-    "signature": {"type": "string", "description": "Ed25519 operator signature over [\"bc/v1/add-key\", session_id, key_id, scheme, public_key]."}
+    "key_id": {
+      "type": "string"
+    },
+    "scheme": {
+      "type": "string",
+      "enum": [
+        "ed25519",
+        "ecdsa-p256"
+      ],
+      "description": "Scheme tag of the registered public key."
+    },
+    "public_key": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{64}|[0-9a-f]{130})$",
+      "description": "Hex public key: 32 bytes (ed25519) or a 65-byte SEC1 uncompressed point (ecdsa-p256)."
+    },
+    "signature": {
+      "type": "string",
+      "description": "Ed25519 operator signature over canonical JSON of [\"bc/v1/add-key\", bridge_id, session_id, key_id, scheme, public_key, seq, head]."
+    }
   },
-  "required": ["key_id", "scheme", "public_key", "signature"],
+  "required": [
+    "key_id",
+    "scheme",
+    "public_key",
+    "signature"
+  ],
   "additionalProperties": false
 }

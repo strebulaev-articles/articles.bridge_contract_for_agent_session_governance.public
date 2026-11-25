@@ -1,0 +1,49 @@
+{
+  "id": "V16d",
+  "title": "A re-attach after T_detach expired finds the session over: the uniform refusal, and no rejection is logged",
+  "covers": [
+    "L1",
+    "I11",
+    "I11a"
+  ],
+  "config": {
+    "t_detach": 600
+  },
+  "session": {
+    "session_id": "sess-16d",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "advance",
+      "seconds": 601,
+      "tick": false
+    },
+    {
+      "do": "reattach",
+      "error": true,
+      "wire_reason": "refused"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "DETACH_TIMEOUT",
+      "TERMINATION"
+    ],
+    "cell": [
+      "Terminated"
+    ],
+    "scope_version": 0
+  }
+}

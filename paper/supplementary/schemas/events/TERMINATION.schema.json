@@ -8,7 +8,7 @@
   "properties": {
     "reason": {
       "type": "string",
-      "description": "Termination reason, e.g. human_timeout, detach_timeout, 'human_timeout+detach_timeout (simultaneous)', detach_total_timeout, user_quit."
+      "description": "Termination reason, e.g. human_timeout, detach_timeout, detach_total_timeout, 'human_timeout+detach_timeout (simultaneous)', 'human_timeout+detach_total_timeout (simultaneous)', user_quit."
     }
   },
   "required": [

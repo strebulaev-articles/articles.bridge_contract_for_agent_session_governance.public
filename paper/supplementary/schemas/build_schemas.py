@@ -61,10 +61,10 @@ EVENTS = {
         "scheme": SCHEME, "public_key": PUBKEY},
         doc="A further client key registered for the principal, with its scheme tag and public key.")),
     "DETACHMENT": ("I1", obj({
-        "reason": reason(["client_disconnect", "bridge_restart"])},
-        doc="Last connected client left, or the bridge restarted.")),
+        "reason": reason(["client_disconnect", "bridge_restart", "key_revoked"])},
+        doc="Last connected client left, the bridge restarted, or a revocation removed the last connected key or the key whose re-attach was being verified.")),
     "RESUME_PREPARED": ("I1", obj({
-        "authority_hash": STR, "reason": reason(["client_disconnect", "bridge_restart"]),
+        "authority_hash": STR, "reason": reason(["client_disconnect", "bridge_restart", "key_revoked"]),
         "authority_scope": SCOPE, "scope_version": INT,
         "pending_tool_calls": {"type": "array"}},
         doc="The bridge's own resume record; nothing is delivered to the client.")),
@@ -72,11 +72,13 @@ EVENTS = {
         "key_id": STR, "seq": INT, "hash": HEX, "nonce_digest": DIGEST},
         doc="An authentic, fresh, prefix-pinned re-attach request; enters Res.")),
     "RESUME_REJECTED": ("I4, I8, I9, I11", obj({
-        "key_id": STR, "seq": {"type": "integer", "description": "Client-claimed sequence number, as presented (may be out of range)."},
+        "key_id": STR, "seq": {"type": "integer", "minimum": 0, "description": "Client-claimed sequence number, as presented (it may lie beyond the log; a request with a negative one is malformed and is not logged)."},
         "reason": reason(["bad_signature", "nonce_expired", "nonce_unknown", "nonce_used",
                           "prefix_mismatch", "resume_in_progress", "already_attached",
-                          "transport_replay", "unknown_key"])},
-        doc="A re-attach request refused; informational, the cell is unchanged.")),
+                          "transport_replay", "unknown_key", "revoked_key",
+                          "nonce_binding", "not_attached"],
+                         doc="Reason code, as the log keeps it. unknown_key and nonce_binding (the nonce was issued for another key id, or for this key id while it was not an active key of the session) are answered to the caller as bad_signature.")},
+        doc="A re-attach or join request refused; informational, the cell is unchanged.")),
     "RESUME_VERIFIED": ("I5", obj({}, doc="Chain verified during re-attach; returns to Att.")),
     "RESUME_FAILED": ("I5", obj({"reason": reason(["chain"])},
         doc="Chain verification failed during re-attach. The session is quarantined: its cell is unchanged, it accepts no client operation and no timer acts on it.")),
@@ -98,8 +100,9 @@ EVENTS = {
         "proposed": SCOPE, "current": SCOPE, "reason": reason(doc="Why it was refused, e.g. 'not a strict narrowing'.")},
         doc="An out-of-order, duplicate or non-narrowing change attempt.")),
     "TERMINATION": ("I6", obj({"reason": reason(doc=(
-        "Termination reason, e.g. human_timeout, detach_timeout, "
-        "'human_timeout+detach_timeout (simultaneous)', detach_total_timeout, user_quit."))},
+        "Termination reason, e.g. human_timeout, detach_timeout, detach_total_timeout, "
+        "'human_timeout+detach_timeout (simultaneous)', "
+        "'human_timeout+detach_total_timeout (simultaneous)', user_quit."))},
         doc="Irreversible session end.")),
     "TOOL_CALL_QUEUED": ("I2, I13, I14", obj({
         "key": STR, "tool": STR, "permission": {"type": ["string", "null"]},
@@ -122,10 +125,13 @@ EVENTS = {
         doc="The runtime acknowledged that it received a forwarded call; until then a restart forwards the call again with the same key.")),
     "TOOL_CALL_COMPLETED": ("I13", obj({"key": STR, "result_hash": {"type": "string"}}, required=["key"],
         doc="The runtime reported that a forwarded call finished.")),
-    "TOOL_CALL_REJECTED": ("I13, I14", obj({
+    "TOOL_CALL_REJECTED": ("I3, I13, I14", obj({
         "key": STR, "tool": STR,
-        "reason": reason(["queue_full", "scope", "unanswered", "denied", "answer_mismatch"])},
-        doc="A call refused at a full queue or dropped at drain.")),
+        "reason": reason(["queue_full", "scope", "unanswered", "denied", "answer_mismatch"]),
+        "permission": {"type": "string", "description": "The permission the call asked for; present on a direct call refused for its scope, which has no TOOL_CALL_QUEUED event to carry it."},
+        "direct": {"const": True, "description": "Present when the call was submitted with a client attached and no escalation pending and was refused without being queued (reason scope)."}},
+        required=["key", "tool", "reason"],
+        doc="A call refused at a full queue, refused on the direct path because its permission is outside the current scope, or dropped at drain.")),
     "TOOL_CALL_EXPIRED": ("I13", obj({
         "key": STR, "tool": STR, "reason": reason(["call_ttl", "approval_ttl"])},
         doc="A queued call outlived T_call, or its approval outlived T_approve.")),
@@ -138,9 +144,29 @@ EVENTS = {
     "RECOVERY_FAILED": ("I12", obj({"reason": reason(doc="Free-form diagnostic.")},
         doc="Recovery failed. The session is quarantined: no TERMINATION is emitted, the cell is unchanged and an operator decides.")),
     "CHECKPOINT": ("I-CHECKPOINT (SHOULD)", obj({
-        "root": HEX, "upto": INT, "signature": STR}, required=["root", "upto"],
-        doc="Merkle root over events 0..upto, optionally signed. Not emitted by the Python "
-            "reference bridge; field names are provisional until I-CHECKPOINT is implemented.")),
+        "root": {**HEX, "description": "Merkle tree hash (RFC 9162, Section 2.1.1) over the event hashes of the events 0..tree_size-1 of this session: a leaf is SHA-256(0x00 || event_hash), an interior node SHA-256(0x01 || left || right), a tree of more than one leaf is split at the largest power of two smaller than its size, and the hash of the empty tree is SHA-256 of the empty string."},
+        "tree_size": {**INT, "description": "Number of events covered by this checkpoint (the tree has this many leaves); the CHECKPOINT event itself is the next one."},
+        "signature": {**STR, "description": "Ed25519 signature under the operator key, over canonical JSON of [root, tree_size]. Hex-encoded. The reference bridge writes a placeholder."},
+        "receipt": {**STR, "description": "Optional. Receipt from an external append-only transparency log (e.g., SCITT) that anchors this checkpoint."}},
+        required=["root", "tree_size", "signature"],
+        doc="Merkle tree hash over all preceding event hashes, with the tree size, the operator signature and an optional external receipt. Emitted periodically (every N events or T_cp) on an active, unquarantined session whose hash chain verifies.")),
+    "KEY_REVOKED": ("I11-REVOKE", obj({
+        "key_id": STR, "reason": {"type": "string", "enum": ["rotation", "compromise"]},
+        "revoked_at": NUM,
+        "signature": {**STR, "description": "Ed25519 operator signature over canonical JSON of [\"bc/v1/revoke\", bridge_id, session_id, key_id, reason, seq, head], where seq and head are the sequence number and hash of the last event when the operator signed."}},
+        doc="Operator-signed revocation of a registered client key: rotation (soft) or compromise (hard).")),
+    "KEY_REVOCATION_REQUESTED": ("I11-REVOKE", obj({
+        "key_id": STR, "requested_by": STR,
+        "reason": {"type": "string", "enum": ["rotation", "compromise"]}},
+        doc="A client requested revocation; the operator must approve. Informational.")),
+    "OPERATOR_ADD_KEY": ("I11-REVOKE", obj({
+        "key_id": STR, "scheme": SCHEME, "public_key": PUBKEY,
+        "signature": {**STR, "description": "Ed25519 operator signature over canonical JSON of [\"bc/v1/add-key\", bridge_id, session_id, key_id, scheme, public_key, seq, head]."}},
+        doc="Operator adds a key to a key_exhausted session, clearing the predicate.")),
+    "OPERATOR_TERMINATION": ("I11-REVOKE, I6", obj({
+        "reason": STR,
+        "signature": {**STR, "description": "Ed25519 operator signature over canonical JSON of [\"bc/v1/terminate\", bridge_id, session_id, reason, seq, head]."}},
+        doc="Operator terminates a key_exhausted session.")),
 }
 
 

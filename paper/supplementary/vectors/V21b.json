@@ -1,0 +1,47 @@
+{
+  "id": "V21b",
+  "title": "The resume record carries the scope and the scope version in force at the detachment",
+  "covers": [
+    "I1",
+    "I10"
+  ],
+  "session": {
+    "session_id": "sess-21b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "narrow",
+      "scope": [
+        "read:docs"
+      ]
+    },
+    {
+      "do": "disconnect"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "AUTHORITY_NARROWED",
+      "DETACHMENT",
+      "RESUME_PREPARED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 1,
+    "last_event_payload": {
+      "scope_version": 1,
+      "authority_scope": [
+        "read:docs"
+      ]
+    }
+  }
+}

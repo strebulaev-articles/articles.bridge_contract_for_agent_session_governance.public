@@ -12,14 +12,15 @@ Two experiments, both seeded and deterministic in every reported number
       unacknowledged calls on re-attach, but does not authenticate a
       resume (rules in ``AckRelay``).  Both are scored on the calls and
       replay attempts that both accepted, so the denominators are equal.
-      Faults: client disconnects, human timeouts, replayed requests,
-      bridge restarts, and all together.
+      Faults: client disconnects, human timeouts, replayed requests
+      (requests that had been accepted, and requests that were refused
+      before their key was registered), bridge restarts, and all together.
 
   E2  Verification cost against log length, with and without
       I-CHECKPOINT, in SHA-256 computations: full hash-chain verification,
       verification of the suffix after the latest checkpoint, one
-      Merkle inclusion proof, and the writer-side cost of the
-      checkpoints.
+      Merkle inclusion proof (the tree hash of RFC 9162, ``merkle.py``),
+      and the writer-side cost of the checkpoints.
 
 Both systems and all faults are synthetic and written by the author of
 the bridge; the numbers show that the mechanisms act as designed on
@@ -64,9 +65,15 @@ SCENARIOS = {
     "disconnects": {"disconnect": 2, "reattach": 3},
     "human timeouts": {"wait_human": 1},
     "replays": {"disconnect": 1, "reattach": 3, "replay": 2, "resubmit": 2},
+    # a second device presents a request before its key is registered
+    # (``early``), the key is registered (``register``), and the captured
+    # request is presented again (``early_replay``)
+    "pre-registration replays": {"disconnect": 1, "reattach": 3, "early": 2,
+                                 "register": 1, "early_replay": 3},
     "restarts": {"restart": 1, "reattach": 3},
     "all faults": {"disconnect": 2, "reattach": 3, "wait_human": 1,
-                   "replay": 2, "resubmit": 2, "restart": 1},
+                   "replay": 2, "resubmit": 2, "restart": 1, "early": 1,
+                   "register": 1, "early_replay": 2},
 }
 
 
@@ -116,7 +123,10 @@ class AckRelay:
       * the session never terminates on a timeout;
       * a re-attach request is accepted without a nonce or a signature,
         so a replayed request is accepted; a resubmitted key is a new
-        call with a new sequence number and is forwarded again.
+        call with a new sequence number and is forwarded again;
+      * it keeps no registry of keys, so a request from a device it has
+        never seen is a re-attach request like any other, and so is that
+        request presented again.
     """
 
     def __init__(self) -> None:
@@ -127,6 +137,8 @@ class AckRelay:
         self.now = 0.0
         self.reattached_once = False
         self.replays: dict[int, bool] = {}
+        self.early_seen = False
+        self.early_replays: dict[int, bool] = {}
 
     def _flush(self) -> None:
         if self.attached and self.prompt_at is None:
@@ -170,6 +182,13 @@ class AckRelay:
         elif a == "replay":
             if self.reattached_once:
                 self.replays[i] = True          # accepted: nothing checks it
+        elif a == "early":
+            self.early_seen = True
+            self.step(("reattach",), i)         # accepted like any request
+        elif a == "early_replay":
+            if self.early_seen:
+                self.early_replays[i] = True    # accepted: nothing checks it
+                self.step(("reattach",), i)
 
     def settle(self, i: int) -> None:
         self.step(("reattach",), i)
@@ -199,6 +218,10 @@ class BridgeRun:
         self.forwarded: list[str] = []
         self.old_request = None
         self.replays: dict[int, bool] = {}
+        # a second device: its key is registered only by ``register``
+        self.late = cs.ClientKey("ck-2")
+        self.early = None                 # (op, request) refused before that
+        self.early_replays: dict[int, bool] = {}
         self._seen_bridge, self._seen_n = self.env.bridge, 0
 
     @property
@@ -260,6 +283,34 @@ class BridgeRun:
                         self.replays[i] = True
                     except cs.BridgeError:
                         self.replays[i] = False
+            elif a == "early":
+                # the device asks for a challenge under its key id and
+                # presents a request; its key is not registered, so the
+                # request is refused, and whoever saw it keeps its bytes
+                if (not self._terminated()
+                        and "ck-2" not in b.registered_keys(env.sid)):
+                    op = "join" if env.cell()[0] == cs.ATT else "reattach"
+                    req = self.late.request(
+                        env.sid, b.challenge(env.sid, "ck-2").nonce,
+                        *env.tip(), op)
+                    try:
+                        b.begin_resume(env.sid, req, op=op)
+                    except cs.BridgeError:
+                        self.early = (op, req)
+            elif a == "register":
+                if (env.cell()[0] == cs.ATT
+                        and "ck-2" not in b.registered_keys(env.sid)):
+                    cs.add_client(b, env.sid, env.key, self.late.public())
+            elif a == "early_replay":
+                if self.early is not None and not self._terminated():
+                    op, req = self.early
+                    try:
+                        b.begin_resume(env.sid, req, op=op)
+                        self.early_replays[i] = True
+                        if b.cell_of(env.sid).att == cs.RES:
+                            b.complete_resume(env.sid)
+                    except cs.BridgeError:
+                        self.early_replays[i] = False
         except cs.BridgeError:
             pass                         # an illegal action in this cell
         self._collect()
@@ -315,10 +366,11 @@ def run_e1() -> dict:
                 for i, act in enumerate(sched):
                     sysm.step(act, i)
                 sysm.settle(len(sched))
-                res[label] = (sysm.calls(), sysm.replays)
+                res[label] = (sysm.calls(), sysm.replays, sysm.early_replays)
             keys = set(res["relay"][0]) & set(res["bridge"][0])
             steps = set(res["relay"][1]) & set(res["bridge"][1])
-            for label, (calls, replays) in res.items():
+            early = set(res["relay"][2]) & set(res["bridge"][2])
+            for label, (calls, replays, early_replays) in res.items():
                 c = tot[label]
                 c["accepted"] += len(keys)
                 for k in keys:
@@ -326,6 +378,9 @@ def run_e1() -> dict:
                     c["dup"] += calls[k]["fw"] > 1
                 c["replays_attempted"] += len(steps)
                 c["replays_accepted"] += sum(replays[s] for s in steps)
+                c["early_replays_attempted"] += len(early)
+                c["early_replays_accepted"] += sum(early_replays[s]
+                                                   for s in early)
         out[name] = {k: dict(v) for k, v in tot.items()}
     return out
 
@@ -361,39 +416,21 @@ def _drive_log(target: int, checkpoints: bool, cycles: int | None = None):
     return env.storage.logs[sid], i
 
 
-def audit_path(hashes: list[bytes], index: int) -> list[tuple[bytes, bool]]:
-    """Merkle inclusion proof under the construction of merkle.py (odd
-    levels duplicate the last node).  Returns (sibling, sibling_is_right)."""
-    level = list(hashes)
-    path = []
-    while len(level) > 1:
-        if len(level) % 2 == 1:
-            level.append(level[-1])
-        sib = index ^ 1
-        path.append((level[sib], sib > index))
-        level = [merkle._sha256(level[j] + level[j + 1])
-                 for j in range(0, len(level), 2)]
-        index //= 2
-    return path
+def verify_path(hashes: list[bytes], index: int,
+                root: bytes) -> tuple[bool, int]:
+    """One inclusion proof under the tree hash of merkle.py (RFC 9162):
+    whether it verifies, and the SHA-256 computations the verifier makes
+    (the leaf hash and one interior hash per sibling on the path)."""
+    path = merkle.inclusion_proof(hashes, index)
+    ok = merkle.verify_inclusion(hashes[index], index, len(hashes), path,
+                                 root)
+    return ok, 1 + len(path)
 
 
-def verify_path(leaf: bytes, path: list, root: bytes) -> tuple[bool, int]:
-    h, ops = leaf, 0
-    for sib, right in path:
-        h = merkle._sha256(h + sib if right else sib + h)
-        ops += 1
-    return h == root, ops
-
-
-def _count_root_ops(hashes: list[bytes]) -> int:
-    n, ops = len(hashes), 0
-    if n <= 1:
-        return 1 if n == 0 else 0
-    while n > 1:
-        n += n % 2
-        n //= 2
-        ops += n
-    return ops
+def _count_root_ops(leaves: int) -> int:
+    """SHA-256 computations of the tree hash over ``leaves`` event hashes:
+    one per leaf and one per interior node, or one for the empty tree."""
+    return 2 * leaves - 1 if leaves else 1
 
 
 def run_e2(sizes=(1000, 4000, 16000, 64000)) -> list[dict]:
@@ -421,13 +458,12 @@ def run_e2(sizes=(1000, 4000, 16000, 64000)) -> list[dict]:
         writer = 0
         for c in cps:
             ts = withcp[c].payload["tree_size"]
-            writer += ts + _count_root_ops(list(range(ts)))
+            writer += ts + _count_root_ops(ts)
         # one inclusion proof for the median event against the final root
         hs = [bytes.fromhex(e.event_hash()) for e in withcp[:cps[-1]]]
         root = merkle.merkle_root(hs)
         assert root.hex() == withcp[cps[-1]].payload["root"]
-        path = audit_path(hs, len(hs) // 2)
-        ok, ops = verify_path(hs[len(hs) // 2], path, root)
+        ok, ops = verify_path(hs, len(hs) // 2, root)
         assert ok
         rows.append({
             "events_plain": n_plain, "events_cp": n_cp,
@@ -460,18 +496,24 @@ def tex(e1: dict, e2: list) -> str:
              "Accepted: calls both accepted. Lost: no delivery and no "
              "trace. Orphaned: queued and logged but without a recorded disposition "
              "(session terminated by a timeout). Dup: keys forwarded twice. "
-             "Replays: replayed re-attach requests accepted / attempted.}"
+             "Replays: re-attach requests that had been accepted, presented "
+             "again, accepted / attempted. Early: requests that were refused "
+             "before their key was registered, presented again before or "
+             "after the registration, accepted / attempted.}"
              "\\label{tab:fault-loss}")
-    L.append("\\begin{tabular}{@{}l l r r r r r@{}}\\toprule")
-    L.append("Fault & System & Accepted & Lost (\\%) & Orphaned & Dup & Replays \\\\\\midrule")
+    L.append("\\begin{tabular}{@{}l l r r r r r r@{}}\\toprule")
+    L.append("Fault & System & Accepted & Lost (\\%) & Orphaned & Dup & Replays & Early \\\\\\midrule")
     for name, d in e1.items():
         first = True
         for label, key in (("relay", "relay"), ("bridge", "bridge")):
             r = d[key]
             rep = f"{r.get('replays_accepted', 0)}/{r.get('replays_attempted', 0)}"
+            early = (f"{r.get('early_replays_accepted', 0)}/"
+                     f"{r.get('early_replays_attempted', 0)}")
             L.append(f"{name if first else ''} & {label} & {r['accepted']} & "
                      f"{r.get('lost', 0)} ({pct(r.get('lost', 0), r['accepted'])}) & "
-                     f"{r.get('orphaned', 0)} & {r.get('dup', 0)} & {rep} \\\\")
+                     f"{r.get('orphaned', 0)} & {r.get('dup', 0)} & {rep} & "
+                     f"{early} \\\\")
             first = False
         L.append("\\addlinespace")
     L[-1] = "\\bottomrule"
@@ -483,8 +525,10 @@ def tex(e1: dict, e2: list) -> str:
              "plus the checkpoints and is the one verified. Full: recompute every event "
              "hash of it (I5). Suffix: recompute only from the "
              "latest checkpoint, worst and mean over all prefixes of the checkpointed "
-             "log. Proof: one Merkle inclusion proof for a mid-log event. Writer: total "
-             "cost of emitting the checkpoints, per event of the log; it grows with the log "
+             "log. Proof: one Merkle inclusion proof for a mid-log event (the leaf "
+             "hash and one hash per level of the tree of RFC 9162). Writer: total "
+             "cost of emitting the checkpoints (event hashes, leaf hashes and interior "
+             "nodes), per event of the log; it grows with the log "
              "because the reference recomputes the whole tree at each checkpoint.}"
              "\\label{tab:verify-cost}")
     L.append("\\begin{tabular}{@{}r r r r r r r@{}}\\toprule")

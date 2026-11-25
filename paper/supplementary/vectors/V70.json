@@ -1,6 +1,6 @@
 {
   "id": "V70",
-  "title": "A key revoked between its challenge and its re-attach is rejected and the nonce is spent",
+  "title": "A key revoked between its challenge and its re-attach is rejected, and no other key can use that nonce",
   "covers": [
     "I11-REVOKE",
     "B.4",
@@ -36,13 +36,17 @@
       "do": "reattach",
       "client": "ck-1",
       "nonce": "n1",
-      "error": true
+      "error": true,
+      "wire_reason": "revoked_key",
+      "log_reason": "revoked_key"
     },
     {
       "do": "reattach",
       "client": "ck-2",
       "nonce": "n1",
-      "error": true
+      "error": true,
+      "wire_reason": "bad_signature",
+      "log_reason": "nonce_binding"
     },
     {
       "do": "reattach",

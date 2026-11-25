@@ -58,10 +58,10 @@ fn keyless_challenges_cannot_evict_a_live_nonce() {
     let (_storage, _clock, mut bridge, key, sid) = session();
     bridge.client_disconnect(&sid, None, "test").expect("detach");
     let genesis = bridge.events(&sid)[0].hash();
-    let nonce = bridge.challenge(&sid).expect("genuine nonce").nonce;
+    let nonce = bridge.challenge(&sid, "ck-1").expect("genuine nonce").nonce;
     let mut issued = 0;
     for _ in 0..4 * NONCE_RECORDS {
-        match bridge.challenge(&sid) {
+        match bridge.challenge(&sid, "ck-1") {
             Ok(_) => issued += 1,
             Err(e) => {
                 assert!(e.0.contains("challenge budget"), "{e:?}");
@@ -79,11 +79,11 @@ fn expired_nonces_make_room_for_new_challenges() {
     let (_storage, clock, mut bridge, _key, sid) = session();
     bridge.client_disconnect(&sid, None, "test").expect("detach");
     for _ in 0..NONCE_RECORDS {
-        bridge.challenge(&sid).expect("within budget");
+        bridge.challenge(&sid, "ck-1").expect("within budget");
     }
-    assert!(bridge.challenge(&sid).is_err());
+    assert!(bridge.challenge(&sid, "ck-1").is_err());
     clock.advance(Config::default().t_nonce);
-    assert!(bridge.challenge(&sid).is_ok());
+    assert!(bridge.challenge(&sid, "ck-1").is_ok());
 }
 
 #[test]
@@ -130,31 +130,33 @@ fn add_client_needs_a_fresh_signature_by_a_connected_unrevoked_key() {
     let (_storage, clock, mut bridge, key, sid) = session();
     let (k2, evil) = (ClientKey::new("ck-2", &[2u8; 32]), ClientKey::new("ck-evil", &[6u8; 32]));
     let reason = |r: Result<()>| r.unwrap_err().0;
-    let n = bridge.challenge(&sid).unwrap().nonce;
+    let n = bridge.challenge(&sid, "ck-1").unwrap().nonce;
     // a stranger naming the connected key id, signing as itself
     let forged = reason(bridge.add_client_key(&sid, "ck-1", "ck-evil", evil.scheme(), &evil.public_key(), &n,
         &evil.sign_add_client(&sid, &evil.public(), &n)));
     assert!(forged.contains("rejected: bad_signature "), "{forged}");
     let missing = reason(bridge.add_client_key(&sid, "ck-1", "ck-evil", evil.scheme(), &evil.public_key(), &n, ""));
     assert!(missing.contains("rejected: bad_signature "), "{missing}");
-    let unconnected = reason(add_client(&mut bridge, &sid, &ClientKey::new("ck-9", &[9u8; 32]), &k2, &n));
-    assert!(unconnected.contains("rejected: via_not_connected "), "{unconnected}");
+    // an authorising key the session does not register is a bad signature,
+    // so the answer says nothing about the registry
+    let unregistered = reason(add_client(&mut bridge, &sid, &ClientKey::new("ck-9", &[9u8; 32]), &k2, &n));
+    assert!(unregistered.contains("rejected: bad_signature "), "{unregistered}");
     let unknown = "ab".repeat(16);
     assert!(reason(add_client(&mut bridge, &sid, &key, &k2, &unknown)).contains("rejected: nonce_unknown "));
     assert_eq!(bridge.events(&sid).len(), 1, "a refused registration committed events");
     add_client(&mut bridge, &sid, &key, &k2, &n).expect("authentic registration");
     assert!(reason(add_client(&mut bridge, &sid, &key, &k2, &n)).contains("rejected: nonce_used "));
-    let stale = bridge.challenge(&sid).unwrap().nonce;
+    let stale = bridge.challenge(&sid, "ck-1").unwrap().nonce;
     clock.advance(Config::default().t_nonce + 1.0);
     assert!(reason(add_client(&mut bridge, &sid, &key, &evil, &stale)).contains("rejected: nonce_expired "));
-    let again = bridge.challenge(&sid).unwrap().nonce;
+    let again = bridge.challenge(&sid, "ck-1").unwrap().nonce;
     assert!(reason(add_client(&mut bridge, &sid, &key, &k2, &again)).contains("rejected: key_already_registered "));
     // a soft-revoked key stays connected but no longer authorises keys
     let (seq, head) = bridge.head_of(&sid);
     let sig = OperatorKey::new(&[7u8; 32]).revoke(bridge.bridge_id(), &sid, "ck-1", "rotation", seq, &head);
     bridge.revoke_key(&sid, "ck-1", "rotation", &sig, None).expect("soft revocation");
     let third = ClientKey::new("ck-3", &[3u8; 32]);
-    let fresh = bridge.challenge(&sid).unwrap().nonce;
+    let fresh = bridge.challenge(&sid, "ck-1").unwrap().nonce;
     assert!(reason(add_client(&mut bridge, &sid, &key, &third, &fresh)).contains("rejected: revoked_key "));
 }
 
@@ -229,7 +231,7 @@ fn last_reason(bridge: &Bridge, sid: &str) -> String {
 fn a_nonce_belongs_to_the_session_that_issued_it() {
     let (_storage, _clock, mut bridge, key, a) = session();
     let b = attach_second(&mut bridge, &key);
-    let foreign = bridge.challenge(&b).expect("B's nonce").nonce;
+    let foreign = bridge.challenge(&b, "ck-1").expect("B's nonce").nonce;
     let genesis = bridge.events(&a)[0].hash();
     // a registration in A with a nonce that B issued
     let k2 = ClientKey::new("ck-2", &[2u8; 32]);
@@ -246,7 +248,7 @@ fn a_nonce_belongs_to_the_session_that_issued_it() {
     assert_eq!(last_reason(&bridge, &a), "nonce_unknown");
     let b_genesis = bridge.events(&b)[0].hash();
     assert_ne!(b_genesis, genesis);
-    let own = bridge.challenge(&a).unwrap().nonce;
+    let own = bridge.challenge(&a, "ck-1").unwrap().nonce;
     let req = key.request(&a, &own, 0, &b_genesis);
     assert!(bridge.begin_resume(&a, &req, false).is_err());
     assert_eq!(last_reason(&bridge, &a), "prefix_mismatch");
@@ -255,21 +257,21 @@ fn a_nonce_belongs_to_the_session_that_issued_it() {
     let req = key.request(&b, &foreign, 0, &b_genesis);
     bridge.begin_resume(&b, &req, false).expect("B's nonce was spent by A's refusals");
     bridge.complete_resume(&b).expect("B resumes");
-    let fresh = bridge.challenge(&a).unwrap().nonce;
+    let fresh = bridge.challenge(&a, "ck-1").unwrap().nonce;
     bridge.begin_resume(&a, &key.request(&a, &fresh, 0, &genesis), false).expect("A is not locked out");
     bridge.complete_resume(&a).expect("A resumes");
     // A using up its challenge budget leaves B's untouched
     bridge.client_disconnect(&a, None, "test").expect("detach");
     let mut refused = false;
     for _ in 0..4 * NONCE_RECORDS {
-        if bridge.challenge(&a).is_err() {
+        if bridge.challenge(&a, "ck-1").is_err() {
             refused = true;
             break;
         }
     }
     assert!(refused, "the budget did not refuse");
     for _ in 0..NONCE_RECORDS {
-        assert!(bridge.challenge(&b).is_ok(), "A's budget was charged to B");
+        assert!(bridge.challenge(&b, "ck-1").is_ok(), "A's budget was charged to B");
     }
 }
 
@@ -337,7 +339,7 @@ fn tool_call_keys_are_scoped_to_the_session_across_a_restart() {
     assert!(bridge.forwarded.is_empty());
     for sid in [&a, &b] {
         let genesis = bridge.events(sid)[0].hash();
-        let nonce = bridge.challenge(sid).unwrap().nonce;
+        let nonce = bridge.challenge(sid, "ck-1").unwrap().nonce;
         bridge.begin_resume(sid, &key.request(sid, &nonce, 0, &genesis), false).expect("resume");
         bridge.complete_resume(sid).expect("verified");
     }
@@ -350,4 +352,32 @@ fn tool_call_keys_are_scoped_to_the_session_across_a_restart() {
     bridge.delivered(&a, "k1").expect("A's acknowledgement");
     assert!(bridge.delivered(&a, "k1").is_err(), "nothing awaits in A");
     bridge.delivered(&b, "k1").expect("B's is still awaited");
+}
+
+#[test]
+fn unknown_key_and_transport_replay_refusals_use_the_unauthenticated_budget() {
+    // a request that names an unregistered key and one the transport flags as
+    // a replay are logged only up to the bound, like a bad signature (I11g)
+    let (_storage, _clock, mut bridge, key, sid) = session();
+    bridge.client_disconnect(&sid, None, "test").expect("detach");
+    let genesis = bridge.events(&sid)[0].hash();
+    let n0 = bridge.events(&sid).len();
+    let stranger = ClientKey::new("ck-9", &[9u8; 32]);
+    for _ in 0..3 * UNAUTH_LOG_LIMIT {
+        let unknown = stranger.request(&sid, &"00".repeat(16), 0, &genesis);
+        assert!(bridge.begin_resume(&sid, &unknown, false).is_err());
+    }
+    assert_eq!(bridge.events(&sid).len() - n0, UNAUTH_LOG_LIMIT, "unknown_key writes without bound");
+    // an authentic refusal (the key's holder, a nonce nobody issued) is
+    // always logged and restores the budget
+    let authentic = key.request(&sid, &"00".repeat(16), 0, &genesis);
+    assert!(bridge.begin_resume(&sid, &authentic, false).is_err());
+    let n1 = bridge.events(&sid).len();
+    assert_eq!(n1, n0 + UNAUTH_LOG_LIMIT + 1);
+    for _ in 0..3 * UNAUTH_LOG_LIMIT {
+        let nonce = bridge.challenge(&sid, "ck-1").unwrap().nonce;
+        let again = key.request(&sid, &nonce, 0, &genesis);
+        assert!(bridge.begin_resume(&sid, &again, true).is_err());
+    }
+    assert_eq!(bridge.events(&sid).len() - n1, UNAUTH_LOG_LIMIT, "transport_replay writes without bound");
 }

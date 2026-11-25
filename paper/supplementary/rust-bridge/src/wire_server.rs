@@ -32,6 +32,53 @@ pub const UNSIGNED_OPS: [&str; 10] = [
     "delivered", "completed", "narrow", "extend", "terminate",
 ];
 
+/// No message of Appendix B nests deeper than a tool call's content inside
+/// the envelope; a request nested deeper than this is refused before it is
+/// parsed, so a deeply nested body cannot exhaust the parser's stack.
+pub const MAX_DEPTH: usize = 32;
+
+/// The deepest nesting of arrays and objects in a JSON text, counted on the
+/// bytes (brackets inside strings do not count).
+pub fn nesting_depth(data: &[u8]) -> usize {
+    let (mut depth, mut deepest, mut in_string, mut escaped) = (0usize, 0usize, false, false);
+    for &byte in data {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+        } else if byte == b'"' {
+            in_string = true;
+        } else if byte == b'[' || byte == b'{' {
+            depth += 1;
+            deepest = deepest.max(depth);
+        } else if (byte == b']' || byte == b'}') && depth > 0 {
+            depth -= 1;
+        }
+    }
+    deepest
+}
+
+/// Whether the transport binding must authenticate the caller: the ops of
+/// [`UNSIGNED_OPS`], and a `revoke` without an operator signature (a
+/// client's request for a revocation, which appends an event on the
+/// caller's word alone).
+pub fn is_unsigned(op: &str, msg: &Value) -> bool {
+    UNSIGNED_OPS.contains(&op)
+        || (op == "revoke"
+            && msg.get("signature").and_then(Value::as_str).is_none_or(str::is_empty)
+            && msg.get("requested_by").is_some())
+}
+
+/// An event as a wire object (the envelope of `event.schema.json`).
+fn event_object(e: &Event) -> Value {
+    json!({"kind": e.kind.as_str(), "session_id": e.session_id, "sequence": e.sequence,
+           "prev_hash": e.prev_hash, "payload": e.payload, "timestamp": e.timestamp})
+}
+
 /// Ops that carry their own proof or need none.
 const OTHER_SERVED_OPS: [&str; 8] =
     ["attach", "challenge", "add_client", "reattach", "join", "revoke", "add_key", "operator_terminate"];
@@ -96,7 +143,7 @@ fn ack(status: &str, sid: &str) -> Vec<u8> {
 
 fn with_events(status: &str, sid: &str, events: &[Event]) -> Vec<u8> {
     let mut f = Map::new();
-    f.insert("events".into(), json!(events.iter().map(|e| e.kind.as_str()).collect::<Vec<_>>()));
+    f.insert("events".into(), json!(events.iter().map(event_object).collect::<Vec<_>>()));
     wire::encode_response(status, Some(sid), &f)
 }
 
@@ -122,6 +169,9 @@ impl WireServer {
 
     /// Serve one request against `bridge`; the response is the bytes to send.
     pub fn handle(&self, bridge: &mut Bridge, data: &[u8]) -> Vec<u8> {
+        if nesting_depth(data) > MAX_DEPTH {
+            return wire::encode_error("", "bad_canonical");
+        }
         let Ok(msg) = wire::decode_message(data) else {
             return wire::encode_error("", "bad_canonical");
         };
@@ -129,10 +179,17 @@ impl WireServer {
             Ok(c) if c == data => {}
             _ => return wire::encode_error("", "bad_canonical"),
         }
-        let sid = msg.get("session_id").and_then(Value::as_str).unwrap_or("").to_string();
-        let op = msg.get("op").and_then(Value::as_str).unwrap_or("").to_string();
-        let unsigned = UNSIGNED_OPS.contains(&op.as_str());
-        if !unsigned && !OTHER_SERVED_OPS.contains(&op.as_str()) {
+        // session_id and op are strings
+        let sid = match msg.get("session_id") {
+            None => String::new(),
+            Some(Value::String(x)) => x.clone(),
+            Some(_) => return wire::encode_error("", "bad_canonical"),
+        };
+        let Some(op) = msg.get("op").and_then(Value::as_str).map(String::from) else {
+            return wire::encode_error("", "bad_canonical");
+        };
+        let unsigned = is_unsigned(&op, &msg);
+        if !unsigned && !UNSIGNED_OPS.contains(&op.as_str()) && !OTHER_SERVED_OPS.contains(&op.as_str()) {
             return wire::encode_error(&sid, "unsupported_op");
         }
         if unsigned {
@@ -152,7 +209,7 @@ impl WireServer {
     fn dispatch(&self, b: &mut Bridge, op: &str, sid: &str, m: &Value) -> Handled {
         match op {
             "challenge" => {
-                let ch = b.challenge(sid)?;
+                let ch = b.challenge(sid, text(m, "key_id")?)?;
                 let mut f = Map::new();
                 f.insert("nonce".into(), json!(ch.nonce));
                 f.insert("ttl_seconds".into(), json!(ch.ttl_seconds));
@@ -277,18 +334,25 @@ impl WireServer {
             }
             "submit_tool_call" => {
                 let content = m.get("content").filter(|c| !c.is_null());
-                let out = b.submit_tool_call(
+                let (out, key) = b.submit_tool_call_keyed(
                     sid,
                     text(m, "tool")?,
                     m.get("key").and_then(Value::as_str),
                     m.get("permission").and_then(Value::as_str),
                     content,
                 )?;
+                // the response carries the idempotency key of the call: the
+                // caller's, or the one the bridge generated
+                let keyed = |status: &str| {
+                    let mut f = Map::new();
+                    f.insert("key".into(), json!(key));
+                    wire::encode_response(status, Some(sid), &f)
+                };
                 Ok(match out {
                     ToolOutcome::Duplicate => wire::encode_error(sid, "duplicate_key"),
                     ToolOutcome::Rejected => wire::encode_error(sid, "queue_full"),
-                    ToolOutcome::Queued => ack("queued", sid),
-                    ToolOutcome::Forwarded => ack("forwarded", sid),
+                    ToolOutcome::Queued => keyed("queued"),
+                    ToolOutcome::Forwarded => keyed("forwarded"),
                 })
             }
             "answer_tool_call" => {
@@ -304,8 +368,10 @@ impl WireServer {
                 Ok(ack("completed", sid))
             }
             "narrow" => {
-                b.narrow_authority_scope(sid, &strings(m, "new_scope")?)?;
-                Ok(ack("narrowed", sid))
+                let version = b.narrow_authority_scope(sid, &strings(m, "new_scope")?)?;
+                let mut f = Map::new();
+                f.insert("new_version".into(), json!(version));
+                Ok(wire::encode_response("narrowed", Some(sid), &f))
             }
             "terminate" => {
                 b.terminate(sid, text(m, "reason")?)?;

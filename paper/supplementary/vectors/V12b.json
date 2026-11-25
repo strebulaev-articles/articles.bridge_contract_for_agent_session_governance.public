@@ -1,0 +1,42 @@
+{
+  "id": "V12b",
+  "title": "A resolution with no escalation pending is refused",
+  "covers": [
+    "I2",
+    "I13"
+  ],
+  "session": {
+    "session_id": "sess-12b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "resolve",
+      "error": true
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "resolve",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0
+  }
+}

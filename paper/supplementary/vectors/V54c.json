@@ -1,0 +1,59 @@
+{
+  "id": "V54c",
+  "title": "No checkpoint over a log that does not verify, nor on the session it quarantines",
+  "covers": [
+    "I-CHECKPOINT",
+    "I5",
+    "Q"
+  ],
+  "requires": [
+    "checkpoint"
+  ],
+  "config": {
+    "n_checkpoint": 1,
+    "t_checkpoint": 999999
+  },
+  "session": {
+    "session_id": "sess-54c",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "tamper_log",
+      "index": 1,
+      "field": "prev_hash"
+    },
+    {
+      "do": "reattach",
+      "error": true
+    },
+    {
+      "do": "advance",
+      "seconds": 100
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "CHECKPOINT",
+      "RESUME_STARTED",
+      "RESUME_FAILED"
+    ],
+    "cell": [
+      "Res",
+      "None"
+    ],
+    "scope_version": 0,
+    "quarantined": true
+  }
+}

@@ -13,8 +13,17 @@
     "events": {
       "type": "array",
       "items": {
-        "type": "object"
-      }
+        "type": "object",
+        "required": [
+          "kind",
+          "session_id",
+          "sequence",
+          "prev_hash",
+          "payload",
+          "timestamp"
+        ]
+      },
+      "description": "Committed events after seq, as event objects (event.schema.json)."
     }
   },
   "required": [

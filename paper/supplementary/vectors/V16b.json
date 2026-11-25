@@ -1,0 +1,47 @@
+{
+  "id": "V16b",
+  "title": "A re-attach in the tick in which T_detach expires is processed first and succeeds",
+  "covers": [
+    "L1",
+    "I11"
+  ],
+  "config": {
+    "t_detach": 600
+  },
+  "session": {
+    "session_id": "sess-16b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "advance",
+      "seconds": 600,
+      "tick": false
+    },
+    {
+      "do": "reattach"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0
+  }
+}

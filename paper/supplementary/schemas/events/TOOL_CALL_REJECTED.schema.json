@@ -2,8 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.org/bridge-contract/schemas/events/TOOL_CALL_REJECTED.schema.json",
   "title": "TOOL_CALL_REJECTED payload",
-  "x-invariants": "I13, I14",
-  "description": "A call refused at a full queue or dropped at drain.",
+  "x-invariants": "I3, I13, I14",
+  "description": "A call refused at a full queue, refused on the direct path because its permission is outside the current scope, or dropped at drain.",
   "type": "object",
   "properties": {
     "key": {
@@ -22,6 +22,14 @@
         "answer_mismatch"
       ],
       "description": "Reason code."
+    },
+    "permission": {
+      "type": "string",
+      "description": "The permission the call asked for; present on a direct call refused for its scope, which has no TOOL_CALL_QUEUED event to carry it."
+    },
+    "direct": {
+      "const": true,
+      "description": "Present when the call was submitted with a client attached and no escalation pending and was refused without being queued (reason scope)."
     }
   },
   "required": [

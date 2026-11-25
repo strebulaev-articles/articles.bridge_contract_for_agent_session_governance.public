@@ -263,11 +263,9 @@ destroy the evidence. The bridge MUST record the failure if it can still
 append, MUST NOT emit \texttt{TERMINATION}, and MUST then refuse every
 client operation on the session (attach, join, challenge, escalation,
 tool call, authority change), run no timer on it and emit no further event
-for it, except an operator's explicit termination (\texttt{TERMINATION}). The
-departures of the reference bridges from this rule are listed in the
-limitations register: an operator key addition is accepted on a quarantined,
-key\_exhausted session, and the Python bridge can append a
-\texttt{CHECKPOINT} to a quarantined session. The session's
+for it, except an operator's explicit termination (\texttt{TERMINATION}).
+An operator's key addition is refused on a quarantined session
+(\texttt{quarantined}), and no \texttt{CHECKPOINT} is appended to one. The session's
 event log MUST be preserved read-only for forensic review: the bridge
 MUST NOT append, truncate, or rewrite any record of a quarantined
 session except the failure event that rule~Q itself permits and any
@@ -328,7 +326,11 @@ proposed scope containing a permission that the current scope lacks)
 MUST be rejected and MUST emit \texttt{AUTHORITY\_EXTENSION\_REJECTED};
 the scope the bridge holds is unchanged. The scope of a session may only
 narrow (I10). Widening requires a new attach with a freshly granted
-scope, which is a new session. I3 has two parts:
+scope, which is a new session. A tool call submitted while the session is
+in $(\textsc{Att}, \textsc{None})$ with no human decision pending, whose
+permission is not in the current scope, MUST be refused with the reason
+\texttt{scope} and recorded as \texttt{TOOL\_CALL\_REJECTED} with
+\texttt{direct} set; a call inside the scope is forwarded as before. I3 has two parts:
 \begin{description}[leftmargin=2em]
 \item[Enforced.] A change requested \emph{through the bridge} is refused
 before it takes effect.
@@ -569,8 +571,7 @@ replay of the events it has not seen.
 I1 forces \texttt{RESUME\_PREPARED} to be emitted and stored before the
 cell changes to $a=\textsc{Det}$, so the resume point is recorded
 durably. I11 ensures the presenter holds a registered client key and
-answers a fresh nonce, so the request is neither forged nor replayed
-(modulo the pre-registration replay of Table~\ref{tab:limitations}). I4
+answers a fresh nonce, so the request is neither forged nor replayed. I4
 ensures that the $(\mathit{seq}, \mathit{hash})$ the client presents lies
 on the bridge's chain, and I5 ensures that every event after it carries
 the \texttt{prev\_hash} of its predecessor, so the client can verify the
@@ -649,13 +650,9 @@ client disconnect during verification returns it to $a=\textsc{Det}$ and
 verification itself is a finite computation over the log. A re-attach that
 is started and abandoned repeatedly is a limit of this bound: time in
 $a=\textsc{Res}$ and $a=\textsc{Att}$ is not counted by $T_{\text{total}}$,
-so $T_{\text{total}}$ does not bound such a cycle. One exception
-holds in the reference bridges and the model and is listed in the
-limitations register: a soft revocation of the only key while it is being
-verified makes the session \texttt{key\_exhausted} in $a=\textsc{Res}$, the
-completion is refused, and no detach timer runs there, so the session stays
-in $a=\textsc{Res}$ until the transport of the re-attaching client is lost,
-a human timer fires or the operator acts.
+so $T_{\text{total}}$ does not bound such a cycle. A revocation of the only key while it is being
+verified, soft or hard, abandons the verification and the session returns
+to $a=\textsc{Det}$, where the detach timer runs.
 
 \subsection{Timeouts}\label{sec:timeouts}
 
@@ -723,7 +720,7 @@ The \texttt{HUMAN\_RESOLVED} event of the escalation. &
 Monotonic. &
 Not paused; runs even while the client is away. An approval that lapses is void at the next drain. &
 Yes (queued in the log). &
-\texttt{TOOL\_CALL\_EXPIRED} on every call of the lapsed escalation at the next drain (the reference bridges keep one expiry per session, so a later approval revives a lapsed one: limitations register). \\
+\texttt{TOOL\_CALL\_EXPIRED} on every call of the lapsed escalation at the next drain; the expiry is recorded per call when the approval is given, so a later approval does not revive it. \\
 $T_{\text{nonce}}$ &
 The bridge issues a challenge and returns a nonce. &
 Monotonic; the bridge's own clock. &
@@ -830,16 +827,18 @@ prefix), the bridge MUST process the request first. If the request
 succeeds (e.g., \texttt{RESUME\_STARTED}), the timer is no longer
 applicable to the new cell and is not fired. If the request fails
 (e.g., \texttt{RESUME\_REJECTED}), the timer fires in the same tick
-and the session transitions accordingly. The reference bridges do not yet
-meet this rule: they evaluate the timers before the request, so a re-attach
-in that tick is answered \texttt{terminated} (limitations register).
+and the session transitions accordingly. The reference bridges follow the
+rule: a timer that expires in the tick of a re-attach or a join waits for the
+request, and one that expired in an earlier tick has ended the session, so
+the request is refused uniformly.
 \item \emph{The same idempotency key arriving with different content.}
 A second tool call submitted with an idempotency key that is already
 queued MUST NOT be queued, regardless of whether the content matches
 or differs from the first submission; the caller is answered with the
 reason \texttt{duplicate\_key}. The first submission's content
 and hash are retained; the second is discarded and commits no event, so
-the log does not record the second submission (limitations register).
+the queued record is returned and the log does not record the second
+submission (limitations register).
 \end{enumerate}
 
 \paragraph{Configuration.} Default values are informative.
@@ -1032,9 +1031,20 @@ non-increasing for its entire life.
 the key is recorded in the genesis \texttt{ATTACHED} event and bound to
 \texttt{Owner-ID}.
 \item \emph{Challenge.} To re-attach, the client first requests a
-challenge. The bridge returns a fresh nonce of at least 128 bits from a
-cryptographically secure source, bound to the session, valid for
-$T_{\text{nonce}}$ (I9) and usable once. Issuing a challenge is not a
+challenge, naming the key identifier it will sign with. The bridge
+returns a fresh nonce of at least 128 bits from a
+cryptographically secure source, bound to the session and to that key
+identifier, valid for $T_{\text{nonce}}$ (I9) and usable once. The record of
+the nonce holds the key identifier and whether the key was a registered,
+unrevoked key of the session when the nonce was issued. The answer to a
+challenge is the same for every key identifier, registered or not: a nonce of
+the same form and lifetime, counted against the same limit (f); no answer to
+a challenge depends on the registry. A nonce issued for a key that was not
+registered at issue never verifies, however the registry changes later, and a
+nonce presented with another key identifier than the one it was issued for
+does not verify either; both are answered as a request whose signature does
+not verify (\texttt{bad\_signature}), recorded as \texttt{nonce\_binding} and
+not spent. Issuing a challenge is not a
 governance event and changes no state. The bridge SHOULD return a uniform rejection
 to unauthenticated callers (e.g., for an unknown session ID) so
 that the \texttt{challenge} op does not confirm session existence
@@ -1052,11 +1062,15 @@ list the registered key ids; the log records \texttt{unknown\_key}.
 request that presents it, whether that request is then accepted or
 rejected for a later reason; a consumed nonce is never accepted again.
 A request that is not authentic does not consume the nonce. A request
-refused with \texttt{resume\_in\_progress} or \texttt{already\_attached} is
-authentic and so spends its nonce: a second device that meets a re-attach
-in progress asks for a new challenge. Both reasons are given only after the
-signature verifies, so neither tells an unauthenticated caller anything
-about the attachment.
+refused with \texttt{resume\_in\_progress}, \texttt{already\_attached} (a
+re-attach on an attached session) or \texttt{not\_attached} (a join on a
+detached one) is authentic and so spends its nonce: a second device that
+meets a re-attach in progress asks for a new challenge. These reasons are
+given only after the key, the signature, the revocation, the binding of the
+nonce and the nonce itself have passed, so none of them tells an
+unauthenticated caller anything about the attachment. A request that was
+presented and refused is never accepted later, whoever presents it again and
+whatever the registry has become in between.
 \item \emph{No state-changing rejection.} A request that fails (c), (d),
 I9, I8, I11-REVOKE or I4 MUST be answered with \texttt{RESUME\_REJECTED} and MUST NOT
 change the cell. Through the re-attach path, only a failure of hash-chain
@@ -1076,7 +1090,7 @@ and the rejection of a re-attach request is unchanged (the uniform rejection
 of (b)).
 \item \emph{Bounded logging of unauthenticated failures.} A failure
 before authentication (\texttt{transport\_replay}, \texttt{unknown\_key},
-\texttt{bad\_signature}) is recorded as \texttt{RESUME\_REJECTED} only
+\texttt{nonce\_binding}, \texttt{bad\_signature}) is recorded as \texttt{RESUME\_REJECTED} only
 until the session has recorded a fixed number of such failures since its
 last authentic request (the reference bridges use 16); further ones are
 refused in the same way and not recorded. A request whose signature
@@ -1092,19 +1106,20 @@ restarts and authentic requests.
 \end{invariant}
 
 The verifier checks in this order: (1) key and signature, then
-(2) revocation (I11-REVOKE), then (3) nonce (unknown, consumed,
-expired), then (4) prefix (I4), so that an
-unauthenticated party learns nothing about the state of nonces or of the
-chain beyond a rejection. I11 ensures that knowing the session
-identifier is not enough and that a captured request that was accepted
-cannot be replayed (its nonce is spent, and an unspent nonce expires after
-$T_{\text{nonce}}$). It does not cover a request that was refused before
-authentication: its nonce stays live, and if the key it names is registered
-within $T_{\text{nonce}}$ (\texttt{CLIENT\_ADDED},
-\texttt{OPERATOR\_ADD\_KEY}), a replay of the captured bytes is accepted.
-Both reference bridges and the TLA+ model behave so; it is listed in the
-limitations register (Table~\ref{tab:limitations}), with the fix that is
-planned and not yet made. A rejected request does not change the cell, so a
+(2) revocation (I11-REVOKE), then (3) the binding of the nonce to the key
+and to the registry at issue, then (4) nonce (unknown, consumed,
+expired), then (5) prefix (I4), and only then what depends on the state of
+the session (an attachment in progress, an attached or a detached session),
+so that an
+unauthenticated party learns nothing about the state of nonces, of the
+chain or of the attachment beyond a rejection. A timer that expires in the
+very tick of a request waits for the request; one that expired earlier has
+ended the session, and the request is refused uniformly. I11 ensures that knowing the session
+identifier is not enough and that a captured request cannot be replayed:
+one that was accepted has spent its nonce, an unspent nonce expires after
+$T_{\text{nonce}}$, and a request refused before authentication cannot
+become acceptable by a later registration of its key, because a nonce
+issued for a key that was not registered never verifies. A rejected request does not change the cell, so a
 party without a key cannot terminate a session by presenting bad requests;
 it can still end a detached session by holding the live-nonce limit
 (Residual denial, below). Theft of a client key is out of scope (A7).
@@ -1137,7 +1152,7 @@ holds no registered private key of the session (A7). I11 states that an
 outsider cannot have a re-attach request accepted, and cannot spend a
 nonce, except with a probability that is negligible under the assumptions
 of A3 on the signature scheme and on the nonce source; the reference
-bridges and the model do not yet meet this for a request that was refused
+bridges and the model meet this also for a request that was refused
 before its key was registered (above). I11-REVOKE extends
 the refusal to a party that holds a key revoked before the request: its
 signature verifies, and the request is refused as \texttt{revoked\_key}.
@@ -1147,12 +1162,9 @@ hold and never obtains a client key. TLC checks, in the attacker
 configuration, that every request accepted on entering $a=\textsc{Res}$ or
 on a join carries a signature that an honest client produced for that key,
 nonce and prefix verdict (\texttt{NoForgery}), so the attacker cannot build
-an acceptable signature of its own. The property admits the replay of an
-honest signature whose nonce is still live, and the model reaches one: an
-honest request for a key not yet registered is refused without spending
-its nonce, and after the key is added the attacker presents the observed
-signature and joins. The stronger property, that every accepted request was
-presented by an honest client, is not checked. The unforgeability of the signature scheme is assumed
+an acceptable signature of its own, and that every accepted request was
+presented by an honest client and that a request that was refused is never
+accepted later (\texttt{SP\_Honest}, \texttt{SP\_NoReplay}). The unforgeability of the signature scheme is assumed
 (UF, stated there) and the statement about concrete signatures rests on the
 tests and mutants of the reference implementations.
 
@@ -1210,12 +1222,13 @@ distinguishes the two:
 \item[\texttt{rotation} (soft).] The key is revoked for new
 re-attach and join, but already-attached connections using this key are
 not disconnected and the key stays in $C(s)$ until its transport leaves
-(I15(e)). Used for rotation (\texttt{CLIENT\_ADDED} $\to$
+(I15(e)); if the key is the one whose re-attach is being verified, the
+verification is abandoned as for a hard revocation. Used for rotation (\texttt{CLIENT\_ADDED} $\to$
 overlap $\to$ \texttt{KEY\_REVOKED}).
 \item[\texttt{compromise} (hard).] The key is revoked for all
 purposes. A connection using this key leaves $C(s)$ at once (I15(e)); if
 it was the only connected client, or the key whose re-attach was being
-verified, the session is forcibly detached (\texttt{DETACHMENT} +
+verified (a soft revocation of that key does the same), the session is forcibly detached (\texttt{DETACHMENT} +
 \texttt{RESUME\_PREPARED}). Used for compromise response.
 \end{description}
 
@@ -1287,7 +1300,9 @@ queue MUST be rejected with \texttt{TOOL\_CALL\_REJECTED}; a call whose
 key is already queued MUST NOT be queued twice; an expired call MUST be
 removed with \texttt{TOOL\_CALL\_EXPIRED}. A human approval
 (\texttt{HUMAN\_RESOLVED}) is valid for $T_{\text{approve}}$ (default
-15 minutes) from its emission; a call held under the detached-call
+15 minutes) from its emission, strictly before it has elapsed; the expiry is
+recorded for each call queued under the escalation when the approval is
+given, and a later approval does not extend it; a call held under the detached-call
 policy (rule~D, calls outside an escalation) has no escalation approval
 and relies on its own answer (I14) and $T_{\text{call}}$. When the queue drains (rule~D), every
 call MUST be re-validated against the \emph{current} authority scope and
@@ -1408,8 +1423,9 @@ is detached only when no key in $C(s)$ has a connected transport.
 \begin{invariant}[I-CHECKPOINT --- Checkpoint anchoring (SHOULD)]\label{inv:icheckpoint}
 The bridge SHOULD emit a \texttt{CHECKPOINT} event at least every $N$
 events (default 1000) or every $T_{\text{cp}}$ (default 5 minutes),
-whichever comes first. The event carries the Merkle root (Appendix~\ref{app:merkle})
-over the hashes of all preceding events of the session, the tree size, and
+whichever comes first. The event carries the Merkle tree hash of RFC~9162, \S2.1.1
+(Appendix~\ref{app:merkle}) over the hashes of all preceding events of the
+session, the tree size, and
 a signature under the operator key. The bridge SHOULD submit the
 checkpoint to an external append-only transparency log (e.g., SCITT)
 and record the receipt in the event payload.
@@ -1517,8 +1533,7 @@ runtime performs on its own is reported, not prevented.
 Lemma~\ref{lem:recover} (I1 $+$ I4 $+$ I5 $+$ I11), on detach,
 \texttt{RESUME\_PREPARED} is committed before the cell changes. On
 re-attach, only a presenter that holds a registered key and answers a
-live, unused nonce is admitted (modulo the pre-registration replay of
-Table~\ref{tab:limitations}), and only for a history that is a prefix
+live, unused nonce is admitted, and only for a history that is a prefix
 of the chain (I4, I11); every later event is replayed to it. On success,
 the bridge enters $a=\textsc{Res}$ and re-verifies the hash chain. By I5, any edit or reordering of the chain before its last events is
 detected; removal or rewriting of the last events is not (Section~\ref{sec:limitations}). Across a restart, the cell is rebuilt from the committed log

@@ -130,7 +130,7 @@ the registry of client public keys (I11).
 \texttt{status: "added"} \emph{or} \texttt{status: "rejected"}, \texttt{reason} &
 \texttt{["bc/v1/add-client", sid, via\_key\_id, new\_key\_id, scheme, new\_public\_key, nonce]} \\
 \texttt{challenge} &
-\texttt{session\_id} &
+\texttt{session\_id}, \texttt{key\_id} &
 \texttt{status: "nonce"}, \texttt{nonce}, \texttt{ttl\_seconds} &
 --- (no signature) \\
 \texttt{reattach} &
@@ -155,7 +155,7 @@ same as \texttt{reattach} (session is attached) &
 --- \\
 \texttt{submit\_tool\_call} &
 \texttt{session\_id}, \texttt{tool}, \texttt{key}?, \texttt{permission}?, \texttt{content} &
-\texttt{status: "queued"} or \texttt{"forwarded"} (under the forward profile); a duplicate key or a full queue is refused through the error envelope (\texttt{duplicate\_key}, \texttt{queue\_full}) &
+\texttt{status: "queued"} or \texttt{"forwarded"} (under the forward profile), with the call's \texttt{key}; a duplicate key or a full queue is refused through the error envelope (\texttt{duplicate\_key}, \texttt{queue\_full}) &
 --- \\
 \texttt{answer\_tool\_call} &
 \texttt{session\_id}, \texttt{key}, \texttt{shown\_hash}, \texttt{decision} &
@@ -228,8 +228,8 @@ registered.
 \texttt{via\_key\_id}) authorises the new key. The signature is over
 \texttt{["bc/v1/add-client", sid, via\_key\_id, new\_key\_id, scheme,
 new\_public\_key, nonce]}, where \texttt{nonce} was issued by a
-\texttt{challenge} for the session and is spent by the first authentic
-presentation, so the authorisation cannot be replayed, and
+\texttt{challenge} naming \texttt{via\_key\_id} and is spent by the first
+authentic presentation, so the authorisation cannot be replayed, and
 \texttt{new\_public\_key} is the hex string registered. The bridge verifies
 under the registered key of \texttt{via\_key\_id}, which must be connected
 and not revoked. The refusals are \texttt{via\_not\_connected},
@@ -374,21 +374,23 @@ snake\_case \texttt{reason}. The defined reasons are:
 \texttt{nonce\_used} & The nonce has already been spent (I11d). \\
 \texttt{nonce\_expired} & The nonce is older than $T_{\text{nonce}}$ (I9). \\
 \texttt{nonce\_unknown} & The nonce was never issued by the bridge for this session (I11b). \\
+\texttt{nonce\_binding} & The nonce was issued for another key id, or for this one before it was registered or while it was revoked (I11b). Recorded only; the request is answered \texttt{bad\_signature} and the nonce is not spent. \\
 \texttt{prefix\_mismatch} & The $(\mathit{seq}, \mathit{hash})$ pair is not a prefix of the bridge's chain (I4). \\
 \texttt{resume\_in\_progress} & A re-attach is already being verified (I11d). \\
-\texttt{already\_attached} & An authentic \texttt{reattach} reached a session that is attached; \texttt{join} is the only way into an attached session. Given only after the signature verifies; the nonce is spent. \\
+\texttt{already\_attached} & An authentic \texttt{reattach} reached a session that is attached; \texttt{join} is the only way into an attached session. Given only after the signature, the revocation, the binding and the nonce have been checked; the nonce is spent. \\
+\texttt{not\_attached} & An authentic \texttt{join} reached a session that is not attached. Given only after the same checks; the nonce is spent. \\
 \texttt{transport\_replay} & The transport reported a 0-RTT replay (I8). \\
 \texttt{queue\_full} & The tool-call queue is at $Q_{\max}$ (I13). \\
 \texttt{unanswered} & The call has no answer at drain (I14). \\
 \texttt{denied} & The call was answered with \texttt{deny} (I14). \\
 \texttt{answer\_mismatch} & $h_a \neq h_q$ at drain (I14). \\
-\texttt{scope} & The call's permission is not in the current scope at drain (I13). \\
+\texttt{scope} & The call's permission is not in the current scope, at drain (I13) or, for a call submitted with a client attached and no escalation pending, at submission (I3). \\
 \texttt{call\_ttl} & The queued call outlived $T_{\text{call}}$ (I13). \\
 \texttt{approval\_ttl} & The approval outlived $T_{\text{approve}}$ (I13). \\
 \texttt{terminated} & The session is in $\bot$ (I6). \\
 \texttt{quarantined} & The session is quarantined (rule~Q). \\
-\texttt{not\_a\_strict\_narrowing} & The proposed scope equals or widens the current scope (I10). The reference bridges do not emit this name: they answer such a \texttt{narrow} with \texttt{refused}. \\
-\texttt{refused} & The uniform refusal that names no cause: an unknown, terminated or quarantined session at re-attach or join (I11a), and in the reference bridges also a \texttt{join} on a session that is not attached and a \texttt{narrow} that is not a strict narrowing. \\
+\texttt{not\_a\_strict\_narrowing} & The proposed scope equals or widens the current scope (I10). \\
+\texttt{refused} & The uniform refusal that names no cause: an unknown, terminated or quarantined session at re-attach or join (I11a), and the answer to a request that finds its session ended by a timer that expired in an earlier tick. \\
 \texttt{unsupported\_op} & The reference wire server does not serve the op-type named. \\
 \texttt{bad\_signature} & The signature does not verify, is malformed, or (re-attach and join) names a key id the session does not register. \\
 \texttt{via\_not\_connected} & \texttt{add\_client} names an authorising key that is not connected (I15). \\
@@ -411,7 +413,8 @@ snake\_case \texttt{reason}. The defined reasons are:
 A challenge--reattach sequence:
 
 \begin{lstlisting}
--> {"op": "challenge", "session_id": "sess-001"}
+-> {"op": "challenge", "session_id": "sess-001",
+    "key_id": "ck-7f3a"}
 <- {"status": "nonce", "session_id": "sess-001",
     "nonce": "9c1f5e0a77d24b3e8a6f21d0c4b7e913",
     "ttl_seconds": 60}
@@ -425,12 +428,6 @@ A challenge--reattach sequence:
 <- {"status": "verified", "session_id": "sess-001",
     "events": [{"sequence": 7, ...}, {"sequence": 8, ...}]}
 \end{lstlisting}
-
-\noindent The reference wire servers return only the kinds of the replayed
-events in \texttt{events} of a \texttt{verified} or \texttt{joined}
-response (for example \texttt{["TOOL\_CALL\_QUEUED", ...]}), not the event
-objects shown here, and their \texttt{narrow} response carries no
-\texttt{new\_version}, which the message schema requires.
 
 \noindent A rejection:
 

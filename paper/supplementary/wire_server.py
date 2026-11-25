@@ -13,8 +13,11 @@ and ``terminate``, and the operator events ``revoke``, ``add_key`` and
 ``operator_terminate``, which carry the operator's signature.  ``attach``
 carries the scope grant and the client's proof of possession, so it needs no
 transport check; the operator events are verified by the bridge against the
-operator key.  Any other op is refused as ``unsupported_op``.  A request
-that is not canonical JSON is refused as ``bad_canonical``.
+operator key.  A ``revoke`` that carries no signature is a client's request
+for a revocation and is treated as an unsigned op.  Any other op is refused
+as ``unsupported_op``.  A request that is not canonical JSON, that is nested
+deeper than ``MAX_DEPTH`` or whose fields are missing or of the wrong type
+is refused as ``bad_canonical``.
 """
 from __future__ import annotations
 
@@ -45,14 +48,60 @@ UNSIGNED_OPS = frozenset({
     "disconnect", "escalate", "submit_tool_call", "answer_tool_call",
     "resolve", "delivered", "completed", "narrow", "extend", "terminate"})
 
+# No message of Appendix B nests deeper than a tool call's content inside the
+# envelope; a request nested deeper than this is refused before it is parsed,
+# so a deeply nested body cannot exhaust the parser's stack.
+MAX_DEPTH = 32
+
+
+def nesting_depth(data: bytes) -> int:
+    """The deepest nesting of arrays and objects in a JSON text, counted on
+    the bytes (brackets inside strings do not count)."""
+    depth = deepest = 0
+    in_string = escaped = False
+    for byte in data:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 0x5C:            # backslash
+                escaped = True
+            elif byte == 0x22:            # closing quote
+                in_string = False
+        elif byte == 0x22:
+            in_string = True
+        elif byte in (0x5B, 0x7B):        # [ {
+            depth += 1
+            deepest = max(deepest, depth)
+        elif byte in (0x5D, 0x7D):        # ] }
+            depth -= 1
+    return deepest
+
+
+def is_unsigned(msg: dict) -> bool:
+    """Whether the transport binding must authenticate the caller: the ops
+    of ``UNSIGNED_OPS``, and a ``revoke`` without an operator signature (a
+    client's request for a revocation, which appends an event on the
+    caller's word alone)."""
+    if msg["op"] in UNSIGNED_OPS:
+        return True
+    return (msg["op"] == "revoke" and not msg.get("signature")
+            and "requested_by" in msg)
+
+
+def event_object(ev: cs.Event) -> dict[str, Any]:
+    """An event as a wire object (the envelope of ``event.schema.json``)."""
+    return {"kind": ev.kind.value, "session_id": ev.session_id,
+            "sequence": ev.sequence, "prev_hash": ev.prev_hash,
+            "payload": ev.payload, "timestamp": ev.timestamp}
+
 
 class WireServer:
     """``authenticate(op, message) -> bool`` is the hook where a deployment
     puts its transport-level caller check (a client certificate, a session
-    token).  It is called for every op in ``UNSIGNED_OPS`` before the bridge
-    sees it; a false answer refuses the op as ``unauthenticated`` and nothing
-    is committed.  With no hook every caller is accepted, which is only
-    acceptable for the reference harness."""
+    token).  It is called for every unsigned op (``is_unsigned``) before the
+    bridge sees it; a false answer refuses the op as ``unauthenticated`` and
+    nothing is committed.  With no hook every caller is accepted, which is
+    only acceptable for the reference harness."""
 
     def __init__(self, bridge: cs.Bridge, authenticate=None) -> None:
         self.bridge = bridge
@@ -60,16 +109,20 @@ class WireServer:
 
     def handle(self, data: bytes) -> bytes:
         try:
+            if nesting_depth(data) > MAX_DEPTH:
+                raise ValueError("nested too deeply")
             msg = wire.decode_message(data)
             if wire.canonical_bytes(msg) != data:
                 raise ValueError("not canonical")
-        except (ValueError, UnicodeDecodeError):
+            sid = msg.get("session_id", "")
+            if not isinstance(sid, str) or not isinstance(msg["op"], str):
+                raise ValueError("session_id and op are strings")
+        except (ValueError, UnicodeDecodeError, RecursionError):
             return wire.encode_error("", "bad_canonical")
-        sid = msg.get("session_id", "")
-        handler = getattr(self, "_op_" + str(msg["op"]), None)
+        handler = getattr(self, "_op_" + msg["op"], None)
         if handler is None:
             return wire.encode_error(sid, "unsupported_op")
-        if (self.authenticate is not None and msg["op"] in UNSIGNED_OPS
+        if (self.authenticate is not None and is_unsigned(msg)
                 and not self.authenticate(msg["op"], msg)):
             return wire.encode_error(sid, "unauthenticated")
         try:
@@ -92,7 +145,9 @@ class WireServer:
             hash=self.bridge.events[sid][0].event_hash())
 
     def _op_challenge(self, sid: str, m: dict) -> bytes:
-        ch = self.bridge.challenge(sid)
+        """The nonce is issued for the key id the message names; the answer
+        has the same form whatever that key id is."""
+        ch = self.bridge.challenge(sid, m["key_id"])
         return wire.encode_response("nonce", session_id=sid,
                                     nonce=ch.nonce, ttl_seconds=ch.ttl_seconds)
 
@@ -109,16 +164,18 @@ class WireServer:
                                 m["signature"])
 
     def _op_reattach(self, sid: str, m: dict) -> bytes:
+        """The response carries the events after the acknowledged prefix, as
+        event objects."""
         events = self.bridge.client_reattach(sid, self._request(m))
         return wire.encode_response(
             "verified", session_id=sid,
-            events=[e.kind.value for e in events or []])
+            events=[event_object(e) for e in events or []])
 
     def _op_join(self, sid: str, m: dict) -> bytes:
         events = self.bridge.join(sid, self._request(m))
         return wire.encode_response(
             "joined", session_id=sid,
-            events=[e.kind.value for e in events or []])
+            events=[event_object(e) for e in events or []])
 
     def _op_disconnect(self, sid: str, m: dict) -> bytes:
         self.bridge.client_disconnect(sid, m.get("key_id"), m["reason"])
@@ -168,14 +225,16 @@ class WireServer:
         return wire.encode_response("terminated", session_id=sid)
 
     def _op_submit_tool_call(self, sid: str, m: dict) -> bytes:
-        out = self.bridge.submit_tool_call(
+        """The response carries the idempotency key of the call: the
+        caller's, or the one the bridge generated."""
+        out, key = self.bridge.submit_tool_call_keyed(
             sid, m["tool"], key=m.get("key"), permission=m.get("permission"),
             content=m["content"])
         if out == "DUPLICATE":
             return wire.encode_error(sid, "duplicate_key")
         if out == "REJECTED":
             return wire.encode_error(sid, "queue_full")
-        return wire.encode_response(out.lower(), session_id=sid)
+        return wire.encode_response(out.lower(), session_id=sid, key=key)
 
     def _op_answer_tool_call(self, sid: str, m: dict) -> bytes:
         self.bridge.answer_tool_call(sid, m["key"], m["shown_hash"],
@@ -191,8 +250,9 @@ class WireServer:
         return wire.encode_response("completed", session_id=sid)
 
     def _op_narrow(self, sid: str, m: dict) -> bytes:
-        self.bridge.narrow_authority_scope(sid, tuple(m["new_scope"]))
-        return wire.encode_response("narrowed", session_id=sid)
+        version = self.bridge.narrow_authority_scope(sid, tuple(m["new_scope"]))
+        return wire.encode_response("narrowed", session_id=sid,
+                                    new_version=version)
 
     def _op_terminate(self, sid: str, m: dict) -> bytes:
         self.bridge.terminate(sid, m["reason"])

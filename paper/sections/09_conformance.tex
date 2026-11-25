@@ -18,7 +18,7 @@ I-SIGN-JWKS concern keys and external services outside the reference
 bridge and have no test or vector; I-SIGN-JWKS is a MUST, so a claim
 of conformance to it rests on inspection of how the bridge obtains
 keys, not on a test, and it has no mutant. I-CHECKPOINT local emission
-and field names are tested by T63--T66 and by vectors V52--V54, V88 and
+and field names are tested by T63--T66 and by vectors V52--V54c, V88 and
 V89, which expect the \texttt{CHECKPOINT} event and run on the Python bridge
 only, because the Rust crate has no emission (its runner skips vectors that
 require it); external anchoring (SCITT submission) has no test.
@@ -110,7 +110,7 @@ checked for staleness by \texttt{run\_vectors.py --check-paper}; a
 trailing \texttt{!} marks an action the bridge must refuse. The Python
 reference bridge passes all of them (\texttt{python3 -I run\_vectors.py}),
 and the Rust crate in \texttt{supplementary/rust-bridge/} runs the same
-files, except V52--V54, V88 and V89, which expect checkpoint events the
+files, except V52--V54c, V88 and V89, which expect checkpoint events the
 crate does not emit.
 
 Table~\ref{tab:vectors} lists them.
@@ -132,7 +132,7 @@ schema. \texttt{CHECKPOINT} is specified (I-CHECKPOINT, SHOULD) with
 frozen field names (\texttt{root}, \texttt{tree\_size},
 \texttt{signature}, \texttt{receipt}) and is emitted by the
 reference bridge when the configured threshold is reached
-(tests T63--T66, vectors V52--V54, V88, V89).
+(tests T63--T66, vectors V52--V54c, V88, V89).
 
 \subsection{Fault-injection and cost measurements}\label{sec:measurements}
 
@@ -145,7 +145,7 @@ that, produced by \texttt{supplementary/measure\_faults.py}
 \paragraph{Event loss.} For each fault class the script generates
 seeded schedules of tool calls, human escalations and answers, clock
 advances and one injected fault type (client disconnects, human
-timeouts, replays of re-attach requests the bridge had accepted, resubmitted call keys, bridge
+timeouts, replays of re-attach requests the bridge had accepted, replays of requests refused before their key was registered, resubmitted call keys, bridge
 restarts, and all of them together), and runs the same schedule against
 the reference bridge and against an acknowledging relay. The relay is a
 stand-in whose rules are listed in the script: it numbers every accepted
@@ -178,9 +178,10 @@ re-attach requests that the bridge had accepted are rejected in every
 attempt by the bridge (nonce use and expiry, I9) and accepted in every
 attempt by the relay, which has nothing to check them against; this is the
 authentication the contract adds and the relay lacks by construction. The
-measurement replays only requests that were accepted: a request refused
-before its key was registered, which both bridges accept on replay once the
-key is registered (limitations register), is not among its fault classes. The bridge forwards fewer duplicate
+same holds for a request refused before its key was registered and
+presented again once the key is registered (the pre-registration row): the
+bridge refuses every replay, because the nonce was issued for a key that was
+not registered, and the relay accepts every one. The bridge forwards fewer duplicate
 keys (the Dup column) because it holds a queued call under its key (I14);
 the relay forwards a resubmitted key as a new call. The bridge does
 \emph{not} remove duplicates in general: a call forwarded directly while a

@@ -247,8 +247,12 @@ pub fn op_add_client(session_id: &str, via_key_id: &str, new_key_id: &str, schem
     encode_message("add_client", Some(session_id), &fields)
 }
 
-pub fn op_challenge(session_id: &str) -> Vec<u8> {
-    encode_message("challenge", Some(session_id), &Map::new())
+/// A challenge names the key id the nonce is for; the bridge binds the
+/// nonce to it and answers the same way for any key id.
+pub fn op_challenge(session_id: &str, key_id: &str) -> Vec<u8> {
+    let mut f = Map::new();
+    f.insert("key_id".into(), json!(key_id));
+    encode_message("challenge", Some(session_id), &f)
 }
 
 pub fn op_reattach(session_id: &str, key_id: &str, nonce: &str, seq: u64,
@@ -431,7 +435,7 @@ mod tests {
 
     #[test]
     fn test_challenge_roundtrip() {
-        let msg = op_challenge("sess-001");
+        let msg = op_challenge("sess-001", "ck-1");
         let decoded = decode_message(&msg).unwrap();
         assert_eq!(decoded["op"], "challenge");
         assert_eq!(decoded["session_id"], "sess-001");

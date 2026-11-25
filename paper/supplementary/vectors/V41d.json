@@ -1,0 +1,65 @@
+{
+  "id": "V41d",
+  "title": "An approval is valid one second before T_approve: the call is forwarded",
+  "covers": [
+    "I13"
+  ],
+  "config": {
+    "t_approve": 100,
+    "t_detach": 10000
+  },
+  "session": {
+    "session_id": "sess-41d",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "escalate"
+    },
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "tool_call",
+      "key": "k1",
+      "tool": "shell:git push"
+    },
+    {
+      "do": "resolve"
+    },
+    {
+      "do": "advance",
+      "seconds": 99
+    },
+    {
+      "do": "reattach"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "HUMAN_PENDING",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "TOOL_CALL_QUEUED",
+      "TOOL_CALL_ANSWERED",
+      "HUMAN_RESOLVED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED",
+      "TOOL_CALL_DRAINED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "forwarded": [
+      "k1"
+    ]
+  }
+}

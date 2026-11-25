@@ -82,6 +82,8 @@ struct Runner {
     keys: HashMap<String, ClientKey>,
     seen: HashMap<String, (i64, String)>,
     nonces: HashMap<String, String>,
+    /// Requests kept under a name by `as`, for `replay_of`.
+    requests: HashMap<String, ResumeRequest>,
     last_add: (String, String, String),
     /// Wire mode: the actions of `WIRE_ROUTED` are sent as Appendix B
     /// messages to this server, over the same bridge.
@@ -94,7 +96,7 @@ fn config_of(v: &Value) -> Result<Config> {
     // The Rust bridge does not implement I-CHECKPOINT emission yet;
     // always disable checkpoints so V52-V54 (which set small thresholds)
     // don't expect CHECKPOINT events that the Rust bridge won't emit.
-    let (n_cp, t_cp) = (1_000_000_000usize, f64::INFINITY);
+    let (n_cp, t_cp) = (1_000_000_000usize, 1.0e18);
     if let Some(m) = v.as_object() {
         for (k, x) in m {
             match k.as_str() {
@@ -229,6 +231,7 @@ impl Runner {
             keys: HashMap::from([(first.clone(), key)]),
             seen: HashMap::new(),
             nonces: HashMap::new(),
+            requests: HashMap::new(),
             last_add: Default::default(),
             server,
         };
@@ -280,11 +283,12 @@ impl Runner {
         send(server, &mut self.bridge, &data).map_err(|reason| BridgeError::new(format!("rejected: {reason} (wire)")))
     }
 
-    fn fresh_nonce(&mut self) -> Result<String> {
+    /// A challenge for `key_id`: the nonce is bound to that key id.
+    fn fresh_nonce(&mut self, key_id: &str) -> Result<String> {
         if self.server.is_none() {
-            return Ok(self.bridge.challenge(&self.sid)?.nonce);
+            return Ok(self.bridge.challenge(&self.sid, key_id)?.nonce);
         }
-        let resp = self.send(wire::op_challenge(&self.sid))?;
+        let resp = self.send(wire::op_challenge(&self.sid, key_id))?;
         Ok(resp["nonce"].as_str().expect("a nonce").to_string())
     }
 
@@ -307,7 +311,7 @@ impl Runner {
         let sid = self.sid.clone();
         let kind = a["do"].as_str().unwrap();
         let sent = match kind {
-            "challenge" => self.fresh_nonce().map(|n| {
+            "challenge" => self.fresh_nonce(&a["client"].as_str().unwrap_or(&self.first).to_string()).map(|n| {
                 if let Some(name) = a["as"].as_str() {
                     self.nonces.insert(name.to_string(), n);
                 }
@@ -442,13 +446,24 @@ impl Runner {
     }
 
     fn request(&mut self, a: &Value, op: ResumeOp) -> Result<ResumeRequest> {
+        if let Some(name) = a["replay_of"].as_str() {
+            return Ok(self.requests[name].clone()); // an earlier request, byte for byte
+        }
+        let req = self.new_request(a, op)?;
+        if let Some(name) = a["as"].as_str() {
+            self.requests.insert(name.to_string(), req.clone());
+        }
+        Ok(req)
+    }
+
+    fn new_request(&mut self, a: &Value, op: ResumeOp) -> Result<ResumeRequest> {
         let client = a["client"].as_str().unwrap_or(&self.first).to_string();
         let key = self.key(&client);
         let nonce = match a["nonce"].as_str().unwrap_or("fresh") {
-            "fresh" => self.fresh_nonce()?,
+            "fresh" => self.fresh_nonce(&client)?,
             "unknown" => "ab".repeat(16),
             // issued for a second session
-            "other-session" => self.bridge.challenge(a["from_session"].as_str().unwrap())?.nonce,
+            "other-session" => self.bridge.challenge(a["from_session"].as_str().unwrap(), &client)?.nonce,
             name => self.nonces[name].clone(),
         };
         if let Some(n) = a["as"].as_str() {
@@ -511,8 +526,9 @@ impl Runner {
         let signer = self.key(&via);
         let nonce = match a["nonce"].as_str() {
             // issued for a second session
-            Some("other-session") => self.bridge.challenge(a["from_session"].as_str().unwrap())?.nonce,
-            _ => self.fresh_nonce()?,
+            Some("other-session") => self.bridge.challenge(a["from_session"].as_str().unwrap(), &via)?.nonce,
+            Some(name) => self.nonces[name].clone(),
+            None => self.fresh_nonce(&via)?,
         };
         let public = new.public();
         let sig = match proof.as_str() {
@@ -578,7 +594,7 @@ impl Runner {
                 .map(|_| ()),
             "delivered" => self.bridge.delivered(&sid, a["key"].as_str().unwrap()),
             "completed" => self.bridge.completed(&sid, a["key"].as_str().unwrap(), a["result_hash"].as_str().unwrap_or("")),
-            "narrow" => self.bridge.narrow_authority_scope(&sid, &strings(&a["scope"])),
+            "narrow" => self.bridge.narrow_authority_scope(&sid, &strings(&a["scope"])).map(|_| ()),
             "extend" => {
                 let source = match a["source"].as_str().unwrap_or("requested") {
                     "observed" => Source::Observed,
@@ -652,7 +668,8 @@ impl Runner {
                 self.bridge.operator_terminate(&sid, "all_keys_revoked", &signature)
             }
             "challenge" => {
-                let n = self.bridge.challenge(&sid)?.nonce;
+                let who = a["client"].as_str().unwrap_or(&self.first).to_string();
+                let n = self.bridge.challenge(&sid, &who)?.nonce;
                 if let Some(name) = a["as"].as_str() {
                     self.nonces.insert(name.to_string(), n);
                 }
@@ -661,8 +678,9 @@ impl Runner {
             "challenge_uniform" => {
                 // I11a: the session and a session the bridge never saw are
                 // refused with the same text
-                let own = self.bridge.challenge(&sid).err().map(|e| e.0);
-                let other = self.bridge.challenge("no-such-session").err().map(|e| e.0);
+                let who = a["client"].as_str().unwrap_or(&self.first).to_string();
+                let own = self.bridge.challenge(&sid, &who).err().map(|e| e.0);
+                let other = self.bridge.challenge("no-such-session", &who).err().map(|e| e.0);
                 assert!(own.is_some() && own == other, "{own:?} vs {other:?}");
                 Ok(())
             }
@@ -704,6 +722,9 @@ impl Runner {
             "complete_resume" => self.bridge.complete_resume(&sid).map(|_| ()),
             "advance" => {
                 self.clock.advance(a["seconds"].as_f64().unwrap());
+                if a["tick"].as_bool() == Some(false) {
+                    return Ok(()); // the clock moves and no timer is evaluated yet
+                }
                 self.bridge.tick(None)
             }
             "tick" => self.bridge.tick(None),
@@ -955,7 +976,7 @@ fn run_all(label: &str, wire: bool, make: impl Fn() -> Arc<dyn TestStorage>) {
     }
     assert_eq!(bad, 0, "{bad} vector(s) failed on {label}");
     // The paper names exactly these as the vectors the crate does not run.
-    assert_eq!(skipped, ["V52", "V53", "V54", "V88", "V89"], "skipped vectors on {label}");
+    assert_eq!(skipped, ["V52", "V53", "V54", "V54b", "V54c", "V88", "V89"], "skipped vectors on {label}");
 }
 
 #[test]
@@ -973,13 +994,49 @@ fn all_vectors_pass_through_the_wire_server() {
 
 #[test]
 fn all_vectors_pass_on_file_storage() {
-    let root = std::env::temp_dir().join(format!("bridge-contract-vectors-{}", std::process::id()));
+    // a fresh directory made for this run and removed on every exit, a
+    // failing run included
+    let root = common::TempDir::new("vectors");
     let n = std::sync::atomic::AtomicUsize::new(0);
     run_all("file", false, || {
-        let dir = root.join(format!("v{}", n.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
+        let dir = root.path().join(format!("v{}", n.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
         common::FileStorage::new(dir)
     });
-    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_torn_trailing_record_is_discarded_on_file_storage() {
+    use std::io::Write;
+    let root = common::TempDir::new("torn");
+    let storage = common::FileStorage::new(root.path().to_path_buf());
+    let clock = FakeClock::new(0.0);
+    let key = ClientKey::new("ck-1", &[1u8; 32]);
+    let mut b = Bridge::new(storage.clone(), clock.clone(), Arc::new(SchemeVerifier), Config::default())
+        .unwrap()
+        .with_grant_verifier(grant_verifier());
+    let id = SessionIdentity {
+        session_id: "s".into(),
+        principal_id: "p".into(),
+        authority_scope: vec!["a".into()],
+        task_lineage: vec![],
+    };
+    common::attach_ok(&mut b, &id, &key).unwrap();
+    let whole = storage.read_log("s").unwrap();
+    assert_eq!(whole.len(), 1);
+    // a crash in the middle of the next append: half a record, no newline
+    let log = std::fs::read_dir(root.path().join("logs")).unwrap().next().unwrap().unwrap().path();
+    std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(br#"{"kind":"HUMAN_PEN"#).unwrap();
+    assert_eq!(storage.read_log("s").unwrap(), whole, "the torn record is discarded");
+    // the same record cut at a newline is discarded too
+    std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(b"\n").unwrap();
+    assert_eq!(storage.read_log("s").unwrap(), whole);
+    // a damaged record that is not the last is an error, not silently dropped
+    std::fs::OpenOptions::new().append(true).open(&log).unwrap().write_all(whole_line(&whole[0]).as_bytes()).unwrap();
+    assert!(storage.read_log("s").is_err());
+}
+
+fn whole_line(e: &Event) -> String {
+    format!("{}\n", String::from_utf8(e.canonical()).unwrap())
 }
 
 #[test]
@@ -1023,7 +1080,7 @@ fn a_shared_bridge_serves_sessions_from_several_threads() {
                 b.escalate_to_human(&sid, "x").unwrap();
                 b.client_disconnect(&sid, None, "x").unwrap();
                 let genesis = b.events(&sid)[0].hash();
-                let nonce = b.challenge(&sid).unwrap().nonce;
+                let nonce = b.challenge(&sid, "ck").unwrap().nonce;
                 let req = key.request(&sid, &nonce, 0, &genesis);
                 b.begin_resume(&sid, &req, false).unwrap();
                 b.complete_resume(&sid).unwrap();
@@ -1055,6 +1112,21 @@ fn default_config_satisfies_the_timer_bounds() {
     assert!(Config::new(1800.0, None, None, None, f64::NAN, 60.0, 64).is_err());
     assert!(Config::new(f64::NAN, None, None, None, 900.0, 60.0, 64).is_err());
     assert!(Config::new(-1.0, None, None, None, 900.0, 60.0, 64).is_err());
+    // an infinite timer never fires and has no canonical form in a log
+    assert!(Config::new(1800.0, None, None, None, 900.0, f64::INFINITY, 64).is_err());
+    assert!(Config::new(f64::INFINITY, None, None, Some(f64::INFINITY), 900.0, 60.0, 64).is_err());
+}
+
+#[test]
+fn a_call_whose_content_has_no_canonical_form_is_refused_not_a_panic() {
+    let (mut b, _, _, _, _) = two_key_bridge();
+    b.escalate_to_human("s", "x").unwrap();
+    let before = b.events("s").len();
+    for content in [json!({"n": 9_007_199_254_740_993u64}), json!({"n": u64::MAX})] {
+        let r = b.submit_tool_call("s", "t", Some("k"), None, Some(&content));
+        assert_eq!(r.unwrap_err().1, "bad_canonical");
+    }
+    assert_eq!(b.events("s").len(), before, "a refused call commits nothing");
 }
 
 #[test]
@@ -1150,7 +1222,7 @@ fn two_key_bridge() -> (Bridge, Arc<MemStorage>, Arc<FakeClock>, ClientKey, Clie
     let (k1, k2) = (ClientKey::new("ck-1", &[1u8; 32]), ClientKey::new("ck-2", &[2u8; 32]));
     let id = identity("s");
     common::attach_ok(&mut b, &id, &k1).unwrap();
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-1").unwrap().nonce;
     b.add_client_key("s", "ck-1", "ck-2", k2.scheme(), &k2.public_key(), &nonce, &k1.sign_add_client("s", &k2.public(), &nonce)).unwrap();
     (b, storage, clock, k1, k2)
 }
@@ -1158,7 +1230,7 @@ fn two_key_bridge() -> (Bridge, Arc<MemStorage>, Arc<FakeClock>, ClientKey, Clie
 fn resume(b: &mut Bridge, key: &ClientKey, seq: i64, nonce: Option<String>) -> Result<Vec<Event>> {
     let nonce = match nonce {
         Some(n) => n,
-        None => b.challenge("s")?.nonce,
+        None => b.challenge("s", &key.key_id)?.nonce,
     };
     let hash = b.events("s")[seq as usize].hash();
     b.begin_resume("s", &key.request("s", &nonce, seq, &hash), false)
@@ -1217,7 +1289,7 @@ fn hard_revocation_detaches_only_when_it_removes_the_last_connected_client() {
 
 fn resume_second_client(b: &mut Bridge, _k1: &ClientKey, k2: &ClientKey) {
     let tip = b.events("s").len() as i64 - 1;
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", &k2.key_id).unwrap().nonce;
     let hash = b.events("s")[tip as usize].hash();
     b.join("s", &k2.request_for(ResumeOp::Join, "s", &nonce, tip, &hash), false).unwrap();
     assert_eq!(b.client_set("s"), vec!["ck-1", "ck-2"]);
@@ -1254,24 +1326,26 @@ fn hard_revocation_abandons_the_re_attach_it_is_verifying() {
 }
 
 #[test]
-fn soft_revocation_leaves_the_re_attach_it_is_verifying() {
+fn soft_revocation_abandons_the_re_attach_it_is_verifying() {
     let (mut b, _, _, k1, _) = two_key_bridge();
     b.client_disconnect("s", None, "x").unwrap();
     resume(&mut b, &k1, 1, None).unwrap();
     b.revoke_key("s", "ck-1", "rotation", &sig_revoke(&b, "s", "ck-1", "rotation"), None).unwrap();
-    assert_eq!(b.cell_of("s").names(), vec!["Res", "None"]);
+    // the verification is abandoned, as for a hard revocation
+    assert_eq!(b.cell_of("s").names(), vec!["Det", "None"]);
 }
 
 #[test]
 fn a_key_revoked_after_its_challenge_is_rejected_and_the_nonce_is_spent() {
     let (mut b, _, _, k1, k2) = two_key_bridge();
     b.client_disconnect("s", None, "x").unwrap();
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-1").unwrap().nonce;
     b.revoke_key("s", "ck-1", "rotation", &sig_revoke(&b, "s", "ck-1", "rotation"), None).unwrap();
     assert!(resume(&mut b, &k1, 1, Some(nonce.clone())).is_err());
     assert_eq!(last_reason(&b), "revoked_key");
+    // the nonce was issued for ck-1: it is not ck-2's, and it stays spent
     assert!(resume(&mut b, &k2, 1, Some(nonce)).is_err());
-    assert_eq!(last_reason(&b), "nonce_used");
+    assert_eq!(last_reason(&b), "nonce_binding");
     assert_eq!(b.cell_of("s").names(), vec!["Det", "None"]);
     resume(&mut b, &k2, 1, None).unwrap();
 }
@@ -1302,7 +1376,7 @@ fn the_last_revoked_key_exhausts_the_session_until_the_operator_acts() {
     let mut b = Bridge::recover_with(storage, clock, Arc::new(SchemeVerifier), Config::default(), Some(grant_verifier())).unwrap();
     assert!(!b.is_key_exhausted("s"));
     let tip = b.events("s").len() as i64 - 1;
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-3").unwrap().nonce;
     let hash = b.events("s")[tip as usize].hash();
     b.begin_resume("s", &k3.request("s", &nonce, tip, &hash), false).unwrap();
     b.complete_resume("s").unwrap();
@@ -1455,15 +1529,20 @@ fn a_verifier_without_operator_support_refuses_operator_events() {
     }
     let k1 = ClientKey::new("ck-1", &[1u8; 32]);
     let id = identity("s");
-    let mut c = Bridge::new(MemStorage::new(), FakeClock::new(1000.0), Arc::new(SchemeVerifier), Config::default())
+    let storage = MemStorage::new();
+    let mut c = Bridge::new(storage.clone(), FakeClock::new(1000.0), Arc::new(SchemeVerifier), Config::default())
         .unwrap()
         .with_grant_verifier(Arc::new(GrantOnly));
     c.attach(&id, &k1.public(), Some("any"), Some(k1.prove_attach(&id, DEFAULT_BRIDGE_ID).as_str())).unwrap();
     let e = c.revoke_key("s", "ck-1", "rotation", &sig_revoke(&c, "s", "ck-1", "rotation"), None).unwrap_err();
     assert!(e.0.starts_with("operator_signature_invalid"));
-    // a bridge with no verifier at all refuses too
-    let mut d = Bridge::new(MemStorage::new(), FakeClock::new(1000.0), Arc::new(SchemeVerifier), Config::default()).unwrap();
-    assert!(d.revoke_key("s", "ck-1", "rotation", &sig_revoke(&c, "s", "ck-1", "rotation"), None).is_err());
+    // a bridge with no verifier at all refuses too: it is the same session,
+    // recovered from the same log, so the refusal is not the unknown session's
+    let mut d = Bridge::recover_with(storage, FakeClock::new(1000.0), Arc::new(SchemeVerifier), Config::default(), None).unwrap();
+    assert_eq!(d.registered_keys("s"), vec!["ck-1".to_string()]);
+    let e = d.revoke_key("s", "ck-1", "rotation", &sig_revoke(&d, "s", "ck-1", "rotation"), None).unwrap_err();
+    assert_eq!(e.1, "operator_signature_invalid");
+    assert!(d.revoked_keys("s").is_empty());
 }
 
 #[test]
@@ -1471,15 +1550,15 @@ fn a_reattach_proof_is_not_a_join_proof() {
     let (mut b, _, _, _k1, k2) = two_key_bridge();
     let tip = b.events("s").len() as i64 - 1;
     let hash = b.events("s")[tip as usize].hash();
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-2").unwrap().nonce;
     assert!(b.join("s", &k2.request_for(ResumeOp::Reattach, "s", &nonce, tip, &hash), false).is_err());
     assert_eq!(last_reason(&b), "bad_signature");
     assert_eq!(b.cell_of("s").names(), vec!["Att", "None"]);
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-2").unwrap().nonce;
     b.join("s", &k2.request_for(ResumeOp::Join, "s", &nonce, tip, &hash), false).unwrap();
     // and the other way round, on a detached session
     b.client_disconnect("s", None, "x").unwrap();
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-2").unwrap().nonce;
     let tip = b.events("s").len() as i64 - 1;
     let hash = b.events("s")[tip as usize].hash();
     let k1 = ClientKey::new("ck-1", &[1u8; 32]);
@@ -1495,13 +1574,13 @@ fn a_resume_proof_names_the_key_that_signs_it() {
     let hash = b.events("s")[tip as usize].hash();
     // a proof ck-1 made for itself, presented under ck-2 (the byte-level
     // separation of the key id is pinned in bytes_kat.rs)
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-1").unwrap().nonce;
     let mut req = k1.request("s", &nonce, tip, &hash);
     req.key_id = "ck-2".into();
     assert!(b.begin_resume("s", &req, false).is_err());
     assert_eq!(last_reason(&b), "bad_signature");
     // the untagged tuple of an earlier format is refused
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-1").unwrap().nonce;
     let mut req = k1.request("s", &nonce, tip, &hash);
     req.signature = k1.sign_bytes(&wire::canonical_bytes(&serde_json::json!(["s", nonce, tip, hash])));
     assert!(b.begin_resume("s", &req, false).is_err());
@@ -1518,11 +1597,11 @@ fn a_key_id_is_scoped_to_its_session() {
     assert_eq!(storage.key_record("s", "ck-1").unwrap().unwrap().material, k1.public_key());
     assert_eq!(storage.key_record("s2", "ck-1").unwrap().unwrap().material, mallory.public_key());
     b.client_disconnect("s", None, "x").unwrap();
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-1").unwrap().nonce;
     let hash = b.events("s")[0].hash();
     assert!(b.begin_resume("s", &mallory.request("s", &nonce, 0, &hash), false).is_err());
     assert_eq!(last_reason(&b), "bad_signature");
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-1").unwrap().nonce;
     b.begin_resume("s", &k1.request("s", &nonce, 0, &hash), false).unwrap(); // the owner is not locked out
 }
 
@@ -1531,7 +1610,7 @@ fn a_key_id_registered_in_a_session_is_not_registered_again() {
     let (mut b, storage, _, k1, _) = two_key_bridge();
     let stray = ClientKey::new("ck-1", &[67u8; 32]);
     assert!(storage.register_key("s", "ck-1", stray.scheme(), &stray.public_key()).is_err());
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-1").unwrap().nonce;
     let err = b
         .add_client_key("s", "ck-1", "ck-1", stray.scheme(), &stray.public_key(), &nonce, &k1.sign_add_client("s", &stray.public(), &nonce))
         .unwrap_err();
@@ -1619,13 +1698,13 @@ fn a_reattach_on_an_attached_session_is_refused_and_join_is_the_way_in() {
     assert_eq!(b.cell_of("s").names(), vec!["Att", "None"]);
     assert_eq!(b.client_set("s"), vec!["ck-1".to_string()]);
     // an unauthentic one still gets the unauthenticated reason
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-2").unwrap().nonce;
     let hash = b.events("s")[0].hash();
     let mut forged = k2.request("s", &nonce, 0, &hash);
     forged.signature = "00".repeat(64);
     assert!(b.begin_resume("s", &forged, false).unwrap_err().0.contains("bad_signature"));
     // join is the way in
-    let nonce = b.challenge("s").unwrap().nonce;
+    let nonce = b.challenge("s", "ck-2").unwrap().nonce;
     let req = k2.request_for(ResumeOp::Join, "s", &nonce, 0, &hash);
     b.join("s", &req, false).unwrap();
     assert_eq!(b.client_set("s"), vec!["ck-1".to_string(), "ck-2".to_string()]);
@@ -1710,7 +1789,7 @@ fn a_grant_binds_the_public_key_and_the_bridge() {
 
 #[test]
 fn challenge_refusal_does_not_reveal_session_state() {
-    let refusal = |b: &mut Bridge, sid: &str| b.challenge(sid).unwrap_err().0;
+    let refusal = |b: &mut Bridge, sid: &str| b.challenge(sid, "ck-1").unwrap_err().0;
     let (mut b, storage, _, _, _) = two_key_bridge();
     let unknown = refusal(&mut b, "no-such-session");
     assert_eq!(unknown, CHALLENGE_REFUSED);
@@ -1821,10 +1900,10 @@ fn an_unregistered_key_and_a_bad_signature_are_one_refusal() {
     let (mut b, _, _, k1, _) = two_key_bridge();
     b.client_disconnect("s", None, "client_disconnect").unwrap();
     let hash = b.events("s")[0].hash();
-    let mut bad = k1.request("s", &b.challenge("s").unwrap().nonce, 0, &hash);
+    let mut bad = k1.request("s", &b.challenge("s", "ck-1").unwrap().nonce, 0, &hash);
     bad.signature = "00".repeat(64);
     let stranger = ClientKey::new("ck-9", &[9u8; 32]);
-    let unknown = stranger.request("s", &b.challenge("s").unwrap().nonce, 0, &hash);
+    let unknown = stranger.request("s", &b.challenge("s", "ck-9").unwrap().nonce, 0, &hash);
     let first = b.begin_resume("s", &bad, false).unwrap_err().0;
     let second = b.begin_resume("s", &unknown, false).unwrap_err().0;
     assert_eq!(first, second);
@@ -1836,4 +1915,38 @@ fn an_unregistered_key_and_a_bad_signature_are_one_refusal() {
         .map(|e| e.payload["reason"].as_str().unwrap().to_string())
         .collect();
     assert_eq!(reasons, vec!["bad_signature", "unknown_key"]); // the log keeps the true reason
+}
+
+#[test]
+fn a_revoked_key_request_spends_the_nonce_bound_to_it() {
+    // I11d with I11-REVOKE: the refused request is authentic, so its nonce is
+    // spent. Observable through I11f: a spent record can make room in a full
+    // book, a live one cannot.
+    let (mut b, _, _, _, k2) = two_key_bridge();
+    let held = b.challenge("s", "ck-2").unwrap().nonce;
+    b.revoke_key("s", "ck-2", "rotation", &sig_revoke(&b, "s", "ck-2", "rotation"), None).unwrap();
+    let mut issued = 1;
+    while b.challenge("s", "ck-1").is_ok() {
+        issued += 1;
+        assert!(issued < 100_000, "the book never fills");
+    }
+    let hash = b.events("s")[0].hash();
+    let e = b.begin_resume("s", &k2.request("s", &held, 0, &hash), false).unwrap_err();
+    assert!(e.0.contains("revoked_key"), "{}", e.0);
+    assert!(b.challenge("s", "ck-1").is_ok(), "the spent nonce must make room");
+}
+
+#[test]
+fn a_negative_or_oversized_seq_is_malformed_and_not_logged() {
+    let (mut b, _, _, k1, _) = two_key_bridge();
+    let before = b.events("s").len();
+    let nonce = b.challenge("s", "ck-1").unwrap().nonce;
+    let hash = b.events("s")[0].hash();
+    for seq in [-1i64, (1i64 << 53) + 1] {
+        let mut req = k1.request("s", &nonce, 0, &hash);
+        req.seq = seq;
+        let e = b.begin_resume("s", &req, false).unwrap_err();
+        assert!(e.0.contains("malformed"), "{}", e.0);
+        assert_eq!(b.events("s").len(), before);
+    }
 }

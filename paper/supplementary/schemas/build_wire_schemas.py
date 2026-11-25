@@ -15,6 +15,11 @@ SCHEMA_DIR = Path(__file__).resolve().parent
 MSG_DIR = SCHEMA_DIR / "messages"
 MSG_DIR.mkdir(exist_ok=True)
 
+# An event as a wire object: the envelope of event.schema.json.
+EVENT = {"type": "object",
+         "required": ["kind", "session_id", "sequence", "prev_hash",
+                      "payload", "timestamp"]}
+
 OPS = {
     "attach": {
         "request": {
@@ -49,7 +54,7 @@ OPS = {
             "new_key_id": {"type": "string"},
             "scheme": {"type": "string"},
             "new_public_key": {"type": "string", "pattern": "^[0-9a-f]+$"},
-            "nonce": {"type": "string", "description": "Challenge nonce, single use."},
+            "nonce": {"type": "string", "description": "Challenge nonce, single use, issued for via_key_id."},
             "signature": {"type": "string", "pattern": "^[0-9a-f]+$",
                           "description": "Signature by via_key_id over canonical JSON of [\"bc/v1/add-client\", session_id, via_key_id, new_key_id, scheme, new_public_key, nonce]."},
         },
@@ -61,8 +66,10 @@ OPS = {
     "challenge": {
         "request": {
             "session_id": {"type": "string"},
+            "key_id": {"type": "string",
+                       "description": "The key id the nonce is for. The nonce is bound to it: only a request that names this key id can use the nonce, and only if the key was a registered, unrevoked key of the session when the nonce was issued. The response is the same for every key id."},
         },
-        "request_required": ["session_id"],
+        "request_required": ["session_id", "key_id"],
         "response_status": "nonce",
         "response": {
             "nonce": {"type": "string", "pattern": "^[0-9a-f]{32,}$",
@@ -79,13 +86,13 @@ OPS = {
             "seq": {"type": "integer", "minimum": 0},
             "hash": {"type": "string"},
             "signature": {"type": "string", "pattern": "^[0-9a-f]+$",
-                          "description": "Ed25519 signature over canonical JSON of [session_id, nonce, seq, hash]."},
+                          "description": "Signature by key_id over canonical JSON of [\"bc/v1/reattach\", session_id, key_id, nonce, seq, hash]."},
         },
         "request_required": ["session_id", "key_id", "nonce", "seq", "hash", "signature"],
         "response_status": "verified",
         "response": {
-            "events": {"type": "array", "items": {"type": "object"},
-                       "description": "Committed events after seq, replayed to the client."},
+            "events": {"type": "array", "items": EVENT,
+                       "description": "Committed events after seq, replayed to the client as event objects (event.schema.json)."},
         },
         "response_required": ["events"],
     },
@@ -96,12 +103,14 @@ OPS = {
             "nonce": {"type": "string"},
             "seq": {"type": "integer", "minimum": 0},
             "hash": {"type": "string"},
-            "signature": {"type": "string", "pattern": "^[0-9a-f]+$"},
+            "signature": {"type": "string", "pattern": "^[0-9a-f]+$",
+                          "description": "Signature by key_id over canonical JSON of [\"bc/v1/join\", session_id, key_id, nonce, seq, hash]."},
         },
         "request_required": ["session_id", "key_id", "nonce", "seq", "hash", "signature"],
         "response_status": "joined",
         "response": {
-            "events": {"type": "array", "items": {"type": "object"}},
+            "events": {"type": "array", "items": EVENT,
+                       "description": "Committed events after seq, as event objects (event.schema.json)."},
         },
         "response_required": ["events"],
     },
@@ -151,7 +160,7 @@ OPS = {
         "response_statuses": ["queued", "forwarded"],
         "response": {
             "key": {"type": "string",
-                    "description": "The idempotency key (echoed or generated)."},
+                    "description": "The idempotency key (echoed or generated; empty for a call forwarded directly without one)."},
         },
         "response_required": ["key"],
     },
@@ -223,7 +232,7 @@ OPS = {
             "key_id": {"type": "string"},
             "reason": {"type": "string", "enum": ["rotation", "compromise"]},
             "signature": {"type": "string", "pattern": "^[0-9a-f]*$",
-                          "description": "Operator signature over canonical JSON of [\"bc/v1/revoke\", bridge_id, session_id, key_id, reason, seq, head]; empty with requested_by records only a request."},
+                          "description": "Operator signature over canonical JSON of [\"bc/v1/revoke\", bridge_id, session_id, key_id, reason, seq, head]; absent or empty with requested_by, the message is a client's request for a revocation: an unsigned op that records only the request."},
             "requested_by": {"type": "string"},
         },
         "request_required": ["session_id", "key_id", "reason"],
@@ -299,7 +308,7 @@ REASONS = [
     "revoked_key", "key_exhausted", "duplicate_key", "grant_invalid",
     "unauthenticated", "possession_invalid", "operator_signature_invalid",
     "not_key_exhausted", "key_already_registered", "extension_rejected",
-    "via_not_connected", "unsupported_op", "refused",
+    "via_not_connected", "unsupported_op", "refused", "not_attached",
 ]
 
 

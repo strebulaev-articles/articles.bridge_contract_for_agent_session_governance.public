@@ -1,0 +1,56 @@
+{
+  "id": "V62f",
+  "title": "A client registration with a nonce issued for another key is refused as a bad signature",
+  "covers": [
+    "I11",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-62f",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "challenge",
+      "client": "ck-2",
+      "as": "n1"
+    },
+    {
+      "do": "add_client",
+      "client": "ck-3",
+      "nonce": "n1",
+      "reason": "bad_signature",
+      "error": true
+    },
+    {
+      "do": "add_client",
+      "client": "ck-3"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "CLIENT_ADDED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "registry": [
+      "ck-1",
+      "ck-2",
+      "ck-3"
+    ]
+  }
+}

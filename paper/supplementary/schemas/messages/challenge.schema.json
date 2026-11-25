@@ -9,11 +9,16 @@
     },
     "session_id": {
       "type": "string"
+    },
+    "key_id": {
+      "type": "string",
+      "description": "The key id the nonce is for. The nonce is bound to it: only a request that names this key id can use the nonce, and only if the key was a registered, unrevoked key of the session when the nonce was issued. The response is the same for every key id."
     }
   },
   "required": [
     "op",
-    "session_id"
+    "session_id",
+    "key_id"
   ],
   "additionalProperties": false
 }

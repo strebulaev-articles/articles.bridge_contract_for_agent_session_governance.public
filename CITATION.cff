@@ -8,8 +8,8 @@ authors:
   orcid: https://orcid.org/0009-0006-2710-8910
   affiliation: Independent Researcher
 subtitle: Independent specification draft
-version: 0.10.3
-date-released: '2026-11-21'
+version: 0.10.4
+date-released: '2026-11-25'
 abstract: 'Existing agent protocols --- the Agent Transfer Protocol (AGTP), the
 
   Governance Audit Record (GAR) and the Protocol for Agent Communication
@@ -60,7 +60,7 @@ abstract: 'Existing agent protocols --- the Agent Transfer Protocol (AGTP), the
 
   a killed mutant, on a Python bridge; vectors V01--V134 pass on it, and
 
-  all but the checkpoint-emission vectors (V52--V54, V88, V89; they need a
+  all but the checkpoint-emission vectors (V52--V54c, V88, V89; they need a
 
   feature the crate lacks) pass on a Rust crate. Both implementations have the
 
@@ -70,11 +70,7 @@ abstract: 'Existing agent protocols --- the Agent Transfer Protocol (AGTP), the
 
   confirmation; the limits are stated in the limitations section and
 
-  the limitations register, which also lists where the reference bridges
-
-  do not yet meet the text, among them the replay of a request refused
-
-  before its key was registered.
+  the limitations register.
 
   '
 keywords:
@@ -90,6 +86,10 @@ keywords:
 license: CC-BY-4.0
 repository-code: https://github.com/strebulaev-articles/articles.bridge_contract_for_agent_session_governance.public
 url: https://github.com/strebulaev-articles/articles.bridge_contract_for_agent_session_governance.public
+identifiers:
+- type: doi
+  value: 10.5281/zenodo.24409592
+  description: Zenodo DOI
 preferred-citation:
   type: unpublished
   title: Bridge Contract for Agent Session Governance
@@ -98,6 +98,10 @@ preferred-citation:
     given-names: Sergei A.
     orcid: https://orcid.org/0009-0006-2710-8910
     affiliation: Independent Researcher
-  notes: v0.10.3, deposited on Zenodo
+  notes: v0.10.4, deposited on Zenodo
   year: 2026
   month: 11
+  identifiers:
+  - type: doi
+    value: 10.5281/zenodo.24409592
+    description: Zenodo DOI

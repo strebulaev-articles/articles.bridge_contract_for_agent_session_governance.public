@@ -311,14 +311,14 @@ R & Bridge repudiation (a Byzantine bridge is out of scope, A4) & Partial (I5 + 
 \textbf{I} & \textbf{Disclosure of the resume record and of the replay} & \textbf{Partial} & \textbf{Bridge operator (encryption at rest and in transit per \S\ref{sec:limitations})} \\
 I & Event log information disclosure & No & Bridge operator (deployment-level access control) \\
 I & Tool-call queue information disclosure & No & Bridge operator (queue contents in the log and the replay; mitigate via encryption) \\
-D & Detach timeout exhaustion & Partial (L1 bounds detachment and gives no availability; it is violated for a soft-revoked key in $a=\textsc{Res}$ through the two-phase interface; Table~\ref{tab:limitations}) & Bridge operator; deployment (Table~\ref{tab:limitations}) \\
+D & Detach timeout exhaustion & Partial (L1 bounds detachment and gives no availability; Table~\ref{tab:limitations}) & Bridge operator; deployment (Table~\ref{tab:limitations}) \\
 D & Human timeout exhaustion & Yes (L2) & --- \\
 D & Session termination by forged re-attach attempts or by holding the nonce book & Partial (I11: a rejected request changes no cell; but a caller without a key that holds the live-nonce limit refuses a detached client every challenge until $T_{\text{detach}}$ ends the session, Section~\ref{sec:invariants-token-auth}) & Rate-limiting or authentication of the transport in front of \texttt{challenge}: bridge operator \\
 D & Denying a genuine re-attach by flooding \texttt{challenge} or the log without a key & Partial (I11 (f), (g): a live nonce is never evicted, and the failures before authentication recorded between two verifying requests are bounded; a replayed authentic request is recorded and restores that allowance, so the log grows with the caller's effort; the limit of live nonces can still be held, delaying a new challenge by up to $T_{\text{nonce}}$ each time) & Rate-limiting or authentication of the transport in front of \texttt{challenge}: bridge operator \\
 D & Bridge restart & Partial (I12, Section~\ref{sec:recovery}) & Bridge operator (HA, replication) \\
 E & Authority drift in any cell & Partial (I3 observed; I10 for the bridge's record) & Runtime; deployment operator (Table~\ref{tab:limitations}) \\
 E & Privilege escalation by presenting a stale or forged history & Yes (I4, I11) & --- \\
-S & Replay of a captured re-attach or join request & Partial (a request that was accepted cannot be replayed: I11 single use, I9 lifetime; one refused before its key was registered is accepted if the key is registered within $T_{\text{nonce}}$, Table~\ref{tab:limitations}) & Author (fix planned, not done); deployment operator (register a key before its device presents a request) \\
+S & Replay of a captured re-attach or join request & Yes (a captured request cannot be replayed: I11 single use, I9 lifetime, and a nonce issued for a key that was not registered never verifies) & --- \\
 S & Theft of a client key & Partial (I11-REVOKE: operator can revoke) & Key management: deployment (operator must sign revocation) \\
 \bottomrule
 \end{tabularx}

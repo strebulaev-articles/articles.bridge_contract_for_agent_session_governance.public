@@ -1,0 +1,70 @@
+{
+  "id": "V73b",
+  "title": "A revocation names rotation or compromise, and a key that is revoked is not revoked again",
+  "covers": [
+    "I11-REVOKE",
+    "B.4"
+  ],
+  "session": {
+    "session_id": "sess-73b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "lost",
+      "error": true,
+      "wire_reason": "bad_canonical"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "rotation"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise",
+      "error": true,
+      "wire_reason": "revoked_key"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "rotation",
+      "signed": false,
+      "requested_by": "ck-2",
+      "error": true,
+      "wire_reason": "revoked_key"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "KEY_REVOKED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1"
+    ],
+    "revoked": [
+      "ck-1"
+    ],
+    "key_exhausted": false
+  }
+}

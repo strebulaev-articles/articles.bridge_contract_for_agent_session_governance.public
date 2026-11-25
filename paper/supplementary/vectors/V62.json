@@ -1,6 +1,6 @@
 {
   "id": "V62",
-  "title": "P-256: a key added after the challenge answers that challenge",
+  "title": "P-256: a nonce issued for a key before it was registered never verifies, also after the key is added",
   "covers": [
     "I11",
     "I15",
@@ -19,6 +19,7 @@
   "actions": [
     {
       "do": "challenge",
+      "client": "ck-2",
       "as": "n1"
     },
     {
@@ -31,7 +32,14 @@
     {
       "do": "reattach",
       "client": "ck-2",
-      "nonce": "n1"
+      "nonce": "n1",
+      "error": true,
+      "wire_reason": "bad_signature",
+      "log_reason": "nonce_binding"
+    },
+    {
+      "do": "reattach",
+      "client": "ck-2"
     }
   ],
   "expect": {
@@ -40,6 +48,7 @@
       "CLIENT_ADDED",
       "DETACHMENT",
       "RESUME_PREPARED",
+      "RESUME_REJECTED",
       "RESUME_STARTED",
       "RESUME_VERIFIED"
     ],
@@ -47,6 +56,9 @@
       "Att",
       "None"
     ],
-    "scope_version": 0
+    "scope_version": 0,
+    "clients": [
+      "ck-2"
+    ]
   }
 }

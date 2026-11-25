@@ -121,10 +121,12 @@
       },
       "then": {
         "properties": {
-          "session_id": {}
+          "session_id": {},
+          "key_id": {}
         },
         "required": [
-          "session_id"
+          "session_id",
+          "key_id"
         ]
       }
     },

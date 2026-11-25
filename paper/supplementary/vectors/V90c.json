@@ -1,0 +1,54 @@
+{
+  "id": "V90c",
+  "title": "A revoked key cannot join",
+  "covers": [
+    "I11-REVOKE",
+    "I15"
+  ],
+  "session": {
+    "session_id": "sess-90c",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "add_client",
+      "client": "ck-2"
+    },
+    {
+      "do": "revoke",
+      "client": "ck-2",
+      "reason": "rotation"
+    },
+    {
+      "do": "join",
+      "client": "ck-2",
+      "error": true,
+      "wire_reason": "revoked_key",
+      "log_reason": "revoked_key"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "CLIENT_ADDED",
+      "KEY_REVOKED",
+      "RESUME_REJECTED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0,
+    "clients": [
+      "ck-1"
+    ],
+    "revoked": [
+      "ck-2"
+    ]
+  }
+}

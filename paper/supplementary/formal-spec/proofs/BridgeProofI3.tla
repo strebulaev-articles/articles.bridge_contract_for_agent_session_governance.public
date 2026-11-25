@@ -9,9 +9,9 @@
 EXTENDS BridgeContractTP, TLAPS
 
 Fields == {"att", "hum", "life", "n", "K", "C", "rk", "rev", "hard", "recorded",
-           "nid", "nb", "nu", "uf", "obs", "detLeft", "humLeft", "scope", "ver",
-           "queue", "callLeft", "used", "ans", "apprLeft", "drained", "held",
-           "opd", "dlv", "sent", "totLeft", "quar", "endWhy", "corrupt"}
+           "nid", "nb", "nk", "ng", "nu", "nr", "uf", "obs", "detLeft", "humLeft",
+           "scope", "ver", "queue", "callLeft", "used", "ans", "appr", "drained",
+           "held", "opd", "dlv", "sent", "totLeft", "quar", "endWhy", "corrupt"}
 
 Shape == /\ DOMAIN ss = Sessions
          /\ \A s \in Sessions : DOMAIN ss[s] = Fields /\ ss[s].scope \subseteq Perms
@@ -46,9 +46,10 @@ LEMMA StepShape ==
   BY DEF Step
 <1> QED BY <1>2, <1>3, <1>4 DEF Shape
 
-\* The field obs is replaced (the proof that works for Corrupt).
-LEMMA ObsSet ==
-  ASSUME Shape, NEW s \in Sessions, NEW v, ss' = [ss EXCEPT ![s].obs = v]
+\* The fields obs and nr are replaced (the proof that works for Corrupt).
+LEMMA ObsNrSet ==
+  ASSUME Shape, NEW s \in Sessions, NEW v, NEW w,
+         ss' = [ss EXCEPT ![s].obs = v, ![s].nr = w]
   PROVE  Shape'
 BY DEF Shape, Fields
 
@@ -66,7 +67,11 @@ LEMMA EscalateShape == ASSUME Shape, NEW s \in Sessions, Escalate(s) PROVE Shape
 
 LEMMA ResolveShape == ASSUME Shape, NEW s \in Sessions, Resolve(s) PROVE Shape'
 <1> USE DEF Resolve
-<1> DEFINE u1 == [hum |-> "None", humLeft |-> NoTimer, apprLeft |-> TApprove]
+<1> DEFINE r == ss[s]
+<1> DEFINE u1 == [hum |-> "None", humLeft |-> NoTimer,
+                  appr |-> [k \in Keys |->
+                              IF k \in r.queue \ r.held /\ r.appr[k] = NoTimer
+                              THEN TApprove ELSE r.appr[k]]]
 <1>1. DOMAIN u1 \subseteq Fields /\ ("scope" \in DOMAIN u1 => u1.scope \subseteq Perms)
   BY DEF Fields
 <1>2. Step(s, 1, u1)
@@ -93,7 +98,7 @@ LEMMA TickRecKeeps ==
             !.totLeft = IF r.att = "Det" /\ @ > 0 THEN @ - 1 ELSE @,
             !.humLeft = IF @ > 0 THEN @ - 1 ELSE @,
             !.nb = [i \in 1..MaxNonce |-> IF @[i] > 0 THEN @[i] - 1 ELSE @[i]],
-            !.apprLeft = IF @ > 0 THEN @ - 1 ELSE @,
+            !.appr = [k \in Keys |-> IF @[k] > 0 THEN @[k] - 1 ELSE @[k]],
             !.callLeft = [k \in Keys |->
                 IF k \in r.queue /\ r.callLeft[k] > 0
                 THEN r.callLeft[k] - 1 ELSE r.callLeft[k]]]
@@ -130,8 +135,9 @@ LEMMA PresentShape ==
   PROVE  Shape'
 <1> USE DEF Present
 <1> DEFINE r == ss[s]
-<1> DEFINE known == key \in r.K /\ Verifies(key, sig, claimed, pre)
 <1> DEFINE issued == claimed \in 1..r.nid
+<1> DEFINE bound == issued /\ r.nk[claimed] = key /\ r.ng[claimed]
+<1> DEFINE known == key \in r.K /\ Verifies(key, sig, claimed, pre) /\ bound
 <1> DEFINE live == issued /\ r.nb[claimed] > 0 /\ claimed \notin r.nu
 <1> DEFINE accept == (known /\ key \notin r.rev) /\ live /\ pre = "ok" /\ r.att # "Res"
 <1> DEFINE recorded == known \/ r.uf < FailMax
@@ -139,10 +145,14 @@ LEMMA PresentShape ==
 <1> DEFINE o == IF src = "honest" /\ keep /\ AttackOn /\ Cardinality(r.obs) < ObsMax
                 THEN r.obs \cup {[by |-> key, nonce |-> claimed, pre |-> pre]}
                 ELSE r.obs
+<1> DEFINE wf == issued /\ pre = "ok" /\ key \in Clients
+                 /\ Verifies(key, sig, claimed, pre)
+<1> DEFINE nrn == IF wf /\ ~accept
+                  THEN [r.nr EXCEPT ![claimed] = @ \cup {key}] ELSE r.nr
 <1>1. CASE ~recorded
-  <2>1. ss' = [ss EXCEPT ![s].obs = o]
+  <2>1. ss' = [ss EXCEPT ![s].obs = o, ![s].nr = nrn]
     BY <1>1
-  <2> QED BY <2>1, ObsSet
+  <2> QED BY <2>1, ObsNrSet
 <1>2. CASE recorded /\ accept /\ r.att = "Att"
   <2> DEFINE u == [C |-> r.C \cup {key}, nu |-> r.nu \cup {claimed}, uf |-> ufn, obs |-> o]
   <2>1. DOMAIN u \subseteq Fields BY DEF Fields
@@ -153,8 +163,8 @@ LEMMA PresentShape ==
   <2>1. DOMAIN u \subseteq Fields BY DEF Fields
   <2> QED BY <1>3, <2>1, StepShape
 <1>4. CASE recorded /\ ~(accept /\ r.att = "Att") /\ ~(accept /\ r.att = "Det")
-  <2> DEFINE u == [nu |-> r.nu \cup (IF known /\ issued THEN {claimed} ELSE {}),
-                   uf |-> ufn, obs |-> o]
+  <2> DEFINE u == [nu |-> r.nu \cup (IF known THEN {claimed} ELSE {}),
+                   uf |-> ufn, obs |-> o, nr |-> nrn]
   <2>1. DOMAIN u \subseteq Fields BY DEF Fields
   <2> QED BY <1>4, <2>1, StepShape
 <1> QED BY <1>1, <1>2, <1>3, <1>4

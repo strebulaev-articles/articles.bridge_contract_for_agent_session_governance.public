@@ -45,7 +45,8 @@
         "extension_rejected",
         "via_not_connected",
         "unsupported_op",
-        "refused"
+        "refused",
+        "not_attached"
       ]
     }
   },

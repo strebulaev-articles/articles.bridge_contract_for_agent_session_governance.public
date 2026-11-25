@@ -6,10 +6,24 @@
   "description": "A client requested revocation; the operator must approve. Informational.",
   "type": "object",
   "properties": {
-    "key_id": {"type": "string"},
-    "requested_by": {"type": "string"},
-    "reason": {"type": "string"}
+    "key_id": {
+      "type": "string"
+    },
+    "requested_by": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "rotation",
+        "compromise"
+      ]
+    }
   },
-  "required": ["key_id", "requested_by", "reason"],
+  "required": [
+    "key_id",
+    "requested_by",
+    "reason"
+  ],
   "additionalProperties": false
 }

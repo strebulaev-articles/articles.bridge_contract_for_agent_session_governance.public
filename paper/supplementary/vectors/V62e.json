@@ -1,0 +1,51 @@
+{
+  "id": "V62e",
+  "title": "A challenge is answered for a key id the session does not register, and counts against the same limit",
+  "covers": [
+    "I11",
+    "I11f"
+  ],
+  "session": {
+    "session_id": "sess-62e",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "challenge",
+      "client": "nobody",
+      "times": 16
+    },
+    {
+      "do": "challenge",
+      "client": "ck-1",
+      "error": true,
+      "wire_reason": "refused"
+    },
+    {
+      "do": "challenge",
+      "client": "nobody",
+      "error": true,
+      "wire_reason": "refused"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0
+  }
+}

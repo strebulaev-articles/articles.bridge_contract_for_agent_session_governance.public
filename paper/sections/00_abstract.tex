@@ -51,14 +51,12 @@ Evidence: the product model is checked with TLC on bounded
 configurations; a conformance suite (T1--T158) and a mutation check
 in which every MUST invariant except the inspection-only I-SIGN-JWKS has
 a killed mutant, on a Python bridge; vectors V01--V134 pass on it, and
-all but the checkpoint-emission vectors (V52--V54, V88, V89; they need a
+all but the checkpoint-emission vectors (V52--V54c, V88, V89; they need a
 feature the crate lacks) pass on a Rust crate. Both implementations have the
 same author; no third-party implementation exists. The evidence
 shows the consistency of one reading of the text, not independent
 confirmation; the limits are stated in the limitations section and
-the limitations register, which also lists where the reference bridges
-do not yet meet the text, among them the replay of a request refused
-before its key was registered.
+the limitations register.
 
 \end{abstract}
 

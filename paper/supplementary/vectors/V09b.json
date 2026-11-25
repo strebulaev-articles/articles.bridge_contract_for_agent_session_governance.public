@@ -1,0 +1,56 @@
+{
+  "id": "V09b",
+  "title": "A request the transport flags as a replay has spent its nonce: the same request is refused without the flag",
+  "covers": [
+    "I8",
+    "I11"
+  ],
+  "session": {
+    "session_id": "sess-09b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "disconnect"
+    },
+    {
+      "do": "reattach",
+      "transport_replay": true,
+      "as": "r1",
+      "error": true,
+      "wire_reason": "transport_replay",
+      "log_reason": "transport_replay"
+    },
+    {
+      "do": "reattach",
+      "replay_of": "r1",
+      "error": true,
+      "wire_reason": "nonce_used",
+      "log_reason": "nonce_used"
+    },
+    {
+      "do": "reattach"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RESUME_REJECTED",
+      "RESUME_REJECTED",
+      "RESUME_STARTED",
+      "RESUME_VERIFIED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0
+  }
+}

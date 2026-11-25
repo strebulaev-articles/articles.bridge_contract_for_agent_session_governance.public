@@ -163,8 +163,10 @@ def op_add_client(*, session_id: str, via_key_id: str, new_key_id: str,
         nonce=nonce, signature=signature)
 
 
-def op_challenge(*, session_id: str) -> bytes:
-    return encode_message("challenge", session_id=session_id)
+def op_challenge(*, session_id: str, key_id: str) -> bytes:
+    """A challenge names the key id the nonce is for: the bridge binds the
+    nonce to it, and answers the same way for any key id."""
+    return encode_message("challenge", session_id=session_id, key_id=key_id)
 
 
 def op_reattach(*, session_id: str, key_id: str, nonce: str, seq: int,

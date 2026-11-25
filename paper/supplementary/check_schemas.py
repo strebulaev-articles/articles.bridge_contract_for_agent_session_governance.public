@@ -8,9 +8,10 @@ Only events the bridge commits are checked; events a test builds by hand
 Sessions that register a test-only scheme tag (cs.TEST_ONLY_SCHEMES, the
 pluggable-verifier stub of T144) are skipped: the schemas enumerate the
 reference tags and the stub is deliberately not one of them.
-Fails if an emitted event violates its schema, or if an event kind the
-reference bridge can emit has no schema (CHECKPOINT is the only kind allowed
-to stay unobserved: the reference bridge does not implement I-CHECKPOINT).
+Fails if an emitted event violates its schema, if an event kind the
+reference bridge emits has no schema, or if a schema is never exercised by
+the suite (every kind is emitted, CHECKPOINT by the tests that run with
+checkpoints on).
 """
 import json
 import sys
@@ -60,10 +61,7 @@ cs.Event.__init__ = _init
 rc = pytest.main(["-q", "-p", "no:cacheprovider", str(HERE / "conformance_suite.py")])
 kinds = set(payload_schemas)
 missing = (observed - kinds)
-unobserved = kinds - observed - {"CHECKPOINT", "KEY_REVOKED",
-                                   "KEY_REVOCATION_REQUESTED",
-                                   "OPERATOR_ADD_KEY",
-                                   "OPERATOR_TERMINATION"}
+unobserved = kinds - observed
 for e in sorted(set(errors))[:20]:
     print("SCHEMA ERROR:", e)
 if missing:

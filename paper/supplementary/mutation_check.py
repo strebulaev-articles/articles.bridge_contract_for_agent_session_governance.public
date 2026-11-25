@@ -3,12 +3,15 @@
 Mutation check for the Bridge Contract reference suite.
 
 For each invariant (I1..I15 and the timer bounds) there is at least one mutant: a one-site
-textual change to ``conformance_suite.py`` that violates that invariant.
+textual change to ``conformance_suite.py`` (or to ``merkle.py``, ``jcs.py``,
+``wire.py`` or ``wire_server.py``) that violates that invariant.
 Each mutant is written to a scratch directory and the whole suite is run
 against it.  A mutant is *killed* only if pytest exits with code 1 and
 reports at least one failed test (an assertion or a raised error in a test);
 a collection error, an import error or a syntax error (other exit codes, or
-no failed test) is reported as ERROR, never as a kill.  The failing test ids
+no failed test) is reported as ERROR, never as a kill, and so is a run that
+does not finish within the time limit: the check then goes on with the next
+mutant and exits non-zero at the end.  The failing test ids
 are recorded, and a kill is *attributed* when a failing test carries the
 mutant's invariant tag in its docstring (the traceability tags).  The script
 exits non-zero if a patch does not apply exactly once, if an invariant
@@ -24,6 +27,7 @@ Run (needs pytest and hypothesis, see requirements.txt):
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -38,6 +42,26 @@ SOURCE = HERE / "conformance_suite.py"
 # code, so a scratch copy without it fails the checkpoint tests by itself).
 SUPPORT = ("conformance_suite.py", "jcs.py", "wire.py", "wire_server.py",
            "merkle.py")
+# Data the suite and the vector runner read from their own directory.
+DATA_DIRS = ("vectors", "schemas")
+# One mutant may not hold the check up: a run that exceeds this is an ERROR.
+TIMEOUT_SECONDS = 600
+# A mutant is killed by a failing test, whatever the example: the properties
+# of the suite stop at the first failing example and do not shrink it (the
+# suite reads this variable), and pytest prints the names of the failed tests
+# without their tracebacks (rendering a traceback re-reads the suite's source
+# for every frame, which under a mutant that fails most tests takes far
+# longer than the tests).  Both keep a run well inside the time limit.
+SUITE_ENV = {**os.environ, "BRIDGE_SUITE_NO_SHRINK": "1"}
+PYTEST_ARGS = ("-q", "-rf", "--tb=no", "-p", "no:cacheprovider")
+
+
+def timed_out(mutant: "Mutant") -> tuple["Mutant", str]:
+    """The verdict of a run that did not finish in time: an ERROR, never a
+    kill and never a survivor, and the check goes on to the next mutant."""
+    return mutant, (f"ERROR (no verdict after {TIMEOUT_SECONDS} s; "
+                    "not an assertion failure)")
+
 
 INVARIANTS = ["I1", "I2", "I3", "I4", "I5", "I6", "I7", "I8", "I9", "I10",
               "I11", "I12", "I13", "I14", "I15", "TIMERS"]
@@ -98,7 +122,8 @@ MUTANTS = [
         if source == "observed":"""),
     Mutant("I3-narrow-accepts-widening", "I3",
            """        if not proposed.issubset(current):
-            self._reject_extension(sid, s, new_scope, "refused")
+            self._reject_extension(sid, s, new_scope,
+                                   "not_a_strict_narrowing")
         if proposed == current:""",
            """        if proposed == current:"""),
     Mutant("I3-observed-widening-recorded", "I3",
@@ -155,16 +180,25 @@ MUTANTS = [
         self.storage.append_batch(sid, batch)"""),
     # I8: a reported 0-RTT replay is ignored
     Mutant("I8-ignore-replay", "I8",
-           "        if transport_replay:\n            return \"transport_replay\"",
-           "        if False:\n            return \"transport_replay\""),
+           "        if transport_replay:\n            reason = \"transport_replay\"",
+           "        if False:\n            reason = \"transport_replay\""),
+    # I8, I11d: the transport's verdict is taken before the request is
+    # verified, so an authentic flagged request keeps its nonce and the same
+    # bytes are accepted later without the flag
+    Mutant("I8-flagged-request-keeps-its-nonce", "I8",
+           """        reason = self._reject_reason(sid, s, req, op)
+        if transport_replay:
+            reason = "transport_replay"                            # I8""",
+           """        reason = ("transport_replay" if transport_replay
+                  else self._reject_reason(sid, s, req, op))"""),
     # I9: nonce lifetime
     Mutant("I9-ignore-expiry", "I9",
-           "        if self._now() - issued >= self.cfg.t_nonce:          # I9",
+           "        if self._now() - rec.issued_at >= self.cfg.t_nonce:   # I9",
            "        if False:"),
     Mutant("I9-expiry-terminates", "I9",
-           '''        if self._now() - issued >= self.cfg.t_nonce:          # I9
+           '''        if self._now() - rec.issued_at >= self.cfg.t_nonce:   # I9
             return "nonce_expired"''',
-           '''        if self._now() - issued >= self.cfg.t_nonce:          # I9
+           '''        if self._now() - rec.issued_at >= self.cfg.t_nonce:   # I9
             self._commit(sid, [(GE.TERMINATION, {"reason": "nonce_expired"})])
             return "nonce_expired"'''),
     # I10: the scope version does not advance; a no-op narrowing is accepted
@@ -205,20 +239,97 @@ MUTANTS = [
                 SCHEME_ED25519, public,
                 _resume_bytes("""),
     Mutant("I11-nonce-not-single-use", "I11",
-           "        rec[1] = True                                              # I11d",
+           "        rec.used = True                                            # I11d",
            "        pass"),
     Mutant("I11-nonce-spent-only-on-success", "I11",
-           """        rec[1] = True                                              # I11d
-        if used:""",
-           """        if used:"""),
+           """        rec.used = True                                            # I11d
+        if used:
+            return "nonce_used"
+        if self._now() - rec.issued_at >= self.cfg.t_nonce:   # I9
+            return "nonce_expired"
+        log = self.storage.logs.get(sid, [])
+        if not (0 <= req.seq < len(log)) or log[req.seq].event_hash() != req.hash:
+            return "prefix_mismatch"                               # I4
+        return None""",
+           """        if used:
+            return "nonce_used"
+        if self._now() - rec.issued_at >= self.cfg.t_nonce:   # I9
+            return "nonce_expired"
+        log = self.storage.logs.get(sid, [])
+        if not (0 <= req.seq < len(log)) or log[req.seq].event_hash() != req.hash:
+            return "prefix_mismatch"                               # I4
+        rec.used = True
+        return None"""),
     Mutant("I11-unauthentic-request-spends-nonce", "I11",
            """        record = self.storage.key_record(sid, req.key_id)
         scheme, public = record if record else (SCHEME_ED25519, None)
         if public is None""",
-           """        self._nonces.get(sid, {}).get(req.nonce, [0, 0])[1] = True
+           """        early = self._nonces.get(sid, {}).get(req.nonce)
+        if early is not None:
+            early.used = True
         record = self.storage.key_record(sid, req.key_id)
         scheme, public = record if record else (SCHEME_ED25519, None)
         if public is None"""),
+    # a request that names a key id the session does not register spends
+    # the nonce it presents
+    Mutant("I11-unknown-key-spends-the-nonce", "I11",
+           """        if req.key_id not in s.keys:
+            return "unknown_key"                                   # I15""",
+           """        if req.key_id not in s.keys:
+            early = self._nonces.get(sid, {}).get(req.nonce)
+            if early is not None:
+                early.used = True
+            return "unknown_key"                                   # I15"""),
+    # I11b: the nonce is bound to the key id it was issued for, and counts
+    # only if that key was an active key of the session at issue
+    Mutant("I11-nonce-not-bound-to-the-key-id", "I11",
+           """        bound = (rec is not None and rec.key_id == req.key_id
+                 and rec.eligible)
+        # I11-REVOKE: check after signature, before nonce""",
+           """        bound = rec is not None and rec.eligible
+        # I11-REVOKE: check after signature, before nonce"""),
+    Mutant("I11-nonce-issued-before-registration-verifies", "I11",
+           """        bound = (rec is not None and rec.key_id == req.key_id
+                 and rec.eligible)
+        # I11-REVOKE: check after signature, before nonce""",
+           """        bound = rec is not None and rec.key_id == req.key_id
+        # I11-REVOKE: check after signature, before nonce"""),
+    Mutant("I11-eligibility-read-when-presented", "I11",
+           "            eligible=key_id in s.keys and key_id not in s.revoked_keys)",
+           "            eligible=True)"),
+    Mutant("I11-binding-not-checked", "I11",
+           """        if rec is not None and not bound:
+            return "nonce_binding"                                 # I11b""",
+           """        if False:
+            return "nonce_binding"                                 # I11b"""),
+    Mutant("I11-binding-refusal-spends-the-nonce", "I11",
+           """        if rec is not None and not bound:
+            return "nonce_binding"                                 # I11b""",
+           """        if rec is not None and not bound:
+            rec.used = True
+            return "nonce_binding"                                 # I11b"""),
+    Mutant("I11-binding-refusal-distinguishable", "I11",
+           '    return ("bad_signature" if reason in ("unknown_key", "nonce_binding")',
+           '    return ("bad_signature" if reason in ("unknown_key",)'),
+    # I11b: challenge answers the same for every key id (no registry oracle)
+    Mutant("I11-challenge-refuses-an-unregistered-key-id", "I11",
+           """        book = self._nonces.setdefault(sid, {})
+        if len(book) >= NONCE_RECORDS:""",
+           """        if key_id not in s.keys:
+            raise BridgeError(CHALLENGE_REFUSED, reason="refused")
+        book = self._nonces.setdefault(sid, {})
+        if len(book) >= NONCE_RECORDS:"""),
+    Mutant("I11-challenge-for-unregistered-key-id-is-free", "I11f",
+           """        nonce = os.urandom(16).hex()
+        book[nonce] = _NonceRecord(""",
+           """        nonce = os.urandom(16).hex()
+        if key_id not in s.keys:
+            return Challenge(nonce, self.cfg.t_nonce)
+        book[nonce] = _NonceRecord("""),
+    # I4: a negative sequence number is a malformed request
+    Mutant("I4-negative-sequence-number-accepted", "I4",
+           "              and 0 <= req.seq <= 2 ** 53",
+           "              and req.seq <= 2 ** 53"),
     Mutant("I11-registry-stores-signing-seed", "I11",
            "        self.storage.register_key(sid, client_key.key_id, client_key.scheme,\n                                  client_key.public_key)",
            "        self.storage.register_key(sid, client_key.key_id, client_key.scheme,\n                                  client_key.seed)"),
@@ -229,11 +340,11 @@ MUTANTS = [
            "        rec = self._nonces.get(sid, {}).get(req.nonce)",
            "        rec = next((b[req.nonce] for b in self._nonces.values()\n                    if req.nonce in b), None)"),
     Mutant("I11-bad-reattach-terminates", "I11",
-           """            self._commit(sid, [(GE.RESUME_REJECTED, {
-                "reason": reason, "key_id": req.key_id, "seq": req.seq})])""",
-           """            self._commit(sid, [(GE.RESUME_REJECTED, {
-                "reason": reason, "key_id": req.key_id, "seq": req.seq}),
-                (GE.TERMINATION, {"reason": "resume_fail"})])"""),
+           """        self._commit(sid, [(GE.RESUME_REJECTED, {
+            "reason": reason, "key_id": req.key_id, "seq": req.seq})])""",
+           """        self._commit(sid, [(GE.RESUME_REJECTED, {
+            "reason": reason, "key_id": req.key_id, "seq": req.seq}),
+            (GE.TERMINATION, {"reason": "resume_fail"})])"""),
     # I12: forwarding before the drain events are durable; recovery
     Mutant("I12-forward-before-commit", "I12",
            """            batch = self._commit(sid, items)
@@ -261,8 +372,19 @@ MUTANTS = [
            "            if key in s.used_keys:\n                return \"DUPLICATE\"",
            "            if False:\n                return \"DUPLICATE\""),
     Mutant("I13-no-approval-expiry", "I13",
-           '            elif now >= s.approval_until and not c["held"]:',
+           """            elif not c["held"] and (c["approved_until"] is None
+                                    or now >= c["approved_until"]):""",
            "            elif False:"),
+    # I13: an approval is valid strictly before T_approve, and each call
+    # keeps the approval of its own escalation
+    Mutant("I13-approval-valid-at-t-approve", "I13",
+           """                                    or now >= c["approved_until"]):""",
+           """                                    or now > c["approved_until"]):"""),
+    Mutant("I13-later-approval-revives-a-lapsed-one", "I13",
+           """                if not c["held"] and c["approved_until"] is None:
+                    c["approved_until"] = p["valid_until"]""",
+           """                if not c["held"]:
+                    c["approved_until"] = p["valid_until"]"""),
     Mutant("I13-no-scope-revalidation", "I13",
            """            elif c["permission"] is not None and c["permission"] not in s.scope:""",
            """            elif False:"""),
@@ -325,11 +447,25 @@ MUTANTS = [
            "        if via_key_id not in s.conn:",
            "        if False:"),
     Mutant("I15-add-client-skip-verify", "I15",
-           """            raise AddClientRejected("bad_signature")""",
-           """            pass"""),
+           """                signature):
+            raise AddClientRejected("bad_signature")""",
+           """                signature):
+            pass"""),
     Mutant("I15-add-client-nonce-not-spent", "I15",
-           """        rec[1] = True                                  # spent, as in I11d""",
+           """        rec.used = True                                # spent, as in I11d""",
            """        pass"""),
+    Mutant("I15-add-client-nonce-not-bound-to-the-key-id", "I15",
+           """        if rec is not None and not bound:
+            raise AddClientRejected("bad_signature")   # not this key's nonce""",
+           """        if False:
+            raise AddClientRejected("bad_signature")   # not this key's nonce"""),
+    Mutant("I15-add-client-connection-answered-before-the-signature", "I15",
+           """        record = (self.storage.key_record(sid, via_key_id)
+                  if via_key_id in s.keys else None)""",
+           """        if via_key_id not in s.conn:
+            raise AddClientRejected("via_not_connected")
+        record = (self.storage.key_record(sid, via_key_id)
+                  if via_key_id in s.keys else None)"""),
     Mutant("I15-add-client-domain-tag-dropped", "I15",
            """    return _canon([ADD_CLIENT_DOMAIN, sid, via_key_id, new_key_id, scheme,
                    public_key, nonce])""",
@@ -342,6 +478,8 @@ MUTANTS = [
                    nonce])"""),
     Mutant("I15-add-client-revoked-key-authorises", "I15",
            """        if via_key_id in s.revoked_keys:
+            if bound:
+                rec.used = True                        # as in I11-REVOKE
             raise AddClientRejected("revoked_key")""",
            """        if False:
             raise AddClientRejected("revoked_key")"""),
@@ -375,7 +513,7 @@ MUTANTS = [
                 s.det_since = None""",
            """                s.det_total += ev.timestamp - s.det_since"""),
     Mutant("TIMERS-cap-disabled", "TIMERS",
-           "                 and s.det_total + (now - s.det_since) >= self.cfg.t_total)",
+           "                 and due(s.det_total + (now - s.det_since), self.cfg.t_total))",
            "                 and False)"),
     # I5: a chain failure freezes the session; it does not end it, and a
     # frozen session accepts nothing
@@ -519,7 +657,7 @@ MUTANTS = [
            "        except StorageError:\n            raise"),
     # state a bridge keeps per session is not shared between sessions
     Mutant("session-nonce-book-shared", "I11",
-           "        self._nonces: dict[str, dict[str, list]] = {}",
+           "        self._nonces: dict[str, dict[str, _NonceRecord]] = {}",
            "        self._nonces = type(\"OneBook\", (dict,), {\n"
            "            \"get\": lambda s, k, d=None: dict.get(s, \"\", d),\n"
            "            \"setdefault\": lambda s, k, d=None: dict.setdefault(s, \"\", d),\n"
@@ -544,14 +682,56 @@ MUTANTS = [
            "        if req.key_id in s.revoked_keys:",
            "        if False:"),
     Mutant("I11-REVOKE-revoked-request-keeps-nonce", "I11-REVOKE",
-           "                spent[1] = True                                    # request",
+           "                rec.used = True                                    # request",
            "                pass"),
+    Mutant("I11-REVOKE-revoked-key-spends-another-keys-nonce", "I11-REVOKE",
+           """            if bound:
+                rec.used = True                                    # request""",
+           """            if rec is not None:
+                rec.used = True                                    # request"""),
     Mutant("I11-REVOKE-soft-detaches", "I11-REVOKE",
-           '            if reason == "compromise" and (\n',
-           '            if reason in ("compromise", "rotation") and (\n'),
-    Mutant("I11-REVOKE-hard-res-not-abandoned", "I11-REVOKE",
+           '            if ((reason == "compromise" and s.conn == {key_id}\n',
+           '            if ((s.conn == {key_id}\n'),
+    Mutant("I11-REVOKE-res-not-abandoned", "I11-REVOKE",
            '                    or (s.att == Attachment.RESUMING\n                        and s.resuming == key_id)):',
            '                    ):'),
+    # a soft revocation of the key being verified abandons the verification
+    # exactly as a hard one does
+    Mutant("I11-REVOKE-soft-revocation-leaves-the-verification", "I11-REVOKE",
+           '                    or (s.att == Attachment.RESUMING\n                        and s.resuming == key_id)):',
+           '                    or (reason == "compromise"\n                        and s.att == Attachment.RESUMING\n                        and s.resuming == key_id)):'),
+    # the revocation is looked at after the signature; a revoked key may
+    # not join either
+    Mutant("I11-REVOKE-revocation-checked-before-the-signature", "I11-REVOKE",
+           """        record = self.storage.key_record(sid, req.key_id)
+        scheme, public = record if record else (SCHEME_ED25519, None)
+        if public is None""",
+           """        if req.key_id in s.revoked_keys:
+            early = self._nonces.get(sid, {}).get(req.nonce)
+            if early is not None:
+                early.used = True
+            return "revoked_key"
+        record = self.storage.key_record(sid, req.key_id)
+        scheme, public = record if record else (SCHEME_ED25519, None)
+        if public is None"""),
+    Mutant("I11-REVOKE-revoked-key-may-join", "I11-REVOKE",
+           "        if req.key_id in s.revoked_keys:",
+           '        if req.key_id in s.revoked_keys and op == "reattach":'),
+    # a revocation names a known kind and is made once
+    Mutant("I11-REVOKE-free-form-reason-accepted", "I11-REVOKE",
+           """        if reason not in REVOKE_REASONS:
+            raise BridgeError(f"unknown revocation reason {reason!r}",
+                              reason="bad_canonical")""",
+           """        if False:
+            raise BridgeError(f"unknown revocation reason {reason!r}",
+                              reason="bad_canonical")"""),
+    Mutant("I11-REVOKE-key-revoked-twice", "I11-REVOKE",
+           """        if key_id in s.revoked_keys:
+            raise BridgeError(f"key {key_id!r} is already revoked",
+                              reason="revoked_key")""",
+           """        if False:
+            raise BridgeError(f"key {key_id!r} is already revoked",
+                              reason="revoked_key")"""),
     Mutant("I11-REVOKE-soft-leaves-client-set", "I11-REVOKE",
            '            if p["reason"] == "compromise":                 # hard: leaves C(s)',
            '            if p["reason"] in ("compromise", "rotation"):   # hard: leaves C(s)'),
@@ -575,7 +755,7 @@ MUTANTS = [
            "        s = self._enter(sid, exhausted_ok=True)",
            "        s = self._enter(sid)"),
     Mutant("I11-REVOKE-add-key-after-expiry", "I11-REVOKE",
-           "        self._check_timers(sid)          # an expired session is over (L1)\n",
+           "        if sid in self._sess:\n            self._check_timers(sid)          # an expired session is over (L1)\n",
            ""),
     Mutant("I11-REVOKE-exhaustion-not-derived", "I11-REVOKE",
            '                s.conn.discard(p["key_id"])\n            s.key_exhausted = not (s.keys - s.revoked_keys)',
@@ -584,8 +764,8 @@ MUTANTS = [
            '            s.keys.add(p["key_id"])\n            s.key_material[p["key_id"]] = (p["scheme"], p["public_key"])\n            s.key_exhausted = not (s.keys - s.revoked_keys)\n        elif k == GE.CLIENT_JOINED:',
            '            s.key_exhausted = not (s.keys - s.revoked_keys)\n        elif k == GE.CLIENT_JOINED:'),
     Mutant("I11-REVOKE-add-key-readmits-registered-id", "I11-REVOKE",
-           '        if key_id in s.keys:\n            raise BridgeError("client key already registered",\n                              reason="key_already_registered")\n        self._operator_verified(',
-           '        self._operator_verified('),
+           '        if key_id in s.keys:\n            raise BridgeError("client key already registered",\n                              reason="key_already_registered")\n        self.storage.register_key(sid, key_id, scheme,',
+           '        self.storage.register_key(sid, key_id, scheme,'),
     Mutant("I11-REVOKE-add-key-outside-exhaustion", "I11-REVOKE",
            '        if not s.key_exhausted:\n            raise BridgeError("session is not key_exhausted",\n                              reason="not_key_exhausted")\n        if key_id in s.keys:',
            '        if key_id in s.keys:'),
@@ -593,18 +773,35 @@ MUTANTS = [
            "        self.storage.register_key(sid, key_id, scheme,\n                                  bytes.fromhex(public_key))\n",
            "        pass\n"),
     Mutant("I11-REVOKE-terminate-outside-exhaustion", "I11-REVOKE",
-           '        if not s.key_exhausted:\n            raise BridgeError("session is not key_exhausted",\n                              reason="not_key_exhausted")\n        self._operator_verified(\n            lambda b, q, h: _terminate_bytes(b, sid, reason, q, h),\n            signature, sid)\n        self._commit(sid, [(GE.OPERATOR_TERMINATION',
-           '        self._operator_verified(\n            lambda b, q, h: _terminate_bytes(b, sid, reason, q, h),\n            signature, sid)\n        self._commit(sid, [(GE.OPERATOR_TERMINATION'),
+           '        if not s.key_exhausted:\n            raise BridgeError("session is not key_exhausted",\n                              reason="not_key_exhausted")\n        self._commit(sid, [(GE.OPERATOR_TERMINATION',
+           '        self._commit(sid, [(GE.OPERATOR_TERMINATION'),
     Mutant("I11-REVOKE-unknown-key-revocable", "I11-REVOKE",
            '        if key_id not in s.keys:\n            raise BridgeError(f"unknown key {key_id!r}", reason="unknown_key")',
            '        pass'),
     Mutant("I11-REVOKE-request-executes-revocation", "I11-REVOKE",
-           "        if signature != \"\":\n            payload = {",
-           "        if signature != \"\" or requested_by:\n            payload = {"),
+           "        if signed:\n            payload = {",
+           "        if signed or requested_by:\n            payload = {"),
+    Mutant("I11-REVOKE-absent-signature-is-not-a-request", "I11-REVOKE",
+           '        signed = signature is not None and signature != ""',
+           '        signed = signature != ""'),
     # I-OPERATOR: operator events are authenticated
     Mutant("IOPERATOR-revoke-skip-verify", "I-OPERATOR",
-           '        if signature != "" or requested_by is None:\n            self._operator_verified(\n                lambda b, q, h: _revoke_bytes(b, sid, key_id, reason, q, h),\n                signature, sid)\n',
+           '        if signed or requested_by is None:\n            self._operator_verified(\n                lambda b, q, h: _revoke_bytes(b, sid, key_id, reason, q, h),\n                signature, sid)\n',
            ''),
+    # the operator's signature is verified before anything is said about
+    # the session; a termination of a session that is over is refused
+    Mutant("IOPERATOR-revoke-names-the-key-before-the-signature", "I-OPERATOR",
+           '        signed = signature is not None and signature != ""\n',
+           '        if sid in self._sess and key_id not in self._sess[sid].keys:\n            raise BridgeError(f"unknown key {key_id!r}", reason="unknown_key")\n        signed = signature is not None and signature != ""\n'),
+    Mutant("IOPERATOR-terminate-names-the-session-before-the-signature", "I-OPERATOR",
+           '        self._operator_verified(\n            lambda b, q, h: _terminate_bytes(b, sid, reason, q, h),\n            signature, sid)\n        if sid not in self._sess:\n            raise BridgeError(f"unknown session {sid}", reason="unknown_session")\n',
+           '        if sid not in self._sess:\n            raise BridgeError(f"unknown session {sid}", reason="unknown_session")\n        self._operator_verified(\n            lambda b, q, h: _terminate_bytes(b, sid, reason, q, h),\n            signature, sid)\n'),
+    Mutant("IOPERATOR-add-key-names-the-state-before-the-signature", "I-OPERATOR",
+           '        self._operator_verified(\n            lambda b, q, h: _add_key_bytes(b, sid, key_id, scheme,\n                                           public_key, q, h),\n            signature, sid)\n',
+           '        if sid in self._sess and not self._sess[sid].key_exhausted:\n            raise BridgeError("session is not key_exhausted",\n                              reason="not_key_exhausted")\n        self._operator_verified(\n            lambda b, q, h: _add_key_bytes(b, sid, key_id, scheme,\n                                           public_key, q, h),\n            signature, sid)\n'),
+    Mutant("IOPERATOR-terminate-of-a-terminated-session-succeeds", "I-OPERATOR",
+           '        s = self._sess[sid]\n        if s.life == Lifecycle.TERMINATED:\n            raise BridgeError("session is TERMINATED (I6)", reason="terminated")\n        if not s.key_exhausted:\n            raise BridgeError("session is not key_exhausted",\n                              reason="not_key_exhausted")\n        self._commit(sid, [(GE.OPERATOR_TERMINATION',
+           '        s = self._sess[sid]\n        if s.life == Lifecycle.TERMINATED:\n            return\n        if not s.key_exhausted:\n            raise BridgeError("session is not key_exhausted",\n                              reason="not_key_exhausted")\n        self._commit(sid, [(GE.OPERATOR_TERMINATION'),
     Mutant("IOPERATOR-add-key-skip-verify", "I-OPERATOR",
            '        self._operator_verified(\n            lambda b, q, h: _add_key_bytes(b, sid, key_id, scheme,\n                                           public_key, q, h),\n            signature, sid)\n',
            ''),
@@ -658,8 +855,16 @@ MUTANTS = [
            '        if (reason is None and s.att == Attachment.ATTACHED\n                and op == "reattach"):\n            reason = "already_attached"',
            '        if False:\n            reason = "already_attached"'),
     Mutant("I11-already-attached-before-authentication", "I11",
-           '        reason = self._reject_reason(sid, s, req, transport_replay, op)\n        if reason is None and s.att == Attachment.RESUMING:',
-           '        reason = self._reject_reason(sid, s, req, transport_replay, op)\n        if s.att == Attachment.ATTACHED and op == "reattach":\n            reason = "already_attached"\n        if reason is None and s.att == Attachment.RESUMING:'),
+           '        reason = self._reject_reason(sid, s, req, op)\n        if transport_replay:',
+           '        reason = self._reject_reason(sid, s, req, op)\n        if s.att == Attachment.ATTACHED and op == "reattach":\n            reason = "already_attached"\n        if transport_replay:'),
+    # a join is verified before the attachment is answered, and a join
+    # proof never starts a re-attach
+    Mutant("I11-join-attachment-answered-before-authentication", "I11",
+           '        reason = self._reject_reason(sid, s, req, op)\n        if transport_replay:',
+           '        reason = self._reject_reason(sid, s, req, op)\n        if s.att != Attachment.ATTACHED and op == "join":\n            raise BridgeError("join requires Att")\n        if transport_replay:'),
+    Mutant("I15-join-proof-starts-a-reattach", "I15",
+           '        if (reason is None and s.att != Attachment.ATTACHED\n                and op == "join"):',
+           '        if False:'),
     Mutant("I11-join-refused-as-already-attached", "I11",
            '        if (reason is None and s.att == Attachment.ATTACHED\n                and op == "reattach"):',
            '        if (reason is None and s.att == Attachment.ATTACHED):'),
@@ -718,8 +923,8 @@ MUTANTS = [
            "            raise BridgeError(\"session is KEY_EXHAUSTED: terminate needs \""),
     # I11a, I15: a caller is not told which key ids a session registers
     Mutant("I11-unknown-key-distinguishable", "I11",
-           "    return \"bad_signature\" if reason == \"unknown_key\" else reason",
-           "    return reason"),
+           '    return ("bad_signature" if reason in ("unknown_key", "nonce_binding")',
+           '    return ("bad_signature" if reason in ("nonce_binding",)'),
     # Appendix B: the handlers of attach, resolve, extend and the operator events
     Mutant("WIRESERVER-attach-asks-the-transport-hook", "WIRE",
            "    \"resolve\", \"delivered\", \"completed\", \"narrow\", \"extend\", \"terminate\"})",
@@ -745,13 +950,37 @@ MUTANTS = [
            "            sid, m[\"key_id\"], m[\"public_key\"], signature=None,",
            "wire_server.py"),
     Mutant("WIRESERVER-not-exhausted-named-as-exhausted", "WIRE",
-           '            raise BridgeError("session is not key_exhausted",\n                              reason="not_key_exhausted")\n        self._operator_verified(\n            lambda b, q, h: _terminate_bytes(b, sid, reason, q, h),',
-           '            raise BridgeError("session is not key_exhausted",\n                              reason="key_exhausted")\n        self._operator_verified(\n            lambda b, q, h: _terminate_bytes(b, sid, reason, q, h),',
+           '            raise BridgeError("session is not key_exhausted",\n                              reason="not_key_exhausted")\n        self._commit(sid, [(GE.OPERATOR_TERMINATION',
+           '            raise BridgeError("session is not key_exhausted",\n                              reason="key_exhausted")\n        self._commit(sid, [(GE.OPERATOR_TERMINATION',
            "conformance_suite.py"),
     # Appendix B: unsigned ops pass the transport's authentication hook
     Mutant("WIRESERVER-authentication-hook-not-consulted", "WIRE",
-           "        if (self.authenticate is not None and msg[\"op\"] in UNSIGNED_OPS\n                and not self.authenticate(msg[\"op\"], msg)):",
+           "        if (self.authenticate is not None and is_unsigned(msg)\n                and not self.authenticate(msg[\"op\"], msg)):",
            "        if False:", "wire_server.py"),
+    # a revocation request has no signature: it passes the hook
+    Mutant("WIRESERVER-revocation-request-not-authenticated", "WIRE",
+           '    return (msg["op"] == "revoke" and not msg.get("signature")\n            and "requested_by" in msg)',
+           '    return False', "wire_server.py"),
+    # a request nested beyond the bound is refused before it is parsed
+    Mutant("WIRESERVER-nesting-not-bounded", "WIRE",
+           '            if nesting_depth(data) > MAX_DEPTH:',
+           '            if False:', "wire_server.py"),
+    # responses carry what their schemas require
+    Mutant("WIRESERVER-verified-carries-event-kinds-only", "WIRE",
+           '            "verified", session_id=sid,\n            events=[event_object(e) for e in events or []])',
+           '            "verified", session_id=sid,\n            events=[e.kind.value for e in events or []])',
+           "wire_server.py"),
+    Mutant("WIRESERVER-narrowed-omits-the-new-version", "WIRE",
+           '        return wire.encode_response("narrowed", session_id=sid,\n                                    new_version=version)',
+           '        return wire.encode_response("narrowed", session_id=sid)',
+           "wire_server.py"),
+    Mutant("WIRESERVER-tool-call-response-omits-the-key", "WIRE",
+           '        return wire.encode_response(out.lower(), session_id=sid, key=key)',
+           '        return wire.encode_response(out.lower(), session_id=sid)',
+           "wire_server.py"),
+    Mutant("I10-narrowing-refusal-not-named", "I10",
+           '            raise BridgeError("authority narrowing rejected (I10)",\n                              reason="not_a_strict_narrowing")',
+           '            raise BridgeError("authority narrowing rejected (I10)")'),
     Mutant("WIRESERVER-authentication-hook-gets-no-message", "WIRE",
            "                and not self.authenticate(msg[\"op\"], msg)):",
            "                and not self.authenticate(msg[\"op\"], {})):", "wire_server.py"),
@@ -779,6 +1008,116 @@ MUTANTS = [
     Mutant("WIRESERVER-terminate-not-authenticated", "WIRE",
            '    "resolve", "delivered", "completed", "narrow", "extend", "terminate"})',
            '    "resolve", "delivered", "completed", "narrow", "extend"})', "wire_server.py"),
+    # Section 5.3, edge case 1: a timer that expires in the tick of a
+    # request waits for the request; one that expired earlier has ended the
+    # session, and the answer is then the uniform refusal
+    Mutant("L1-timer-of-the-tick-fires-before-the-request", "L1",
+           "        self._check_timers(sid, overdue_only=True)",
+           "        self._check_timers(sid)"),
+    Mutant("L1-refused-request-skips-the-timers-of-its-tick", "L1",
+           "            self._check_timers(sid)        # the tick's timers, after it\n",
+           ""),
+    Mutant("L1-expired-session-served-a-reattach", "L1",
+           "        self._check_timers(sid, overdue_only=True)\n        self._refuse_unavailable(sid)\n",
+           "        self._check_timers(sid, overdue_only=True)\n"),
+    # the timeout names the timer that fired
+    Mutant("L1-cap-expiry-named-as-the-detachment-bound", "L1",
+           '        away = "detach_timeout" if detach else "detach_total_timeout"',
+           '        away = "detach_timeout"'),
+    # I-CHECKPOINT: no checkpoint after TERMINATION, on a quarantined
+    # session or over a log whose chain does not verify
+    Mutant("ICHECK-checkpoint-after-termination", "ICHECK",
+           "        if s is None or s.life == Lifecycle.TERMINATED or s.quarantined:\n            return\n        log = self.storage.logs.get(sid, [])",
+           "        if s is None or s.quarantined:\n            return\n        log = self.storage.logs.get(sid, [])"),
+    Mutant("ICHECK-checkpoint-on-a-quarantined-session", "ICHECK",
+           "        if s is None or s.life == Lifecycle.TERMINATED or s.quarantined:\n            return\n        log = self.storage.logs.get(sid, [])",
+           "        if s is None or s.life == Lifecycle.TERMINATED:\n            return\n        log = self.storage.logs.get(sid, [])"),
+    Mutant("ICHECK-checkpoint-over-an-unverified-log", "ICHECK",
+           "        try:\n            hashes = self._chain_hashes(sid)\n        except BridgeError:\n            return                      # not vouched for: no checkpoint\n",
+           "        hashes = [bytes.fromhex(ev.event_hash()) for ev in log]\n"),
+    # I-CHECKPOINT: the root is the Merkle tree hash of RFC 9162 (merkle.py)
+    Mutant("ICHECK-leaf-hash-without-its-prefix", "ICHECK",
+           "    return _sha256(LEAF_PREFIX + event_hash)",
+           "    return event_hash", "merkle.py"),
+    Mutant("ICHECK-node-hash-without-its-prefix", "ICHECK",
+           "    return _sha256(NODE_PREFIX + left + right)",
+           "    return _sha256(left + right)", "merkle.py"),
+    Mutant("ICHECK-leaf-and-node-share-a-prefix", "ICHECK",
+           'NODE_PREFIX = b"\\x01"', 'NODE_PREFIX = b"\\x00"', "merkle.py"),
+    Mutant("ICHECK-empty-tree-root-not-the-empty-hash", "ICHECK",
+           '        return _sha256(b"")', "        return bytes(32)",
+           "merkle.py"),
+    Mutant("ICHECK-subtrees-joined-in-the-wrong-order", "ICHECK",
+           "        node = node_hash(stack.pop()[0], node)",
+           "        node = node_hash(node, stack.pop()[0])", "merkle.py"),
+    Mutant("ICHECK-last-node-repeated-in-an-odd-tree", "ICHECK",
+           "    node = stack.pop()[0]\n    while stack:",
+           "    node, size = stack.pop()\n    if stack and size < stack[-1][1]:\n        node = node_hash(node, node)\n    while stack:",
+           "merkle.py"),
+    Mutant("ICHECK-audit-path-misplaces-the-last-leaf", "ICHECK",
+           "        if fn & 1 or fn == sn:",
+           "        if fn & 1:", "merkle.py"),
+    # rule Q: a quarantined session takes no key
+    Mutant("Q-operator-key-added-to-a-quarantined-session", "Q",
+           '        if s.quarantined:\n            raise BridgeError("session is QUARANTINED", reason="quarantined")\n        if not s.key_exhausted:',
+           '        if not s.key_exhausted:'),
+    # I5: the chain check reads the sequence numbers
+    Mutant("I5-chain-check-ignores-the-sequence-number", "I5",
+           "            if ev.sequence != i or ev.prev_hash != prev:",
+           "            if ev.prev_hash != prev:"),
+    # I2: a resolution needs a pending escalation
+    Mutant("I2-resolution-without-an-escalation", "I2",
+           '        if s.human != Human.PENDING:\n            raise BridgeError("human_resolve requires Human=Pend")',
+           '        if False:\n            raise BridgeError("human_resolve requires Human=Pend")'),
+    # I15: the disconnect of another key does not abandon a re-attach
+    Mutant("I15-foreign-disconnect-abandons-the-reattach", "I15",
+           "            if key_id is not None and key_id != s.resuming:\n                return",
+           "            if False:\n                return"),
+    # I1: the resume record carries the scope version in force
+    Mutant("I1-resume-record-carries-a-stale-scope-version", "I1",
+           '            "scope_version": s.scope_version,',
+           '            "scope_version": 0,'),
+    # I11g: refusals of a revoked key and of an unbound nonce are bounded
+    Mutant("I11-revoked-key-refusals-logged-without-bound", "I11g",
+           '                             "bad_signature", "nonce_binding",\n                             "revoked_key"})',
+           '                             "bad_signature", "nonce_binding"})'),
+    Mutant("I11-binding-refusals-logged-without-bound", "I11g",
+           '                             "bad_signature", "nonce_binding",\n                             "revoked_key"})',
+           '                             "bad_signature", "revoked_key"})'),
+    # I13: generated keys skip the ids the session has used
+    Mutant("I13-generated-key-collides-with-a-supplied-one", "I13",
+           '        while f"tc-{n:04d}" in s.used_keys:',
+           '        while False:'),
+    # I13, rule D: completion once, for forwarded calls only
+    Mutant("RuleD-call-never-forwarded-is-completed", "D",
+           "        forwarded = key in s.drained or (sid, key) in self._sent",
+           "        forwarded = True"),
+    Mutant("RuleD-directly-forwarded-call-cannot-be-completed", "D",
+           "        forwarded = key in s.drained or (sid, key) in self._sent",
+           "        forwarded = key in s.drained"),
+    Mutant("I13-second-completion-accepted", "I13",
+           "        if key in s.completed or not forwarded:",
+           "        if not forwarded:"),
+    # I3: the scope is a set; a direct call outside it is refused and
+    # recorded; an observed widening is recorded on a key_exhausted session
+    Mutant("I3-scope-recorded-as-written-at-attach", "I3",
+           '                "authority_scope": list(canonical_scope(\n                    session.authority_scope)),',
+           '                "authority_scope": list(session.authority_scope),'),
+    Mutant("I10-narrowed-scope-recorded-as-written", "I10",
+           "        s = self._enter(sid)\n        new_scope = canonical_scope(new_scope)\n        proposed, current = set(new_scope), set(s.scope)",
+           "        s = self._enter(sid)\n        proposed, current = set(new_scope), set(s.scope)"),
+    Mutant("I3-direct-call-outside-the-scope-forwarded", "I3",
+           "            if permission is not None and permission not in s.scope:\n                # I3 on the direct path",
+           "            if False:\n                # I3 on the direct path"),
+    Mutant("I3-direct-refusal-not-recorded", "I3",
+           '                self._commit(sid, [(GE.TOOL_CALL_REJECTED, {\n                    "key": key, "tool": tool, "permission": permission,\n                    "reason": "scope", "direct": True})])\n',
+           ''),
+    Mutant("I3-direct-refusal-removes-a-queued-call", "I3",
+           '            if not p.get("direct"):         # a direct call was never queued',
+           '            if True:'),
+    Mutant("I3-observed-widening-refused-when-key-exhausted", "I3",
+           '        s = self._enter(sid, exhausted_ok=source == "observed")',
+           '        s = self._enter(sid)'),
 ]
 
 # --- Canonical JSON mutants (jcs.py) -----------------------------------------
@@ -822,6 +1161,9 @@ WIRE_MUTANTS = [
     Mutant("WIRE-resume-key-id-dropped", "WIRE",
            '    return canonical_for_signature([tag, session_id, key_id, nonce, seq, hash])',
            '    return canonical_for_signature([tag, session_id, nonce, seq, hash])'),
+    Mutant("WIRE-challenge-key-id-dropped", "WIRE",
+           '    return encode_message("challenge", session_id=session_id, key_id=key_id)',
+           '    return encode_message("challenge", session_id=session_id)'),
 ]
 
 
@@ -836,6 +1178,16 @@ WIRESERVER_MUTANTS = [
     Mutant("WIRESERVER-reattach-not-completed", "WIRE",
            "        events = self.bridge.client_reattach(sid, self._request(m))",
            "        events = self.bridge.begin_resume(sid, self._request(m))",
+           "wire_server.py"),
+    Mutant("WIRESERVER-challenge-key-id-ignored", "WIRE",
+           """        ch = self.bridge.challenge(sid, m["key_id"])""",
+           """        ch = self.bridge.challenge(sid, "")""",
+           "wire_server.py"),
+    Mutant("WIRESERVER-joined-carries-event-kinds-only", "WIRE",
+           """            "joined", session_id=sid,
+            events=[event_object(e) for e in events or []])""",
+           """            "joined", session_id=sid,
+            events=[e.kind.value for e in events or []])""",
            "wire_server.py"),
     Mutant("WIRESERVER-reason-lost", "WIRE",
            """    return exc.reason
@@ -853,11 +1205,16 @@ def run_wireserver_mutant(mutant: Mutant) -> tuple[Mutant, str]:
     with tempfile.TemporaryDirectory(prefix="mut-wsrv-") as d:
         for name in (*SUPPORT, "run_vectors.py"):
             (Path(d) / name).write_text((HERE / name).read_text())
-        (Path(d) / "vectors").symlink_to(HERE / "vectors")
+        for name in DATA_DIRS:
+            (Path(d) / name).symlink_to(HERE / name)
         (Path(d) / mutant.file).write_text(src.replace(mutant.old, mutant.new))
-        proc = subprocess.run(
-            [sys.executable, "-I", str(Path(d) / "run_vectors.py"), "--wire"],
-            cwd=d, capture_output=True, text=True, timeout=600)
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-I", str(Path(d) / "run_vectors.py"),
+                 "--wire"], cwd=d, capture_output=True, text=True,
+                timeout=TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            return timed_out(mutant)
     if proc.returncode == 0:
         return mutant, "SURVIVED"
     if proc.returncode == 1 and re.search(r"^FAIL ", proc.stdout, re.M):
@@ -902,16 +1259,21 @@ assert j == b'["bc/v1/join","s","k","n",1,"h"]', j
 assert wire.canonical_bytes('\u00e9') == '"\u00e9"'.encode(), "non-ASCII"
 assert wire.canonical_bytes({'t': 1.0}) == b'{"t":1}', "float"
 
-# Test 3: challenge roundtrip
-msg = wire.op_challenge(session_id='sess-001')
+# Test 3: challenge roundtrip; the message names the key id
+msg = wire.op_challenge(session_id='sess-001', key_id='ck-1')
 decoded = wire.decode_message(msg)
-assert decoded == {'op': 'challenge', 'session_id': 'sess-001'}, decoded
+assert decoded == {'op': 'challenge', 'session_id': 'sess-001',
+                   'key_id': 'ck-1'}, decoded
+assert msg == b'{"key_id":"ck-1","op":"challenge","session_id":"sess-001"}', msg
 
 print("wire OK")
 """ % str(path.parent)
-        proc = subprocess.run(
-            [sys.executable, "-I", "-c", test],
-            cwd=d, capture_output=True, text=True, timeout=60)
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-I", "-c", test],
+                cwd=d, capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            return timed_out(mutant)
     if proc.returncode == 0:
         return mutant, "SURVIVED"
     if proc.returncode == 1 and "AssertionError" in proc.stderr:
@@ -930,13 +1292,19 @@ def run_one(mutant: Mutant) -> tuple[Mutant, str]:
         # the suite reads vectors/ and imports jcs.py from its own directory
         for name in SUPPORT:
             (Path(d) / name).write_text((HERE / name).read_text())
-        (Path(d) / "vectors").symlink_to(HERE / "vectors")
+        for name in DATA_DIRS:
+            (Path(d) / name).symlink_to(HERE / name)
         (Path(d) / mutant.file).write_text(src.replace(mutant.old, mutant.new))
         path = Path(d) / "conformance_suite.py"
-        proc = subprocess.run(
-            [sys.executable, "-I", "-m", "pytest", "-q", "-rf",
-             "-p", "no:cacheprovider", str(path)],
-            cwd=d, capture_output=True, text=True, timeout=600)
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-I", "-m", "pytest", *PYTEST_ARGS,
+                 str(path)],
+                cwd=d, capture_output=True, text=True, env=SUITE_ENV,
+                timeout=TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            FAILED_BY[mutant.name] = []
+            return timed_out(mutant)
     verdict, failed = classify(proc)
     FAILED_BY[mutant.name] = failed
     return mutant, verdict

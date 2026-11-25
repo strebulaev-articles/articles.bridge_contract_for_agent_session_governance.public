@@ -42,7 +42,7 @@ fn reason(server: &WireServer, b: &mut Bridge, data: Vec<u8>) -> String {
 }
 
 fn nonce(server: &WireServer, b: &mut Bridge) -> String {
-    send(server, b, &wire::op_challenge("s")).expect("challenge")["nonce"].as_str().unwrap().to_string()
+    send(server, b, &wire::op_challenge("s", "ck-1")).expect("challenge")["nonce"].as_str().unwrap().to_string()
 }
 
 fn tip(b: &Bridge) -> (i64, String) {
@@ -62,7 +62,11 @@ fn a_request_that_is_not_canonical_json_is_refused() {
     let before = f.bridge.events("s").len();
     for data in [
         // members out of order
-        br#"{"session_id":"s","op":"challenge"}"#.to_vec(),
+        br#"{"session_id":"s","op":"challenge","key_id":"ck-1"}"#.to_vec(),
+        // a challenge that names no key id
+        wire::encode_message("challenge", Some("s"), &serde_json::Map::new()),
+        // nested beyond the bound
+        [br#"{"op":"challenge","session_id":"#.as_slice(), &[b'['; 500], &[b']'; 500], b"}"].concat(),
         // truncated
         br#"{"op":"challenge","session_id":"s""#.to_vec(),
         // not an object, and no op
@@ -107,7 +111,7 @@ fn ops_the_front_end_does_not_serve_are_unsupported() {
 fn an_unknown_session_gets_the_uniform_refusal() {
     let server = WireServer::new();
     let mut f = fixture();
-    assert_eq!(reason(&server, &mut f.bridge, wire::op_challenge("nobody")), "refused");
+    assert_eq!(reason(&server, &mut f.bridge, wire::op_challenge("nobody", "ck-1")), "refused");
     let req = f.key.request_for(ResumeOp::Reattach, "nobody", &"ab".repeat(16), 0, &"00".repeat(32));
     let data = wire::op_reattach("nobody", &req.key_id, &req.nonce, 0, &req.hash, &req.signature);
     assert_eq!(reason(&server, &mut f.bridge, data), "refused");
@@ -200,7 +204,7 @@ fn add_client_and_join_carry_their_own_proofs() {
     assert_eq!(reason(&server, &mut f.bridge, add(&n, &forged, "ck-1")), "bad_signature");
     let n = nonce(&server, &mut f.bridge);
     let sig = f.key.sign_add_client("s", &public, &n);
-    assert_eq!(reason(&server, &mut f.bridge, add(&n, &sig, "ck-0")), "via_not_connected");
+    assert_eq!(reason(&server, &mut f.bridge, add(&n, &sig, "ck-0")), "bad_signature"); // an unregistered key is a bad signature
 
     // the connected key's signature is accepted once; the nonce cannot be replayed
     let n = nonce(&server, &mut f.bridge);
@@ -209,8 +213,8 @@ fn add_client_and_join_carry_their_own_proofs() {
     assert_eq!(ok["status"], "added");
     assert_eq!(reason(&server, &mut f.bridge, add(&n, &sig, "ck-1")), "nonce_used");
 
-    // the new key joins the attached session
-    let n = nonce(&server, &mut f.bridge);
+    // the new key joins the attached session, with a nonce issued for it
+    let n = send(&server, &mut f.bridge, &wire::op_challenge("s", "ck-2")).expect("challenge")["nonce"].as_str().unwrap().to_string();
     let (seq, hash) = tip(&f.bridge);
     let r = second.request_for(ResumeOp::Join, "s", &n, seq, &hash);
     let joined = send(&server, &mut f.bridge, &wire::op_join("s", &r.key_id, &r.nonce, seq as u64, &hash, &r.signature)).expect("joined");
@@ -232,7 +236,7 @@ fn tool_call_outcomes_and_refusal_reasons_are_named() {
     send(&server, &mut f.bridge, &wire::op_narrow("s", &["read"])).expect("narrowed");
     assert_eq!(f.bridge.scope_of("s"), vec!["read"]);
     // a widening is refused
-    assert_eq!(reason(&server, &mut f.bridge, wire::op_narrow("s", &["read", "admin"])), "refused");
+    assert_eq!(reason(&server, &mut f.bridge, wire::op_narrow("s", &["read", "admin"])), "not_a_strict_narrowing");
 
     // detached with no escalation pending, the default policy refuses
     send(&server, &mut f.bridge, &wire::op_disconnect("s", "client_disconnect", Some("ck-1"))).expect("disconnected");
@@ -255,14 +259,14 @@ fn tool_call_outcomes_and_refusal_reasons_are_named() {
     // the end of the session is named for every later op
     send(&server, &mut f.bridge, &wire::op_terminate("s", "terminated")).expect("terminated");
     assert_eq!(reason(&server, &mut f.bridge, call("late")), "terminated");
-    assert_eq!(reason(&server, &mut f.bridge, wire::op_challenge("s")), "refused");
+    assert_eq!(reason(&server, &mut f.bridge, wire::op_challenge("s", "ck-1")), "refused");
 }
 
 #[test]
 fn a_response_is_canonical_json_with_the_session_id() {
     let server = WireServer::new();
     let mut f = fixture();
-    let bytes = server.handle(&mut f.bridge, &wire::op_challenge("s"));
+    let bytes = server.handle(&mut f.bridge, &wire::op_challenge("s", "ck-1"));
     let v: Value = wire::decode_response(&bytes).unwrap();
     assert_eq!(wire::canonical_bytes(&v), bytes);
     assert_eq!(v["status"], "nonce");
@@ -372,6 +376,16 @@ fn operator_events_are_verified_from_the_message_and_their_refusals_are_named() 
         );
     }
     let n = f.bridge.events("s").len();
+    // a client's request for a revocation appends an event on the caller's
+    // word alone, so it goes through the transport check like an unsigned op
+    let asked = hook_calls.load(Ordering::SeqCst);
+    assert_eq!(
+        reason(&server, &mut f.bridge, wire::op_revoke("s", "ck-1", "rotation", Some(""), Some("ck-1"))),
+        "unauthenticated"
+    );
+    assert_eq!(hook_calls.load(Ordering::SeqCst), asked + 1);
+    assert_eq!(f.bridge.events("s").len(), n);
+    let server = WireServer::new();
     let out = send(&server, &mut f.bridge, &wire::op_revoke("s", "ck-1", "rotation", Some(""), Some("ck-1"))).expect("a request");
     assert_eq!(out["status"], "requested");
     assert_eq!(f.bridge.events("s").len(), n + 1);
@@ -407,8 +421,9 @@ fn operator_events_are_verified_from_the_message_and_their_refusals_are_named() 
     let out = send(&server, &mut f.bridge, &wire::op_add_key("s", "ck-2", &public.scheme, &pub_hex, Some(&a))).expect("added");
     assert_eq!(out["status"], "key_added");
     assert!(!f.bridge.is_key_exhausted("s"));
-    // the operator channel has its own proof: the transport hook is not asked
-    assert_eq!(hook_calls.load(Ordering::SeqCst), 0);
+    // the operator channel has its own proof: the transport hook was asked
+    // only for the client's unsigned request for a revocation
+    assert_eq!(hook_calls.load(Ordering::SeqCst), asked + 1);
 }
 
 /// One message of each unsigned op, naming `sid`; an op added to
@@ -478,4 +493,17 @@ fn a_bare_terminate_of_an_exhausted_session_and_an_unregistered_key_are_named_on
         let n = nonce(&server, &mut f.bridge);
         assert_eq!(reason(&server, &mut f.bridge, reattach_bytes(&key, &n, seq, &hash)), "bad_signature");
     }
+}
+
+#[test]
+fn a_request_nested_beyond_the_bound_is_refused_before_it_is_parsed() {
+    // below the parser's own recursion limit, so only the bound refuses it
+    let server = WireServer::new();
+    let mut f = fixture();
+    let deep = 100;
+    let body = [br#"{"content":"#.as_slice(), "[".repeat(deep).as_bytes(), "]".repeat(deep).as_bytes(),
+                br#","op":"submit_tool_call","session_id":"s","tool":"t"}"#.as_slice()].concat();
+    let before = f.bridge.events("s").len();
+    assert_eq!(reason(&server, &mut f.bridge, body), "bad_canonical");
+    assert_eq!(f.bridge.events("s").len(), before);
 }

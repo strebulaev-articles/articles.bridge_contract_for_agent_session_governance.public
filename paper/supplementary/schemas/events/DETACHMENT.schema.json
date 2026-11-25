@@ -3,7 +3,7 @@
   "$id": "https://example.org/bridge-contract/schemas/events/DETACHMENT.schema.json",
   "title": "DETACHMENT payload",
   "x-invariants": "I1",
-  "description": "Last connected client left, or the bridge restarted.",
+  "description": "Last connected client left, the bridge restarted, or a revocation removed the last connected key or the key whose re-attach was being verified.",
   "type": "object",
   "properties": {
     "reason": {

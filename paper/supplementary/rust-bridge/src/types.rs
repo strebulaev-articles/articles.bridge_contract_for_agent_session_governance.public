@@ -648,7 +648,8 @@ impl Config {
 
     pub fn validate(&self) -> Result<()> {
         // NaN would make every comparison false (a nonce that never expires),
-        // a negative value an already-expired one.
+        // an infinity is a timer that never fires and has no canonical form in
+        // a log, a negative value an already-expired one.
         let timers = [
             ("t_detach", self.t_detach),
             ("t_human", self.t_human),
@@ -659,8 +660,8 @@ impl Config {
             ("t_checkpoint", self.t_checkpoint),
         ];
         for (name, value) in timers {
-            if value.is_nan() || value < 0.0 {
-                return Err(BridgeError::new(format!("timer {name} must be a non-negative number")));
+            if !value.is_finite() || value < 0.0 {
+                return Err(BridgeError::new(format!("timer {name} must be a finite non-negative number")));
             }
         }
         if self.t_call > self.t_human {
@@ -875,4 +876,13 @@ pub(crate) fn authority_hash(principal: &str, scope: &[String], lineage: &[Strin
     m.insert("scope".into(), json!(scope));
     m.insert("lineage".into(), json!(lineage));
     hex::encode(Sha256::digest(canon(&Value::Object(m))))[..16].to_string()
+}
+
+/// A scope is a set of permission strings; its canonical form is the strings
+/// without repetition, sorted by code point. The bridge records a scope only
+/// in this form, so the authority hash does not depend on the order or the
+/// repetitions a caller wrote.
+pub fn canonical_scope(scope: &[String]) -> Vec<String> {
+    let set: std::collections::BTreeSet<&String> = scope.iter().collect();
+    set.into_iter().cloned().collect()
 }

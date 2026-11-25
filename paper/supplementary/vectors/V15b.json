@@ -1,0 +1,71 @@
+{
+  "id": "V15b",
+  "title": "A direct call outside the current scope is refused and recorded; one inside it is forwarded",
+  "covers": [
+    "I3",
+    "I2"
+  ],
+  "session": {
+    "session_id": "sess-15b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "narrow",
+      "scope": [
+        "read:docs"
+      ]
+    },
+    {
+      "do": "tool_call",
+      "key": "k1",
+      "tool": "rm",
+      "permission": "exec:shell",
+      "error": true,
+      "wire_reason": "scope",
+      "log_reason": "scope"
+    },
+    {
+      "do": "tool_call",
+      "key": "k2",
+      "tool": "cat",
+      "permission": "read:docs"
+    },
+    {
+      "do": "tool_call",
+      "key": "k3",
+      "tool": "x",
+      "permission": "never:granted",
+      "error": true,
+      "wire_reason": "scope",
+      "log_reason": "scope"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "AUTHORITY_NARROWED",
+      "TOOL_CALL_REJECTED",
+      "TOOL_CALL_REJECTED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 1,
+    "forwarded": [
+      "k2"
+    ],
+    "last_event_payload": {
+      "reason": "scope",
+      "direct": true,
+      "permission": "never:granted",
+      "key": "k3"
+    }
+  }
+}

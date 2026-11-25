@@ -6,14 +6,18 @@
     "ok": 6549,
     "dup": 0,
     "replays_attempted": 0,
-    "replays_accepted": 0
+    "replays_accepted": 0,
+    "early_replays_attempted": 0,
+    "early_replays_accepted": 0
    },
    "bridge": {
     "accepted": 6549,
     "ok": 6549,
     "dup": 0,
     "replays_attempted": 0,
-    "replays_accepted": 0
+    "replays_accepted": 0,
+    "early_replays_attempted": 0,
+    "early_replays_accepted": 0
    }
   },
   "disconnects": {
@@ -22,14 +26,18 @@
     "ok": 4393,
     "dup": 0,
     "replays_attempted": 0,
-    "replays_accepted": 0
+    "replays_accepted": 0,
+    "early_replays_attempted": 0,
+    "early_replays_accepted": 0
    },
    "bridge": {
     "accepted": 4393,
     "ok": 4393,
     "dup": 0,
     "replays_attempted": 0,
-    "replays_accepted": 0
+    "replays_accepted": 0,
+    "early_replays_attempted": 0,
+    "early_replays_accepted": 0
    }
   },
   "human timeouts": {
@@ -38,7 +46,9 @@
     "ok": 3565,
     "dup": 0,
     "replays_attempted": 0,
-    "replays_accepted": 0
+    "replays_accepted": 0,
+    "early_replays_attempted": 0,
+    "early_replays_accepted": 0
    },
    "bridge": {
     "accepted": 3565,
@@ -46,7 +56,9 @@
     "dup": 0,
     "orphaned": 266,
     "replays_attempted": 0,
-    "replays_accepted": 0
+    "replays_accepted": 0,
+    "early_replays_attempted": 0,
+    "early_replays_accepted": 0
    }
   },
   "replays": {
@@ -55,14 +67,38 @@
     "ok": 3851,
     "dup": 906,
     "replays_attempted": 837,
-    "replays_accepted": 837
+    "replays_accepted": 837,
+    "early_replays_attempted": 0,
+    "early_replays_accepted": 0
    },
    "bridge": {
     "accepted": 3851,
     "ok": 3851,
     "dup": 714,
     "replays_attempted": 837,
-    "replays_accepted": 0
+    "replays_accepted": 0,
+    "early_replays_attempted": 0,
+    "early_replays_accepted": 0
+   }
+  },
+  "pre-registration replays": {
+   "relay": {
+    "accepted": 3398,
+    "ok": 3398,
+    "dup": 0,
+    "replays_attempted": 0,
+    "replays_accepted": 0,
+    "early_replays_attempted": 1015,
+    "early_replays_accepted": 1015
+   },
+   "bridge": {
+    "accepted": 3398,
+    "ok": 3398,
+    "dup": 0,
+    "replays_attempted": 0,
+    "replays_accepted": 0,
+    "early_replays_attempted": 1015,
+    "early_replays_accepted": 0
    }
   },
   "restarts": {
@@ -71,31 +107,39 @@
     "ok": 4854,
     "dup": 0,
     "replays_attempted": 0,
-    "replays_accepted": 0
+    "replays_accepted": 0,
+    "early_replays_attempted": 0,
+    "early_replays_accepted": 0
    },
    "bridge": {
     "accepted": 4854,
     "ok": 4854,
     "dup": 0,
     "replays_attempted": 0,
-    "replays_accepted": 0
+    "replays_accepted": 0,
+    "early_replays_attempted": 0,
+    "early_replays_accepted": 0
    }
   },
   "all faults": {
    "relay": {
-    "accepted": 2340,
-    "ok": 2340,
-    "dup": 596,
-    "replays_attempted": 532,
-    "replays_accepted": 532
+    "accepted": 2133,
+    "ok": 2133,
+    "dup": 539,
+    "replays_attempted": 481,
+    "replays_accepted": 481,
+    "early_replays_attempted": 334,
+    "early_replays_accepted": 334
    },
    "bridge": {
-    "accepted": 2340,
-    "ok": 2081,
-    "dup": 318,
-    "orphaned": 259,
-    "replays_attempted": 532,
-    "replays_accepted": 0
+    "accepted": 2133,
+    "ok": 1907,
+    "dup": 296,
+    "orphaned": 226,
+    "replays_attempted": 481,
+    "replays_accepted": 0,
+    "early_replays_attempted": 334,
+    "early_replays_accepted": 0
    }
   }
  },
@@ -110,9 +154,9 @@
    "suffix_worst": 1000,
    "suffix_mean": 499,
    "suffix_final": 5,
-   "inclusion": 10,
-   "writer_ops": 2001,
-   "writer_per_event": 2
+   "inclusion": 11,
+   "writer_ops": 2999,
+   "writer_per_event": 3
   },
   {
    "events_plain": 4003,
@@ -124,9 +168,9 @@
    "suffix_worst": 1002,
    "suffix_mean": 501,
    "suffix_final": 5,
-   "inclusion": 12,
-   "writer_ops": 20024,
-   "writer_per_event": 5
+   "inclusion": 13,
+   "writer_ops": 30014,
+   "writer_per_event": 7
   },
   {
    "events_plain": 16003,
@@ -138,9 +182,9 @@
    "suffix_worst": 1002,
    "suffix_mean": 502,
    "suffix_final": 5,
-   "inclusion": 14,
-   "writer_ops": 272310,
-   "writer_per_event": 17
+   "inclusion": 15,
+   "writer_ops": 408344,
+   "writer_per_event": 25
   },
   {
    "events_plain": 64003,
@@ -152,9 +196,9 @@
    "suffix_worst": 1002,
    "suffix_mean": 502,
    "suffix_final": 5,
-   "inclusion": 16,
-   "writer_ops": 4164409,
-   "writer_per_event": 65
+   "inclusion": 17,
+   "writer_ops": 6245984,
+   "writer_per_event": 97
   }
  ]
 }

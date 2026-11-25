@@ -184,9 +184,7 @@ re-attach requests, forges signatures, claims a history that is not a
 prefix of the chain, or tries to terminate a session with forged
 re-attach attempts, provided no registered private key is compromised
 (A7). Such attempts are rejected without a state change (I4, I9, I11),
-with stated exceptions: a request refused before its key was registered is
-accepted on replay if the key is registered within $T_{\text{nonce}}$, and
-a caller that holds the live-nonce limit can keep a detached client from
+with one stated exception: a caller that holds the live-nonce limit can keep a detached client from
 re-attaching until the detach timeout ends the session (limitations
 register, Table~\ref{tab:limitations}).
 \end{itemize}

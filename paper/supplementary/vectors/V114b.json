@@ -1,0 +1,64 @@
+{
+  "id": "V114b",
+  "title": "An operator key addition is refused on a quarantined session",
+  "covers": [
+    "I11-REVOKE",
+    "Q",
+    "I-OPERATOR"
+  ],
+  "session": {
+    "session_id": "sess-114b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "revoke",
+      "client": "ck-1",
+      "reason": "compromise"
+    },
+    {
+      "do": "tamper_log",
+      "index": 1,
+      "field": "prev_hash"
+    },
+    {
+      "do": "restart"
+    },
+    {
+      "do": "operator_add_key",
+      "client": "ck-2",
+      "error": true,
+      "wire_reason": "quarantined"
+    },
+    {
+      "do": "operator_add_key",
+      "client": "ck-2",
+      "sig": "none",
+      "error": true
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "KEY_REVOKED",
+      "DETACHMENT",
+      "RESUME_PREPARED",
+      "RECOVERY_FAILED"
+    ],
+    "cell": [
+      "Det",
+      "None"
+    ],
+    "scope_version": 0,
+    "quarantined": true,
+    "key_exhausted": true,
+    "registry": [
+      "ck-1"
+    ]
+  }
+}

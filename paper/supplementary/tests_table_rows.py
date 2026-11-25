@@ -115,13 +115,15 @@ queue."""),
 detaches; an added key resumes, an unregistered one is refused, and
 registration needs a connected client; a scope narrowed from one device
 reaches the other through the replay."""),
-    (r"""T119--T123 (vectors V105--V108)""",
+    (r"""T119--T123 (vectors V105--V108b)""",
      r"""I15""",
      r"""A client registration needs a fresh signature by a connected, unrevoked
 key over the operation, session, new key and nonce: unsigned, forged,
 other-operation, replayed, expired and revoked-key requests are refused with
-a named reason and commit nothing; the signed bytes are pinned by known
-answers."""),
+a named reason and commit nothing; an authorising key the session does not
+register is answered as a bad signature, and that a registered key is not
+connected is said only after its signature verified; the signed bytes are
+pinned by known answers."""),
     (r"""T124--T125""",
      r"""I11""",
      r"""The attach proof of possession is the bytes of the tagged tuple that names
@@ -137,12 +139,14 @@ session with one text that names neither the session nor its state."""),
      r"""\texttt{reattach} and \texttt{join} refuse an unknown, a terminated and a
 quarantined session with one text that names neither the session nor its
 state."""),
-    (r"""T128 (vector V111)""",
-     r"""I11-REVOKE""",
-     r"""A key revoked for compromise while its re-attach is verified is not the
-attached client afterwards: the re-attach is abandoned (detached, resume
-record rewritten) and \texttt{complete\_resume} refuses; a soft revocation
-leaves the verification alone."""),
+    (r"""T128, T128b (vectors V111, V111b, V111c)""",
+     r"""I11-REVOKE, L1""",
+     r"""A key revoked while its re-attach is verified is not the attached
+client afterwards: the re-attach is abandoned (detached, resume record
+rewritten) and \texttt{complete\_resume} refuses, for a soft revocation
+exactly as for a hard one; the revocation of another key leaves the
+verification alone. When the key was the only one the session is detached
+and \texttt{key\_exhausted}, and $T_{\text{detach}}$ ends it."""),
     (r"""T138--T140 (vectors V121--V126; \texttt{vectors/bytes\_kat.json})""",
      r"""I-OPERATOR""",
      r"""An operator signature is bound to the bridge identity and to the log
@@ -304,4 +308,89 @@ recovery; the operator domain tags separate the signatures."""),
     (r"""T46""",
      r"""---""",
      r"""The derived view of named states."""),
+    (r"""T152b--T152h (vectors V62--V62f, V09b)""",
+     r"""I11, I8, I15""",
+     r"""A nonce is bound to the key id its challenge named. One issued for
+another key id is refused for a join, a registration and a re-attach though
+the signature verifies; one issued for a key id before the key was
+registered never verifies, after a \texttt{CLIENT\_ADDED} and after an
+\texttt{OPERATOR\_ADD\_KEY} alike; both are answered as a bad signature,
+recorded as \texttt{nonce\_binding}, and leave the nonce to the key it was
+issued for. \texttt{challenge} answers every key id in the same way and
+against the same limit. Over random interleavings a request is accepted at
+most on its first presentation (T152f). A request the transport flags as a
+replay has spent its nonce if it was authentic. The limits of I11 (f) and
+(g) hold with bound nonces."""),
+    (r"""T141b, T71b, T7b (vectors V90b--V90d)""",
+     r"""I11 (a), I15, I4""",
+     r"""A join is verified before the attachment is answered: one that does
+not verify gets the same answer and the same record on an attached, a
+detached and a resuming session; one that verifies is refused as
+\texttt{not\_attached} or \texttt{resume\_in\_progress}, has spent its
+nonce, and never starts a re-attach. A key-exhausted session answers a
+request that does not verify like any other session. A negative sequence
+number is a malformed request and is not logged."""),
+    (r"""T26b (vectors V16b--V16d)""",
+     r"""L1, L2, I11""",
+     r"""A re-attach in the tick in which $T_{\text{detach}}$ or the cumulative
+cap expires is processed first: accepted, the timer does not fire; refused,
+it fires after the rejection. A timer that expired earlier has ended the
+session, and the request gets the uniform refusal. A human timer of the same
+tick still applies after the re-attach."""),
+    (r"""T43b, T43c (vectors V41b--V41d)""",
+     r"""I13""",
+     r"""The approval expiry is kept per call: a call whose approval lapsed is
+expired at the drain though a later escalation was resolved in between, also
+across a restart; an approval is valid strictly before
+$T_{\text{approve}}$."""),
+    (r"""T66b--T66f (vectors V54b, V54c; Python only; \texttt{vectors/bytes\_kat.json})""",
+     r"""I-CHECKPOINT, I5, I6""",
+     r"""With checkpoints on, no \texttt{CHECKPOINT} follows a
+\texttt{TERMINATION}, none is appended to a quarantined session and none is
+taken over a log whose chain does not verify; the invariants of T9 hold with
+checkpoints on. The root over the event hashes is the Merkle tree hash of
+RFC~9162, with known answers for roots and audit paths."""),
+    (r"""T146b (vector V114b)""",
+     r"""rule Q""",
+     r"""An operator key addition is refused on a quarantined session and
+registers nothing."""),
+    (r"""T69b, T19d, T99b (vectors V90c, V70b)""",
+     r"""I11-REVOKE, I11""",
+     r"""A revoked key cannot join; the revocation is looked at only after the
+signature verified, and a revoked key spends only the nonce issued to it; a
+request for an unregistered key leaves the nonce; refusals of a revoked key
+are recorded only up to the bound of I11 (g)."""),
+    (r"""T89b, T150b (vectors V73b, V132b)""",
+     r"""I11-REVOKE, I-OPERATOR""",
+     r"""A revocation names rotation or compromise and is made once per key.
+The operator operations verify the signature before anything is said about
+the session, so a caller without it gets one answer for every session, key
+and state; a termination of a session that is over is refused."""),
+    (r"""T5b, T61b, T21b, T45b (vectors V12b, V23b, V21b)""",
+     r"""I5, I2, I15, I1""",
+     r"""The chain check reads the sequence numbers; a resolution needs a
+pending escalation; the disconnect of another key does not abandon a
+re-attach in verification; the resume record carries the scope and the
+scope version in force."""),
+    (r"""T41b, T41c, T25b, T60e (vectors V13b, V15b, V38b)""",
+     r"""I13, I3""",
+     r"""A duplicate key returns the queued call and commits nothing; a
+generated key never collides with a supplied one; a direct call outside the
+current scope is refused with the reason \texttt{scope} and recorded, and
+leaves a queued call under the same key alone; completion is accepted once
+for a forwarded call and refused for a call that was never forwarded."""),
+    (r"""T14b, T14c, T56b, T27b (vectors V06b, V06c, V27b, V31b)""",
+     r"""I3, I10, L1""",
+     r"""The scope is recorded as a sorted set, so the authority hash does not
+depend on how a caller wrote it; a narrowing that is not strict is refused
+as \texttt{not\_a\_strict\_narrowing}; a widening the runtime announces is
+recorded on a key-exhausted session; a timeout names the timer that
+fired."""),
+    (r"""T151b, T149b, T101b (\texttt{vectors/bytes\_kat.json})""",
+     r"""Appendix B""",
+     r"""The wire server refuses a request nested beyond its bound before
+parsing it; \texttt{verified} and \texttt{joined} carry event objects,
+\texttt{narrowed} the new version, \texttt{queued} and \texttt{forwarded}
+the key, each matching its schema; the bytes of a challenge request, which
+names the key id, are pinned."""),
 ]

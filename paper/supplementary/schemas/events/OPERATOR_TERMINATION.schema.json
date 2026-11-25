@@ -6,9 +6,17 @@
   "description": "Operator terminates a key_exhausted session.",
   "type": "object",
   "properties": {
-    "reason": {"type": "string"},
-    "signature": {"type": "string", "description": "Ed25519 operator signature over [session_id, reason]."}
+    "reason": {
+      "type": "string"
+    },
+    "signature": {
+      "type": "string",
+      "description": "Ed25519 operator signature over canonical JSON of [\"bc/v1/terminate\", bridge_id, session_id, reason, seq, head]."
+    }
   },
-  "required": ["reason", "signature"],
+  "required": [
+    "reason",
+    "signature"
+  ],
   "additionalProperties": false
 }

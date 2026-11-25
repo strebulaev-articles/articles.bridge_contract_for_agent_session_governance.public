@@ -15,7 +15,7 @@
     },
     "key": {
       "type": "string",
-      "description": "The idempotency key (echoed or generated)."
+      "description": "The idempotency key (echoed or generated; empty for a call forwarded directly without one)."
     }
   },
   "required": [

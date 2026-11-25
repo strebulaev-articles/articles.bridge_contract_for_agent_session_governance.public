@@ -17,6 +17,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))      # python -I does not add the script directory
+SCHEMAS = HERE / "schemas"
 
 import conformance_suite as cs  # noqa: E402
 import wire  # noqa: E402
@@ -76,6 +77,7 @@ class Runner:
             self.attach_reason = exc.reason
         self.seen: dict[str, tuple[int, str]] = {}
         self.nonces: dict[str, str] = {}
+        self.requests: dict[str, cs.ResumeRequest] = {}   # kept by ``as``
         self.last_add: tuple[str, str, str] = ("", "", "")
         if not self.attach_refused:
             self.sync(self.first)
@@ -144,19 +146,30 @@ class Runner:
             self.keys[client] = cs.ClientKey(client, scheme=self.scheme)
         return self.keys[client]
 
-    def fresh_nonce(self) -> str:
-        return self.bridge.challenge(self.sid).nonce
+    def _new_key(self, client: str) -> cs.ClientKey:
+        """The key a registration brings: the one the client already signed
+        with if it made a request before it was registered (so that request
+        can be presented again after the registration), a new one
+        otherwise."""
+        return self.keys.get(client) or cs.ClientKey(client,
+                                                     scheme=self.scheme)
+
+    def fresh_nonce(self, key_id: str) -> str:
+        """A challenge for ``key_id``: the nonce is bound to that key id."""
+        return self.bridge.challenge(self.sid, key_id).nonce
 
     def _request(self, act: dict, op: str = "reattach") -> cs.ResumeRequest:
+        if "replay_of" in act:          # an earlier request, byte for byte
+            return self.requests[act["replay_of"]]
         client = act.get("client", self.first)
         key = self._key(client)
         which = act.get("nonce", "fresh")
-        if which == "fresh":
-            nonce = self.fresh_nonce()
+        if which == "fresh":            # a challenge for the requesting key
+            nonce = self.fresh_nonce(client)
         elif which == "unknown":
             nonce = "ab" * 16
         elif which == "other-session":  # issued for a second session
-            nonce = self.bridge.challenge(act["from_session"]).nonce
+            nonce = self.bridge.challenge(act["from_session"], client).nonce
         else:
             nonce = self.nonces[which]
         if "as" in act:
@@ -194,6 +207,8 @@ class Runner:
                 [self.sid, nonce, seq, h]))
         elif proof != "valid":
             raise ValueError(f"unknown proof {proof!r}")
+        if "as" in act:
+            self.requests[act["as"]] = req
         return req
 
     def add_client_request(self, act: dict, key: cs.ClientKey):
@@ -210,9 +225,11 @@ class Runner:
             return self.last_add
         signer = self._key(via)
         if act.get("nonce") == "other-session":   # issued for a second session
-            nonce = self.bridge.challenge(act["from_session"]).nonce
-        else:
-            nonce = self.fresh_nonce()
+            nonce = self.bridge.challenge(act["from_session"], via).nonce
+        elif "nonce" in act:                      # a nonce kept under a name
+            nonce = self.nonces[act["nonce"]]
+        else:                                     # a challenge for the signer
+            nonce = self.fresh_nonce(via)
         proof = act.get("proof", "valid")
         pub = key.public()
         if proof == "valid":
@@ -312,8 +329,7 @@ class Runner:
             b.attempt_authority_extension(sid, tuple(act["scope"]),
                                           source=act.get("source", "requested"))
         elif kind == "add_client":
-            key = (self.keys[act["client"]] if act.get("proof") == "replay"
-                   else cs.ClientKey(act["client"], scheme=self.scheme))
+            key = self._new_key(act["client"])
             via, nonce, sig = self.add_client_request(act, key)
             b.add_client_key(sid, via, key.public(), nonce, sig)
             self.keys[act["client"]] = key
@@ -348,7 +364,7 @@ class Runner:
             b.revoke_key(sid, act["client"], reason, signature=sig,
                          requested_by=act.get("requested_by"))
         elif kind == "operator_add_key":
-            key = cs.ClientKey(act["client"], scheme=self.scheme)
+            key = self._new_key(act["client"])
             pub = key.public_key.hex()
             b.operator_add_key(
                 sid, act["client"], pub, scheme=key.scheme,
@@ -362,7 +378,7 @@ class Runner:
                 signature=self.operator_sig(act, "terminate",
                                             "all_keys_revoked"))
         elif kind == "challenge":
-            nonce = b.challenge(sid).nonce
+            nonce = b.challenge(sid, act.get("client", self.first)).nonce
             if "as" in act:
                 self.nonces[act["as"]] = nonce
         elif kind == "challenge_uniform":
@@ -371,7 +387,7 @@ class Runner:
             texts = []
             for target in (sid, "no-such-session"):
                 try:
-                    b.challenge(target)
+                    b.challenge(target, act.get("client", self.first))
                 except cs.BridgeError as exc:
                     texts.append(str(exc))
             assert len(texts) == 2 and texts[0] == texts[1], texts
@@ -411,7 +427,8 @@ class Runner:
             b.complete_resume(sid)
         elif kind == "advance":
             self.clock.advance(act["seconds"])
-            b.tick()
+            if act.get("tick", True):     # ``tick: false``: the clock moves
+                b.tick()                  # and no timer is evaluated yet
         elif kind == "tick":
             b.tick()
         elif kind == "restart":
@@ -458,6 +475,7 @@ class WireRunner(Runner):
 
     def __init__(self, vec: dict) -> None:
         self.routed = 0
+        self.schema_errors: list[str] = []
         super().__init__(vec)
 
     def _attach(self, identity, key, grant, proof) -> None:
@@ -471,22 +489,31 @@ class WireRunner(Runner):
             grant=grant, signature=proof))
 
     def _send(self, data: bytes) -> dict:
+        """Send one request.  The response is checked against the message
+        schemas before it is used: a response the schemas do not describe
+        fails the vector."""
         self.routed += 1
         self.server.bridge = self.bridge          # follows a restart
-        return wire_server.send(self.server, data)
+        raw = self.server.handle(data)
+        self.schema_errors += response_errors(wire.decode_message(data)["op"],
+                                              raw)
+        resp = wire.decode_response(raw)
+        if resp["status"] == "rejected":
+            raise wire_server.WireRejected(resp["reason"])
+        return resp
 
-    def fresh_nonce(self) -> str:
-        return self._send(wire.op_challenge(session_id=self.sid))["nonce"]
+    def fresh_nonce(self, key_id: str) -> str:
+        return self._send(wire.op_challenge(session_id=self.sid,
+                                            key_id=key_id))["nonce"]
 
     def do(self, act: dict) -> None:
         kind, sid, b = act["do"], self.sid, self.bridge
         if kind == "challenge":
-            nonce = self.fresh_nonce()
+            nonce = self.fresh_nonce(act.get("client", self.first))
             if "as" in act:
                 self.nonces[act["as"]] = nonce
         elif kind == "add_client":
-            key = (self.keys[act["client"]] if act.get("proof") == "replay"
-                   else cs.ClientKey(act["client"], scheme=self.scheme))
+            key = self._new_key(act["client"])
             via, nonce, sig = self.add_client_request(act, key)
             self._send(wire.op_add_client(
                 session_id=sid, via_key_id=via, new_key_id=key.key_id,
@@ -553,7 +580,7 @@ class WireRunner(Runner):
                 session_id=sid, key_id=act["client"], reason=reason,
                 signature=sig, requested_by=act.get("requested_by")))
         elif kind == "operator_add_key":
-            key = cs.ClientKey(act["client"], scheme=self.scheme)
+            key = self._new_key(act["client"])
             pub = key.public_key.hex()
             self._send(wire.op_add_key(
                 session_id=sid, key_id=act["client"], scheme=key.scheme,
@@ -576,6 +603,48 @@ class WireRunner(Runner):
                 result_hash=act.get("result_hash", "")))
         else:
             super().do(act)
+
+
+_VALIDATORS: dict[str, object] = {}
+
+
+def _validator(name: str):
+    """A validator for one schema file under ``schemas/`` (cached)."""
+    if name not in _VALIDATORS:
+        import jsonschema
+        schema = json.loads((SCHEMAS / name).read_text())
+        if name == "event.schema.json":
+            schema.pop("allOf")       # the payload is dispatched by kind below
+        _VALIDATORS[name] = jsonschema.Draft7Validator(schema)
+    return _VALIDATORS[name]
+
+
+def response_errors(op: str, raw: bytes) -> list[str]:
+    """Why a wire response does not conform: it must be canonical JSON and
+    match the response schema of its op or, when it is a rejection, the
+    error schema; every event a ``verified`` or ``joined`` response carries
+    must match the event envelope and the payload schema of its kind."""
+    errs: list[str] = []
+    resp = wire.decode_response(raw)
+    if wire.canonical_bytes(resp) != raw:
+        errs.append(f"response to {op} is not canonical JSON")
+    name = f"messages/{op}.response.schema.json"
+    own = (list(_validator(name).iter_errors(resp))
+           if (SCHEMAS / name).exists() else ["no response schema"])
+    if own and (resp.get("status") != "rejected" or list(
+            _validator("messages/error.schema.json").iter_errors(resp))):
+        errs.append(f"response to {op} does not match its schema: {resp}")
+    events = resp.get("events")
+    for ev in events if isinstance(events, list) else []:
+        bad = list(_validator("event.schema.json").iter_errors(ev))
+        kind = ev.get("kind") if isinstance(ev, dict) else None
+        payload = f"events/{kind}.schema.json"
+        if not bad and (SCHEMAS / payload).exists():
+            bad = list(_validator(payload).iter_errors(ev["payload"]))
+        if bad:
+            errs.append(f"response to {op} carries an event that does not "
+                        f"match its schema: {bad[0].message}")
+    return errs
 
 
 def run_vector(vec: dict, runner_cls=Runner) -> list[str]:
@@ -601,7 +670,7 @@ def run_vector(vec: dict, runner_cls=Runner) -> list[str]:
                          f"{'refusal' if expect.get('attach_refused') else 'success'}")
         if r.storage.logs:
             fails.append("a refused attach committed events")
-        return fails
+        return fails + getattr(r, "schema_errors", [])
     actions = [a for a in vec["actions"] for _ in range(a.get("times", 1))]
     for i, act in enumerate(actions):
         try:
@@ -614,10 +683,11 @@ def run_vector(vec: dict, runner_cls=Runner) -> list[str]:
                 fails.append(f"action {i} add_client: refused as "
                              f"{getattr(exc, 'reason', str(exc))}, expected "
                              f"{act['reason']}")
-            if ("wire_reason" in act and isinstance(exc, wire_server.WireRejected)
-                    and exc.reason != act["wire_reason"]):
-                fails.append(f"action {i} {act['do']}: refused on the wire as "
-                             f"{exc.reason}, expected {act['wire_reason']}")
+            if ("wire_reason" in act
+                    and getattr(exc, "reason", None) != act["wire_reason"]):
+                fails.append(f"action {i} {act['do']}: refused as "
+                             f"{getattr(exc, 'reason', None)}, expected "
+                             f"{act['wire_reason']}")
             if (act.get("sig", "ok") != "ok" and
                     getattr(exc, "reason", None) != "operator_signature_invalid"):
                 fails.append(f"action {i} {act['do']}: refused as "
@@ -629,6 +699,13 @@ def run_vector(vec: dict, runner_cls=Runner) -> list[str]:
         if "then_cell" in act and r.cell() != act["then_cell"]:
             fails.append(f"action {i} {act['do']}: cell {r.cell()} != "
                          f"{act['then_cell']}")
+        if "log_reason" in act:
+            got_reason = r.bridge.events[r.sid][-1].payload.get("reason")
+            if got_reason != act["log_reason"]:
+                fails.append(f"action {i} {act['do']}: the last event "
+                             f"records the reason {got_reason!r}, expected "
+                             f"{act['log_reason']!r}")
+    fails += getattr(r, "schema_errors", [])
     log = r.bridge.events[r.sid]
     got = [e.kind.value for e in log]
     if got != expect["events"]:
@@ -694,12 +771,19 @@ def _tex(s: str) -> str:
 
 def _act(a: dict) -> str:
     extra = []
-    for k in ("client", "session_id", "how", "reason", "nonce", "prefix", "key",
-              "seconds", "downtime", "scope", "source", "hash", "times"):
+    for k in ("client", "session_id", "how", "reason", "nonce", "prefix",
+              "key", "seconds", "downtime", "scope", "source", "hash",
+              "times"):
         if k in a:
             extra.append(str(a[k]) if k != "scope" else "[" + ",".join(a[k]) + "]")
+    if "replay_of" in a:
+        extra.append("again:" + a["replay_of"])
+    if "as" in a and a["do"] in ("reattach", "join"):
+        extra.append("as:" + a["as"])
     if a.get("complete") is False:
         extra.append("no-complete")
+    if a.get("tick") is False:
+        extra.append("no-tick")
     if a.get("transport_replay"):
         extra.append("replay")
     if a.get("proof") == "invalid":
@@ -772,28 +856,40 @@ VECTORS_FIRST_ID = json.loads(VECTORS[0].read_text())["id"]
 
 def wire_probes() -> list[str]:
     """Requests the server must refuse whatever the vectors say: bytes that
-    are not canonical JSON, and an op it does not serve."""
+    are not canonical JSON (a well-formed challenge in another key order
+    and with spaces, and a truncated one), an op it does not serve, a
+    challenge that names no key id, and a request nested beyond the bound."""
     storage = cs.Storage()
     bridge = cs.Bridge(storage, cs.FakeClock(1000.0), cs.Config(),
                        cs.OperatorGrantVerifier(cs.TEST_OPERATOR.public_key))
     server = wire_server.WireServer(bridge)
     fails = []
     for data, reason in (
-            (b'{"session_id": "x", "op": "challenge"}', "bad_canonical"),
-            (b'{"op":"challenge","session_id":"x"', "bad_canonical"),
+            (b'{"session_id": "x", "op": "challenge", "key_id": "ck-1"}',
+             "bad_canonical"),
+            (b'{"key_id":"ck-1","op":"challenge","session_id":"x"',
+             "bad_canonical"),
             (wire.encode_message("restart"), "unsupported_op"),
-            (wire.op_challenge(session_id="unknown"), "refused")):
-        got = wire.decode_response(server.handle(data))
+            (wire.encode_message("challenge", session_id="unknown"),
+             "bad_canonical"),             # a challenge names a key id
+            (wire.op_challenge(session_id="unknown", key_id="ck-1"),
+             "refused"),
+            (b'{"op":"challenge","session_id":' + b"[" * 500 + b"]" * 500
+             + b"}", "bad_canonical")):    # nested beyond the bound
+        raw = server.handle(data)
+        got = wire.decode_response(raw)
         if got.get("status") != "rejected" or got.get("reason") != reason:
-            fails.append(f"wire probe {data!r}: {got}, expected {reason}")
+            fails.append(f"wire probe {data[:60]!r}: {got}, expected {reason}")
+        fails += response_errors("challenge", raw)
     return fails
 
 
 def run_vector_wire(vec: dict) -> list[str]:
     """Wire mode.  The vector runs through the wire server: actions in
     ``WireRunner.WIRE_ROUTED`` are sent as Appendix B messages with real
-    signatures and the bridge verifies them from the envelope, then the
-    same expectations are checked as in plain mode.  The remaining actions
+    signatures and the bridge verifies them from the envelope, every
+    response is validated against the message schemas (``schemas/``), then
+    the same expectations are checked as in plain mode.  The remaining actions
     are encoded and decoded (no dummy signature reaches a bridge) so that
     every action has a wire form or is named as having none."""
     import wire
@@ -835,7 +931,8 @@ def _encode_action_wire(do: str, a: dict, vec: dict) -> bytes | None:
             new_key_id=a.get("key", "ck-2"), scheme="ed25519",
             new_public_key="cd" * 32, nonce="n1", signature="00" * 64)
     if do == "challenge":
-        return wire.op_challenge(session_id=sid)
+        return wire.op_challenge(session_id=sid,
+                                 key_id=a.get("client", "ck-1"))
     if do == "reattach":
         return wire.op_reattach(
             session_id=sid, key_id=a.get("client", "ck-1"),

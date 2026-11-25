@@ -3,7 +3,7 @@
   "$id": "https://example.org/bridge-contract/schemas/events/RESUME_REJECTED.schema.json",
   "title": "RESUME_REJECTED payload",
   "x-invariants": "I4, I8, I9, I11",
-  "description": "A re-attach request refused; informational, the cell is unchanged.",
+  "description": "A re-attach or join request refused; informational, the cell is unchanged.",
   "type": "object",
   "properties": {
     "key_id": {
@@ -11,7 +11,8 @@
     },
     "seq": {
       "type": "integer",
-      "description": "Client-claimed sequence number, as presented (may be out of range)."
+      "minimum": 0,
+      "description": "Client-claimed sequence number, as presented (it may lie beyond the log; a request with a negative one is malformed and is not logged)."
     },
     "reason": {
       "type": "string",
@@ -25,9 +26,11 @@
         "already_attached",
         "transport_replay",
         "unknown_key",
-        "revoked_key"
+        "revoked_key",
+        "nonce_binding",
+        "not_attached"
       ],
-      "description": "Reason code."
+      "description": "Reason code, as the log keeps it. unknown_key and nonce_binding (the nonce was issued for another key id, or for this key id while it was not an active key of the session) are answered to the caller as bad_signature."
     }
   },
   "required": [
