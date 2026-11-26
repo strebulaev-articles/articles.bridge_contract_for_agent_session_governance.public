@@ -370,6 +370,9 @@ MUTANTS = [
     Mutant('SESSION-add-client-nonce-looked-up-in-any-session', 'I15', 'src/bridge.rs',
            '        let rec = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == nonce));',
            '        let rec = self.nonces.values_mut().find_map(|b| b.iter_mut().find(|r| r.nonce == nonce));'),
+    Mutant('I11-add-client-names-the-lifecycle-before-the-signature', 'I11', 'src/bridge.rs',
+           '        let known = self.sessions.get(sid).is_some_and(|s| s.keys.contains(via_key_id));',
+           '        self.enter(sid)?;\n        let known = self.sessions.get(sid).is_some_and(|s| s.keys.contains(via_key_id));'),
     Mutant("SESSION-challenge-budget-shared", "I11f", "src/bridge.rs",
            """        let book = self.nonces.entry(sid.to_string()).or_default();
         if book.len() >= NONCE_RECORDS {
@@ -473,6 +476,22 @@ MUTANTS = [
     Mutant('WIRE-revoke-request-not-authenticated', 'WIRE', 'src/wire_server.rs',
            '            && msg.get("requested_by").is_some())',
            '            && false)'),
+    # I-CHECKPOINT
+    Mutant('CP-no-emission', 'I-CHECKPOINT', 'src/bridge.rs',
+           '        if since < self.cfg.n_checkpoint && (now - last) < self.cfg.t_checkpoint {',
+           '        if true || since < self.cfg.n_checkpoint && (now - last) < self.cfg.t_checkpoint {'),
+    Mutant('CP-wrong-root', 'I-CHECKPOINT', 'src/bridge.rs',
+           '        let root = crate::merkle::merkle_root_hex(&hashes);',
+           '        let root = crate::merkle::merkle_root_hex(&hashes[..hashes.len().saturating_sub(1)]);'),
+    Mutant('CP-no-chain-check', 'I-CHECKPOINT', 'src/bridge.rs',
+           '        let Ok(hashes) = self.chain_hashes(sid) else { return Ok(()) }; // not vouched for',
+           '        let hashes = self.chain_hashes(sid).unwrap_or_default();'),
+    Mutant('CP-on-terminated-or-quarantined', 'I-CHECKPOINT', 'src/bridge.rs',
+           '        if s.cell.life == Life::Terminated || s.quarantined {\n            return Ok(());\n        }\n        let n = self.storage.read_log(sid)?.len();',
+           '        let n = self.storage.read_log(sid)?.len();'),
+    Mutant('CP-tracker-not-rebuilt', 'I-CHECKPOINT', 'src/bridge.rs',
+           '            if let Some(i) = log.iter().rposition(|e| e.kind == Kind::CHECKPOINT) {\n                b.cp_len.insert(sid.clone(), i + 1);\n            }',
+           ''),
 ]
 
 # each unsigned op is asked of the authentication hook; dropping any of

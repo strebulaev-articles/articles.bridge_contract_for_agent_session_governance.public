@@ -29,9 +29,10 @@ Every mutating operation fails after termination, including across a
 restart. \\
 T5 & I5 &
 A tampered or forged event is detected by chain verification. \\
-T6, T26--T29, T30b--T30e & L1, L2, I6 &
+T6, T6b, T26--T29, T30b--T30e & L1, L2, I6 &
 Detach and human timeouts, their anchors, simultaneous expiry, and the
-zero-timeout edge case; a human wait that outlasts $T_{\text{detach}}$
+zero-timeout edge case; a resolve in the tick of $T_{\text{human}}$ that loses to
+the timeout; a human wait that outlasts $T_{\text{detach}}$
 only while the client is attached; the cumulative cap across episodes,
 across restarts and not counting time attached or resuming. \\
 T8, T9 & A2, I1--I3, I5, I6, I10, I11, I14, I15 &
@@ -257,7 +258,7 @@ operator verifier refuses them; the signature is logged and survives
 recovery; the operator domain tags separate the signatures. \\
 T46 & --- &
 The derived view of named states. \\
-T152b--T152h (vectors V62--V62f, V09b) & I11, I8, I15 &
+T152b--T152i (vectors V62--V62f, V09b, V136) & I11, I8, I15 &
 A nonce is bound to the key id its challenge named. One issued for
 another key id is refused for a join, a registration and a re-attach though
 the signature verifies; one issued for a key id before the key was
@@ -268,7 +269,9 @@ issued for. \texttt{challenge} answers every key id in the same way and
 against the same limit. Over random interleavings a request is accepted at
 most on its first presentation (T152f). A request the transport flags as a
 replay has spent its nonce if it was authentic. The limits of I11 (f) and
-(g) hold with bound nonces. \\
+(g) hold with bound nonces. A registration is verified before the lifecycle is
+named: an unauthentic caller is answered as a bad signature whether the
+session is unknown or terminated (T152i). \\
 T141b, T71b, T7b (vectors V90b--V90d) & I11 (a), I15, I4 &
 A join is verified before the attachment is answered: one that does
 not verify gets the same answer and the same record on an attached, a
@@ -294,9 +297,11 @@ With checkpoints on, no \texttt{CHECKPOINT} follows a
 taken over a log whose chain does not verify; the invariants of T9 hold with
 checkpoints on. The root over the event hashes is the Merkle tree hash of
 RFC~9162, with known answers for roots and audit paths. \\
-T146b (vector V114b) & rule Q &
+T146b, T146c (vectors V114b, V137) & rule Q &
 An operator key addition is refused on a quarantined session and
-registers nothing. \\
+registers nothing. The operator's signed termination of a session that is
+quarantined and key-exhausted is recorded as \texttt{OPERATOR\_TERMINATION},
+then \texttt{TERMINATION}. \\
 T69b, T19d, T99b (vectors V90c, V70b) & I11-REVOKE, I11 &
 A revoked key cannot join; the revocation is looked at only after the
 signature verified, and a revoked key spends only the nonce issued to it; a

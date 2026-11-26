@@ -19,9 +19,9 @@ bridge and have no test or vector; I-SIGN-JWKS is a MUST, so a claim
 of conformance to it rests on inspection of how the bridge obtains
 keys, not on a test, and it has no mutant. I-CHECKPOINT local emission
 and field names are tested by T63--T66 and by vectors V52--V54c, V88 and
-V89, which expect the \texttt{CHECKPOINT} event and run on the Python bridge
-only, because the Rust crate has no emission (its runner skips vectors that
-require it); external anchoring (SCITT submission) has no test.
+V89, which expect the \texttt{CHECKPOINT} event and run on both
+implementations (the Rust crate computes the root with the same
+known-answer file); external anchoring (SCITT submission) has no test.
 
 \textbf{Important caveat.} The pytest suite tests the
 reference \texttt{Bridge} class only and is not an interop test. The
@@ -71,7 +71,7 @@ mutation evidence for I1--I15 as a whole is on the Python bridge.
 $ python3 -I -m pytest conformance_suite.py -q     # all tests passed
 $ python3 -I mutation_check.py                     # every mutant killed
 $ python3 -I mutation_check_rust.py                # every Rust mutant killed
-$ python3 -I run_vectors.py                        # all vectors passed (V01-V134)
+$ python3 -I run_vectors.py                        # all vectors passed (V01-V137)
 $ python3 -I run_vectors.py --wire                 # wire roundtrip smoke test
 $ (cd rust-bridge && cargo test)                   # all vectors on MemStorage and FileStorage
 \end{lstlisting}
@@ -101,7 +101,7 @@ third-party interop campaign.
 \subsection{Test vectors}\label{sec:test-vectors}
 
 The vectors are language-neutral JSON files in
-\texttt{supplementary/vectors/} (\texttt{V01.json}--\texttt{V134.json}).
+\texttt{supplementary/vectors/} (\texttt{V01.json}--\texttt{V137.json}).
 Each gives a session, an optional configuration, a list of actions and
 the expected committed event kinds, final cell and scope version; the
 file \texttt{vectors/README.md} defines the schema. The table below is
@@ -110,8 +110,7 @@ checked for staleness by \texttt{run\_vectors.py --check-paper}; a
 trailing \texttt{!} marks an action the bridge must refuse. The Python
 reference bridge passes all of them (\texttt{python3 -I run\_vectors.py}),
 and the Rust crate in \texttt{supplementary/rust-bridge/} runs the same
-files, except V52--V54c, V88 and V89, which expect checkpoint events the
-crate does not emit.
+files.
 
 Table~\ref{tab:vectors} lists them.
 
@@ -236,7 +235,7 @@ differ in the number of calls because the bridge terminates sessions, so the
 rows are not comparable as rates. The loss measure says nothing about
 approval: a relay that replays held calls after a disconnect may forward
 a call no human answered, and \texttt{Lost} does not count that. The Rust
-crate is not measured: it does not emit \texttt{CHECKPOINT}. Timing is not
+crate is not measured. Timing is not
 reported because wall-clock figures of a single-process reference say little
 about a deployment. The writer cost reported is that of the reference's
 recompute-everything checkpoint, not a lower bound for the contract.

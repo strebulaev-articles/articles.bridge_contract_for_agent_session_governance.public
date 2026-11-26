@@ -238,12 +238,13 @@ Escalate(s) ==
        IN Step(s, 1, u1)
     /\ UNCHANGED <<fwd, restarts, last>>
 
-\* (a, Pend) -> (a, None): HUMAN_RESOLVED.  The approval of every call
+\* (a, Pend) -> (a, None): HUMAN_RESOLVED.  The timeout wins: a resolve in the
+\* tick in which T_human has run out is refused (humLeft = 0).  The approval of every call
 \* queued during this escalation starts here, one countdown per call; a call
 \* that already has one (an earlier escalation) keeps it.
 \* The queue does not drain here (Rule D): see Drain.
 Resolve(s) ==
-    /\ Active(s) /\ ss[s].hum = "Pend" /\ Room(s, 1)
+    /\ Active(s) /\ ss[s].hum = "Pend" /\ ss[s].humLeft > 0 /\ Room(s, 1)
     /\ LET r == ss[s]
            u1 == [hum |-> "None", humLeft |-> NoTimer,
                   appr |-> [k \in Keys |->
@@ -842,9 +843,11 @@ SP_Total(s) ==
     /\ (ss'[s].totLeft < ss[s].totLeft => ss[s].att = "Det")
 
 SP_Timeout(s) ==
-    (ss'[s].endWhy = "timeout" /\ ss[s].endWhy # "timeout") =>
-      \/ (ss[s].att = "Det" /\ (ss[s].detLeft = 0 \/ ss[s].totLeft = 0))
-      \/ (ss[s].hum = "Pend" /\ ss[s].humLeft = 0)
+    /\ (ss'[s].endWhy = "timeout" /\ ss[s].endWhy # "timeout") =>
+         \/ (ss[s].att = "Det" /\ (ss[s].detLeft = 0 \/ ss[s].totLeft = 0))
+         \/ (ss[s].hum = "Pend" /\ ss[s].humLeft = 0)
+    \* the timeout wins over a resolve in the tick of T_human
+    /\ (ss[s].hum = "Pend" /\ ss'[s].hum = "None") => ss[s].humLeft # 0
 
 SP_Allow(s) == \A k \in ss'[s].opd \ ss[s].opd : Need(k) \in Allow
 

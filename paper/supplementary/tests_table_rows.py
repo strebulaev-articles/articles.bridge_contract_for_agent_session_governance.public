@@ -33,10 +33,11 @@ restart."""),
     (r"""T5""",
      r"""I5""",
      r"""A tampered or forged event is detected by chain verification."""),
-    (r"""T6, T26--T29, T30b--T30e""",
+    (r"""T6, T6b, T26--T29, T30b--T30e""",
      r"""L1, L2, I6""",
      r"""Detach and human timeouts, their anchors, simultaneous expiry, and the
-zero-timeout edge case; a human wait that outlasts $T_{\text{detach}}$
+zero-timeout edge case; a resolve in the tick of $T_{\text{human}}$ that loses to
+the timeout; a human wait that outlasts $T_{\text{detach}}$
 only while the client is attached; the cumulative cap across episodes,
 across restarts and not counting time attached or resuming."""),
     (r"""T8, T9""",
@@ -308,7 +309,7 @@ recovery; the operator domain tags separate the signatures."""),
     (r"""T46""",
      r"""---""",
      r"""The derived view of named states."""),
-    (r"""T152b--T152h (vectors V62--V62f, V09b)""",
+    (r"""T152b--T152i (vectors V62--V62f, V09b, V136)""",
      r"""I11, I8, I15""",
      r"""A nonce is bound to the key id its challenge named. One issued for
 another key id is refused for a join, a registration and a re-attach though
@@ -320,7 +321,9 @@ issued for. \texttt{challenge} answers every key id in the same way and
 against the same limit. Over random interleavings a request is accepted at
 most on its first presentation (T152f). A request the transport flags as a
 replay has spent its nonce if it was authentic. The limits of I11 (f) and
-(g) hold with bound nonces."""),
+(g) hold with bound nonces. A registration is verified before the lifecycle is
+named: an unauthentic caller is answered as a bad signature whether the
+session is unknown or terminated (T152i)."""),
     (r"""T141b, T71b, T7b (vectors V90b--V90d)""",
      r"""I11 (a), I15, I4""",
      r"""A join is verified before the attachment is answered: one that does
@@ -350,10 +353,12 @@ $T_{\text{approve}}$."""),
 taken over a log whose chain does not verify; the invariants of T9 hold with
 checkpoints on. The root over the event hashes is the Merkle tree hash of
 RFC~9162, with known answers for roots and audit paths."""),
-    (r"""T146b (vector V114b)""",
+    (r"""T146b, T146c (vectors V114b, V137)""",
      r"""rule Q""",
      r"""An operator key addition is refused on a quarantined session and
-registers nothing."""),
+registers nothing. The operator's signed termination of a session that is
+quarantined and key-exhausted is recorded as \texttt{OPERATOR\_TERMINATION},
+then \texttt{TERMINATION}."""),
     (r"""T69b, T19d, T99b (vectors V90c, V70b)""",
      r"""I11-REVOKE, I11""",
      r"""A revoked key cannot join; the revocation is looked at only after the

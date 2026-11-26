@@ -269,27 +269,24 @@ request can never be accepted either way.
 
 TLC reports no error in every configuration below, and all mutants are
 killed, each by the property its label names. The logs are in
-`docs/logs/tlc-rerun-2026-11-22/` (TLC build `2026.11.19.180144`, rev
+`docs/logs/tlc-rerun-2026-11-25/` (TLC build `2026.11.19.180144`, rev
 `bc1b506`; jar sha256
 `fdffef247f563ef6edbfd44958d2a82db79e7564e07cb673262d896353fa6713`;
 container image `eclipse-temurin:21-jre`, digest
 `sha256:d77e090ae1f6970c047b443c6f0a6c1358b0426d44432bb5a7753408cd43de0d`).
-The base configuration was killed twice by the host for lack of memory while
-other jobs ran (the logs end without a verdict and are kept as `*.oom-137*.log`)
-and finished when run alone with a larger heap: run at most one large job at a
-time. The Apalache run of `BridgeFull.tla` is in
-`docs/logs/apalache-rerun-2026-11-22/`.
+Each configuration ran alone, on one core and one worker, with no resume from a checkpoint, so every count is exact; run at most one large job at a time on a shared host. The Apalache run of `BridgeFull.tla` is in
+`docs/logs/apalache-rerun-2026-11-25/`.
 
 | Configuration | Generated | Distinct | Depth |
 |---|---:|---:|---:|
 | `BridgeContract` | 13,591,683 | 2,883,227 | 21 |
-| `BridgeContractDeep` | 42,612,174 | 7,896,325 | 21 |
-| `BridgeContractAttack` | 17,166,848 | 444,499 | 18 |
-| `BridgeContractBook` | 2,676,469 | 425,861 | 18 |
-| `BridgeContractLive` | 6,367,930 | 1,391,382 | 20 |
-| `BridgeContractQueue` | 2,995,709 | 661,356 | 18 |
-| `BridgeContractForward` | 11,356,004 | 2,259,734 | 20 |
-| `BridgeContractLongHuman` | 3,720,407 | 821,343 | 18 |
+| `BridgeContractDeep` | 42,459,668 | 7,896,325 | 21 |
+| `BridgeContractAttack` | 17,159,349 | 444,499 | 18 |
+| `BridgeContractBook` | 2,668,635 | 425,861 | 18 |
+| `BridgeContractLive` | 6,358,094 | 1,391,382 | 20 |
+| `BridgeContractQueue` | 2,989,885 | 661,356 | 18 |
+| `BridgeContractForward` | 11,321,712 | 2,259,734 | 20 |
+| `BridgeContractLongHuman` | 3,714,583 | 821,343 | 18 |
 
 The reach table (`tlc_coverage.py`) has not been rerun for this model; the
 statements under "What each configuration reaches" are what the constants

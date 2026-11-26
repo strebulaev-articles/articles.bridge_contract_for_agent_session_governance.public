@@ -1,6 +1,6 @@
 [package]
 name = "bridge-contract"
-version = "0.10.4"
+version = "0.10.5"
 edition = "2021"
 description = "Bridge Contract bridge: product state machine, client set, challenge-response resume, durable log, recovery"
 license = "MIT OR Apache-2.0"

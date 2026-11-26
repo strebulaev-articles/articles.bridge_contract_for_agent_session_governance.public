@@ -209,6 +209,14 @@ format defined here.
 
 \subsection{Signature scope}
 
+In every array, \texttt{sid} is the session identifier. Where
+\texttt{bridge\_id} appears it is the identity of the bridge that verifies the
+request; it is deployment configuration known to both sides and not a field of
+the request. The arrays of \texttt{add\_client}, \texttt{reattach} and
+\texttt{join} do not repeat it: each carries a nonce that this bridge issued
+for this session and this key, and the nonce is spent by the first authentic
+presentation, so it binds the request to the bridge that issued it.
+
 These op-types carry a \texttt{signature} field:
 \begin{itemize}[leftmargin=2em]
 \item \texttt{attach}: the client proves it holds the private key of
@@ -236,8 +244,13 @@ and not revoked. The refusals are \texttt{via\_not\_connected},
 \texttt{bad\_signature} (missing, forged, or made for another operation,
 session or key), \texttt{revoked\_key}, \texttt{nonce\_unknown},
 \texttt{nonce\_used}, \texttt{nonce\_expired} and
-\texttt{key\_already\_registered}; none commits an event, so a caller that
-holds no registered key writes nothing to the log.
+\texttt{key\_already\_registered}. The signature is verified first: a caller
+whose signature does not verify is answered \texttt{bad\_signature} whatever
+the state of the session, and only a caller whose signature verified is told
+that the session is \texttt{unknown\_session}, \texttt{terminated},
+\texttt{quarantined} or \texttt{key\_exhausted}. A refusal that comes
+before the signature has verified commits no event, so a caller that holds no
+registered key writes nothing to the log.
 \item \texttt{reattach} and \texttt{join}: the client proves
 possession of a registered key and binds the request to the
 challenge nonce and the last event it saw. The signature is over

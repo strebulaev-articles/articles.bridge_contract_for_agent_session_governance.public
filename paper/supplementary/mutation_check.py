@@ -461,11 +461,11 @@ MUTANTS = [
             raise AddClientRejected("bad_signature")   # not this key's nonce"""),
     Mutant("I15-add-client-connection-answered-before-the-signature", "I15",
            """        record = (self.storage.key_record(sid, via_key_id)
-                  if via_key_id in s.keys else None)""",
-           """        if via_key_id not in s.conn:
+                  if s is not None and via_key_id in s.keys else None)""",
+           """        if s is not None and via_key_id not in s.conn:
             raise AddClientRejected("via_not_connected")
         record = (self.storage.key_record(sid, via_key_id)
-                  if via_key_id in s.keys else None)"""),
+                  if s is not None and via_key_id in s.keys else None)"""),
     Mutant("I15-add-client-domain-tag-dropped", "I15",
            """    return _canon([ADD_CLIENT_DOMAIN, sid, via_key_id, new_key_id, scheme,
                    public_key, nonce])""",
@@ -578,6 +578,29 @@ MUTANTS = [
     Mutant("L2-human-timeout-disabled", "I6",
            "        human = (s.human == Human.PENDING and s.human_at is not None",
            "        human = (False and s.human_at is not None"),
+    Mutant("I11-add-client-names-the-lifecycle-before-the-signature", "I11",
+           """        s = self._sess.get(sid)
+        record = (self.storage.key_record(sid, via_key_id)
+                  if s is not None and via_key_id in s.keys else None)""",
+           """        s = self._enter(sid)
+        record = (self.storage.key_record(sid, via_key_id)
+                  if s is not None and via_key_id in s.keys else None)"""),
+    Mutant("I11-REVOKE-quarantined-operator-termination-unrecorded", "I11-REVOKE",
+           """        self._commit(sid, [(GE.OPERATOR_TERMINATION, {
+            "reason": reason, "signature": signature})])
+        self._commit(sid, [(GE.TERMINATION, {"reason": reason})])""",
+           """        if not s.quarantined:
+            self._commit(sid, [(GE.OPERATOR_TERMINATION, {
+                "reason": reason, "signature": signature})])
+        self._commit(sid, [(GE.TERMINATION, {"reason": reason})])"""),
+    Mutant("L2-resolve-beats-the-timeout", "I6",
+           """    def human_resolve(self, sid: str) -> None:
+        s = self._enter(sid)
+""",
+           """    def human_resolve(self, sid: str) -> None:
+        s = self._sess[sid]
+        self._check_timers(sid, overdue_only=True)
+"""),
     Mutant("RuleD-drain-while-detached", "D",
            """        if not (s.att == Attachment.ATTACHED and s.human == Human.NONE
                 and s.life""",
@@ -1339,14 +1362,24 @@ def main() -> int:
                   f"was {outcome}; the mutation harness is not sound")
             return 2
 
+    quick = "--quick" in sys.argv
+    if quick:
+        # push subset: every eighth mutant of each list; the full set runs on
+        # tags and nightly
+        pick = lambda xs: xs[::8]
+        mutants, canon = pick(MUTANTS), pick(CANON_MUTANTS)
+        wire_m, wire_srv = pick(WIRE_MUTANTS), pick(WIRESERVER_MUTANTS)
+    else:
+        mutants, canon = MUTANTS, CANON_MUTANTS
+        wire_m, wire_srv = WIRE_MUTANTS, WIRESERVER_MUTANTS
     covered = {m.invariant for m in MUTANTS}
-    missing = [i for i in INVARIANTS if i not in covered]
+    missing = [] if quick else [i for i in INVARIANTS if i not in covered]
 
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        results = list(pool.map(run_one, MUTANTS + CANON_MUTANTS))
-        wire_results = list(pool.map(run_wire_mutant, WIRE_MUTANTS))
+        results = list(pool.map(run_one, mutants + canon))
+        wire_results = list(pool.map(run_wire_mutant, wire_m))
         wire_results += list(pool.map(run_wireserver_mutant,
-                                      WIRESERVER_MUTANTS))
+                                      wire_srv))
 
     bad = 0
     tags = test_tags()
@@ -1380,7 +1413,7 @@ def main() -> int:
     lacking = [i for i in INVARIANTS if i not in attributed]
     print(f"{len(unattributed)} kills by no test tagged with the mutant's invariant; "
           f"invariants with no attributed kill: {', '.join(lacking) or 'none'}")
-    strict = "--strict-attribution" in sys.argv and bool(lacking or unattributed)
+    strict = "--strict-attribution" in sys.argv and not quick and bool(lacking or unattributed)
     return 1 if (bad or missing or strict) else 0
 
 

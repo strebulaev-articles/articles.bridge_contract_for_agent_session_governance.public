@@ -1,36 +1,49 @@
-//! Merkle tree over event hashes for O(log n) verification.
+//! Merkle tree hash over event hashes (RFC 9162 section 2.1.1).
 //!
-//! Mirrors `merkle.py` in the Python supplementary.
+//! Mirrors `merkle.py` in the Python supplementary. A leaf is
+//! `SHA-256(0x00 || event_hash)`, an interior node
+//! `SHA-256(0x01 || left || right)`; a tree of n > 1 leaves splits at the
+//! largest power of two below n, so no node is duplicated. The root of an
+//! empty log is `SHA-256("")`. The shared known answers are in
+//! `../vectors/bytes_kat.json` (`merkle`).
 
 use sha2::{Digest, Sha256};
 
-/// Compute the Merkle root over a list of 32-byte event hashes.
-///
-/// For an empty list, returns SHA-256 of the empty string.
-/// For a single leaf, returns that leaf.
-/// For n >= 2, if n is odd, the last leaf is duplicated.
+fn leaf_hash(event_hash: &[u8]) -> Vec<u8> {
+    let mut h = Sha256::new();
+    h.update([0u8]);
+    h.update(event_hash);
+    h.finalize().to_vec()
+}
+
+fn node_hash(left: &[u8], right: &[u8]) -> Vec<u8> {
+    let mut h = Sha256::new();
+    h.update([1u8]);
+    h.update(left);
+    h.update(right);
+    h.finalize().to_vec()
+}
+
+/// Compute the tree hash over a list of event hashes, in one pass with a
+/// stack of the complete subtrees met so far.
 pub fn merkle_root(hashes: &[Vec<u8>]) -> Vec<u8> {
     if hashes.is_empty() {
         return Sha256::digest(b"").to_vec();
     }
-    if hashes.len() == 1 {
-        return hashes[0].clone();
-    }
-    let mut level = hashes.to_vec();
-    while level.len() > 1 {
-        if level.len() % 2 == 1 {
-            level.push(level[level.len() - 1].clone());
+    let mut stack: Vec<(Vec<u8>, usize)> = Vec::new();
+    for event_hash in hashes {
+        let (mut node, mut size) = (leaf_hash(event_hash), 1usize);
+        while stack.last().is_some_and(|(_, s)| *s == size) {
+            node = node_hash(&stack.pop().unwrap().0, &node);
+            size *= 2;
         }
-        let mut next = Vec::with_capacity(level.len() / 2);
-        for i in (0..level.len()).step_by(2) {
-            let mut hasher = Sha256::new();
-            hasher.update(&level[i]);
-            hasher.update(&level[i + 1]);
-            next.push(hasher.finalize().to_vec());
-        }
-        level = next;
+        stack.push((node, size));
     }
-    level.into_iter().next().unwrap()
+    let mut node = stack.pop().unwrap().0;
+    while let Some((left, _)) = stack.pop() {
+        node = node_hash(&left, &node);
+    }
+    node
 }
 
 /// Convenience: take hex-encoded hashes, return hex root.
@@ -51,35 +64,22 @@ mod tests {
     }
 
     #[test]
-    fn test_empty() {
-        let r = merkle_root(&[]);
-        assert_eq!(r, sha(b""));
+    fn empty_log_is_the_hash_of_the_empty_string() {
+        assert_eq!(merkle_root(&[]), sha(b""));
     }
 
     #[test]
-    fn test_single() {
+    fn single_leaf_is_its_leaf_hash_not_the_event_hash() {
         let h0 = sha(b"event0");
-        assert_eq!(merkle_root(&[h0.clone()]), h0);
+        assert_eq!(merkle_root(&[h0.clone()]), leaf_hash(&h0));
+        assert_ne!(merkle_root(&[h0.clone()]), h0);
     }
 
     #[test]
-    fn test_two() {
-        let h0 = sha(b"event0");
-        let h1 = sha(b"event1");
-        let mut hasher = Sha256::new();
-        hasher.update(&h0);
-        hasher.update(&h1);
-        assert_eq!(merkle_root(&[h0, h1]), hasher.finalize().to_vec());
-    }
-
-    #[test]
-    fn test_three() {
-        let h0 = sha(b"e0");
-        let h1 = sha(b"e1");
-        let h2 = sha(b"e2");
-        let a = { let mut h = Sha256::new(); h.update(&h0); h.update(&h1); h.finalize().to_vec() };
-        let b = { let mut h = Sha256::new(); h.update(&h2); h.update(&h2); h.finalize().to_vec() };
-        let expected = { let mut h = Sha256::new(); h.update(&a); h.update(&b); h.finalize().to_vec() };
+    fn three_leaves_split_two_and_one_without_duplication() {
+        let (h0, h1, h2) = (sha(b"e0"), sha(b"e1"), sha(b"e2"));
+        let left = node_hash(&leaf_hash(&h0), &leaf_hash(&h1));
+        let expected = node_hash(&left, &leaf_hash(&h2));
         assert_eq!(merkle_root(&[h0, h1, h2]), expected);
     }
 }

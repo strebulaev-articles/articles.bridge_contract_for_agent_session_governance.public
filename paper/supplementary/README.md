@@ -8,7 +8,7 @@ Companion artefacts to the article proper.
 |------|-------------|
 | `conformance_suite.py` | Reference Python bridge (product state model with a client set, challenge-response resume pinned to the acknowledged prefix, durable log and restart recovery, queue limits, answer binding) and the pytest suite for I1-I15 (T1-T158, including the Hypothesis properties T8-T10). |
 | `mutation_check.py` | Mutants, at least one per invariant (I1-I15) and one for the timer bounds; every mutant must make at least one test fail. Exits non-zero otherwise. |
-| `vectors/` | Language-neutral JSON test vectors V01-V134 and their schema (`vectors/README.md`). |
+| `vectors/` | Language-neutral JSON test vectors V01-V137 and their schema (`vectors/README.md`). |
 | `jcs.py` | RFC 8785 canonical JSON for the value types the contract uses; the one encoding behind every hash and signed message of the Python bridge and `wire.py`. `vectors/bytes_kat.json` pins its output, the event and content hashes and the signed bytes of re-attach and join proofs; the Rust crate reads the same file. |
 | `run_vectors.py` | Runs the vectors on the Python bridge; `--emit-tex` / `--check-paper` generate and check the paper's vector table (`../sections/generated_vectors.tex`). |
 | `traceability.py` | Generates and checks the traceability matrix (`../sections/generated_traceability.tex`) from the pytest docstrings, the vector `covers` fields, the mutant registries, the TLC mutants log and the TLA+ module; `make traceability` / `make traceability-check`. |

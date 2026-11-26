@@ -1,0 +1,43 @@
+{
+  "id": "V135b",
+  "title": "A resolve one second before T_human is accepted",
+  "covers": [
+    "I6",
+    "I7",
+    "L2"
+  ],
+  "session": {
+    "session_id": "sess-135b",
+    "principal_id": "user-alice",
+    "authority_scope": [
+      "read:docs",
+      "exec:shell"
+    ],
+    "client_key_id": "ck-1"
+  },
+  "actions": [
+    {
+      "do": "escalate"
+    },
+    {
+      "do": "advance",
+      "seconds": 1799,
+      "tick": false
+    },
+    {
+      "do": "resolve"
+    }
+  ],
+  "expect": {
+    "events": [
+      "ATTACHED",
+      "HUMAN_PENDING",
+      "HUMAN_RESOLVED"
+    ],
+    "cell": [
+      "Att",
+      "None"
+    ],
+    "scope_version": 0
+  }
+}

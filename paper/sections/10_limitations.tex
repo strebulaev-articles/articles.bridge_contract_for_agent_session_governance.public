@@ -73,8 +73,7 @@ two implementations serve it. What remains
 open is the transport binding (HTTP, WebSocket, QUIC): the wire
 format is the JSON message content, and the transport carries it.
 The two implementations in this deposit agree on the committed event
-kinds and the final cell on every vector V01--V134 that does not require
-checkpoint emission (V52--V54c, V88, V89). In wire mode
+kinds and the final cell on every vector V01--V137. In wire mode
 (\texttt{run\_vectors.py -{}-wire}) the vector actions that have a
 server-side handler in the wire front-end of each implementation, which
 includes session creation (\texttt{attach}), \texttt{resolve}, \texttt{extend} and the
@@ -193,7 +192,7 @@ give the reasoning, the table gives the index.
 Single author, two implementations &
 Validity of the evidence (consistency, not independent confirmation) &
 Author; future implementers &
-External implementer; future work; V01--V134 are the interface \\
+External implementer; future work; V01--V137 are the interface \\
 Bounded TLC (two-session run does not fire Disconnect/Resolve/Submit/Drain) &
 Generalisability of the model check to multi-session detach paths &
 Author; future model-checking work &
@@ -314,12 +313,11 @@ is sensitive to that edit, not that the invariant holds in general. \\
 One author implemented the specification from the text &
 Rust crate written by the same author after the Python bridge, from
 Sections 4 and 5 and with comments, error texts and the generated key
-format shared with the Python code, so it is not an independent reading; shared vectors V01--V134 pass on the Python bridge, and on the
-crate except V52--V54c, V88 and V89, which expect \texttt{CHECKPOINT}
-events the crate does not emit and which its runner skips; the crate runs the same vectors on two storage backends &
+format shared with the Python code, so it is not an independent reading; shared vectors V01--V137 pass on the Python bridge and on the
+crate, whose runner skips none; the crate runs the same vectors on two storage backends &
 One author for both implementations; agreement shows one reading is
 consistent, not that the text is unambiguous. A second, independent
-implementation is the next step; V01--V134 are the interface for it. \\
+implementation is the next step; V01--V137 are the interface for it. \\
 Proof of possession (I11) holds against an outsider; I11-REVOKE
 extends it to revoked keys &
 Ed25519 and ECDSA P-256 (wrong key, other message, key added after the

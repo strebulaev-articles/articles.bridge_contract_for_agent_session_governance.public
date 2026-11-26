@@ -61,7 +61,7 @@ application is checked against the action's `error` flag).
 
 `requires: ["checkpoint"]` marks a vector that needs I-CHECKPOINT emission and
 reads `n_checkpoint` and `t_checkpoint` from `config`. A runner for a
-bridge without emission skips such a vector (the Rust crate does); every
+bridge without emission skips such a vector (both runners here run it); every
 other vector runs with checkpoints off, whatever `config` says.
 
 `cell` is `["Att"|"Det"|"Res", "None"|"Pend"]`, or `["Terminated"]`.

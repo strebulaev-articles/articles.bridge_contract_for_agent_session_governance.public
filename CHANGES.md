@@ -1,16 +1,15 @@
 # Version History
 
 <!-- CHANGES:CURRENT:START -->
-## v0.10.4 - 2026-11-25 (current)
+## v0.10.5 - 2026-11-26 (current)
 
 ### Changes in this release
-- **Breaking wire change.** `challenge` takes a `key_id`, and the nonce is bound to it at issue. The answer to `challenge` is the same for any key identifier, registered or not. A nonce issued for a key that was not registered at issue never verifies, however the registry changes later, and a request that presents a nonce with another `key_id` is answered as any non-authentic request. A request that was presented and refused is never accepted later. The known-answer files, vectors, schemas and wire-format text are regenerated.
-- Merkle checkpoints use the RFC 9162 tree hash (domain-separated leaves and interior nodes, no duplication of a last node); the checkpoint event carries the tree size and the root.
-- A direct call outside the current scope is refused with reason `scope` and recorded as `TOOL_CALL_REJECTED`.
-- Soft revocation of the key being verified abandons the verification, as a hard revocation does. Operator events verify the signature first. The approval expiry is recorded per call, and an approval is valid strictly before it. A timer that expires in the tick of a request waits for the request.
-- Closed limitations: pre-registration replay of a nonce, join before signature, approval revival, timer tick, soft revocation while re-attaching, key addition on a quarantined session, direct calls outside the scope, and checkpoints after the end of a session.
-- Formal evidence: the TLA+ model and the Python transcription follow the changes; TLC was rerun in Docker for every configuration with no error and every model mutant killed, the Apalache base and inductive checks were rerun, and the coverage of cells and actions per configuration was measured again. The Python and Rust mutation checks kill every mutant.
-- The Internet-Draft source is brought to the same text and rebuilt.
+- **Timers.** A resolve that arrives in the tick in which `T_human` expires loses to the timeout: the bridge ends the session with `HUMAN_TIMEOUT` and `TERMINATION`, refuses the resolve and answers it `terminated`. The model, the vectors, both bridges and the text state it, and a model mutant and a test cover it.
+- **Registration of a further key.** `add_client` verifies the signature first; the state of the session (unknown, terminated, quarantined, key exhausted) is named only to a caller whose signature verified, and any other caller is answered `bad_signature`.
+- **End of a session.** The order of the end events is fixed, and an operator termination of a quarantined, key-exhausted session is recorded.
+- Formal evidence: TLC was rerun in Docker for every configuration with no error, every TLC and Apalache mutant is killed, and the traceability table and the TLC table are regenerated from the new logs.
+- Publication: the arXiv source package is built by `make arxiv` from a clean directory and test-compiled without BibTeX; the status text names the posted Internet-Draft and the back matter says where code, vectors and model are.
+- The Internet-Draft source carries the changed rules and is rebuilt as a new revision.
 <!-- CHANGES:CURRENT:END -->
 
 ## v0.10.3 - 2026-11-21

@@ -152,6 +152,10 @@ pub struct Bridge {
     sent: HashSet<(String, String)>,
     /// Instructions to revert an observed widening: (session, scope to revert to).
     pub revert_requests: Vec<(String, Vec<String>)>,
+    /// I-CHECKPOINT: time of the last checkpoint (or first commit) per session.
+    last_cp: BTreeMap<String, f64>,
+    /// I-CHECKPOINT: log length after the last CHECKPOINT per session.
+    cp_len: BTreeMap<String, usize>,
 }
 
 type Item = (Kind, Value);
@@ -260,6 +264,8 @@ impl Bridge {
             forwarded_calls: BTreeMap::new(),
             sent: HashSet::new(),
             revert_requests: vec![],
+            last_cp: BTreeMap::new(),
+            cp_len: BTreeMap::new(),
         })
     }
 
@@ -273,6 +279,12 @@ impl Bridge {
     // ---- commit / apply: the only way a cell changes ---------------------
 
     fn commit(&mut self, sid: &str, items: Vec<Item>) -> Result<Vec<Event>> {
+        let batch = self.commit_events(sid, items)?;
+        self.maybe_checkpoint(sid)?;
+        Ok(batch)
+    }
+
+    fn commit_events(&mut self, sid: &str, items: Vec<Item>) -> Result<Vec<Event>> {
         let ts = self.now();
         let log = self.storage.read_log(sid)?;
         let mut prev = log.last().map(Event::hash).unwrap_or_default();
@@ -296,6 +308,53 @@ impl Bridge {
             self.apply(ev);
         }
         Ok(batch)
+    }
+
+    // ---- I-CHECKPOINT: periodic Merkle root anchoring (SHOULD) ------------
+
+    /// Emit a CHECKPOINT when the session has accumulated N events or T_cp
+    /// seconds since the last one. A CHECKPOINT does not trigger another.
+    /// Nothing is emitted on a terminated or quarantined session, and the
+    /// root is taken only over a log whose chain verifies (I5).
+    fn maybe_checkpoint(&mut self, sid: &str) -> Result<()> {
+        let Some(s) = self.sessions.get(sid) else { return Ok(()) };
+        if s.cell.life == Life::Terminated || s.quarantined {
+            return Ok(());
+        }
+        let n = self.storage.read_log(sid)?.len();
+        let now = self.now();
+        let Some(&last) = self.last_cp.get(sid) else {
+            self.last_cp.insert(sid.to_string(), now); // first commit: no checkpoint
+            return Ok(());
+        };
+        let since = n - self.cp_len.get(sid).copied().unwrap_or(0);
+        if since < self.cfg.n_checkpoint && (now - last) < self.cfg.t_checkpoint {
+            return Ok(());
+        }
+        let Ok(hashes) = self.chain_hashes(sid) else { return Ok(()) }; // not vouched for
+        let root = crate::merkle::merkle_root_hex(&hashes);
+        self.last_cp.insert(sid.to_string(), now);
+        self.commit_events(
+            sid,
+            vec![(Kind::CHECKPOINT, json!({"root": root, "tree_size": n, "signature": "00".repeat(64)}))],
+        )?;
+        let len = self.storage.read_log(sid)?.len();
+        self.cp_len.insert(sid.to_string(), len);
+        Ok(())
+    }
+
+    /// Verify the hash chain (I5) and return the event hashes in order.
+    fn chain_hashes(&self, sid: &str) -> Result<Vec<String>> {
+        let mut prev = String::new();
+        let mut hashes = Vec::new();
+        for (i, ev) in self.storage.read_log(sid)?.iter().enumerate() {
+            if ev.sequence != i as u64 || ev.prev_hash != prev {
+                return Err(BridgeError::new(format!("event chain broken at index {i} (I5)")));
+            }
+            prev = ev.hash();
+            hashes.push(prev.clone());
+        }
+        Ok(hashes)
     }
 
     fn apply(&mut self, ev: &Event) {
@@ -544,9 +603,13 @@ impl Bridge {
         let refuse = |reason: &'static str| {
             Err(BridgeError::with_reason(format!("add_client rejected: {reason} (I15d)"), reason))
         };
-        let s = self.enter(sid)?;
+        // The signature comes first: a caller that has not proved a key of the
+        // session is answered as a bad signature whether the session is
+        // unknown, terminated, quarantined or key-exhausted (I11 (c)); the
+        // lifecycle is named only to an authentic caller.
         let msg = add_client_message(sid, via_key_id, new_key_id, scheme, &hex::encode(material), nonce);
-        let record = if s.keys.contains(via_key_id) { self.storage.key_record(sid, via_key_id)? } else { None };
+        let known = self.sessions.get(sid).is_some_and(|s| s.keys.contains(via_key_id));
+        let record = if known { self.storage.key_record(sid, via_key_id)? } else { None };
         let ok = match record {
             Some(m) => self.verifier.verify(&m.scheme, &m.material, &msg, signature),
             None => false,
@@ -554,6 +617,7 @@ impl Bridge {
         if !ok {
             return refuse("bad_signature");
         }
+        let s = self.enter(sid)?;
         let now = self.now();
         let t_nonce = self.cfg.t_nonce;
         let rec = self.nonces.get_mut(sid).and_then(|b| b.iter_mut().find(|r| r.nonce == nonce));
@@ -1027,6 +1091,7 @@ impl Bridge {
         };
         for id in ids {
             self.check_timers(&id)?;
+            self.maybe_checkpoint(&id)?;
         }
         Ok(())
     }
@@ -1633,6 +1698,12 @@ impl Bridge {
             }
             for ev in &log {
                 b.apply(ev);
+                if ev.kind == Kind::CHECKPOINT {
+                    b.last_cp.insert(sid.clone(), ev.timestamp);
+                }
+            }
+            if let Some(i) = log.iter().rposition(|e| e.kind == Kind::CHECKPOINT) {
+                b.cp_len.insert(sid.clone(), i + 1);
             }
             if b.sessions[&sid].cell.life == Life::Terminated || b.sessions[&sid].quarantined {
                 continue; // quarantine survives a restart
@@ -1689,14 +1760,7 @@ impl Bridge {
     }
 
     fn verify_chain(&self, sid: &str) -> Result<()> {
-        let mut prev = String::new();
-        for (i, ev) in self.storage.read_log(sid)?.iter().enumerate() {
-            if ev.sequence != i as u64 || ev.prev_hash != prev {
-                return Err(BridgeError::new(format!("event chain broken at index {i} (I5)")));
-            }
-            prev = ev.hash();
-        }
-        Ok(())
+        self.chain_hashes(sid).map(|_| ())
     }
 
     pub fn events(&self, sid: &str) -> Vec<Event> {

@@ -8,8 +8,8 @@ authors:
   orcid: https://orcid.org/0009-0006-2710-8910
   affiliation: Independent Researcher
 subtitle: Independent specification draft
-version: 0.10.4
-date-released: '2026-11-25'
+version: 0.10.5
+date-released: '2026-11-26'
 abstract: 'Existing agent protocols --- the Agent Transfer Protocol (AGTP), the
 
   Governance Audit Record (GAR) and the Protocol for Agent Communication
@@ -58,11 +58,9 @@ abstract: 'Existing agent protocols --- the Agent Transfer Protocol (AGTP), the
 
   in which every MUST invariant except the inspection-only I-SIGN-JWKS has
 
-  a killed mutant, on a Python bridge; vectors V01--V134 pass on it, and
+  a killed mutant, on a Python bridge; vectors V01--V137 pass on it
 
-  all but the checkpoint-emission vectors (V52--V54c, V88, V89; they need a
-
-  feature the crate lacks) pass on a Rust crate. Both implementations have the
+  and on a Rust crate. Both implementations have the
 
   same author; no third-party implementation exists. The evidence
 
@@ -98,7 +96,7 @@ preferred-citation:
     given-names: Sergei A.
     orcid: https://orcid.org/0009-0006-2710-8910
     affiliation: Independent Researcher
-  notes: v0.10.4, deposited on Zenodo
+  notes: v0.10.5, deposited on Zenodo
   year: 2026
   month: 11
   identifiers:

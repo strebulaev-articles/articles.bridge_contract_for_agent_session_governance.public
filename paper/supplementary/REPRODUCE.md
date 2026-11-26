@@ -65,7 +65,7 @@ make measurements                                # from the repository root
 Seeded; every reported number is a count, so a rerun reproduces the
 tables exactly (measured at about seven minutes). `make measurements` rewrites
 `paper/tables/measurements.tex` and `measurements.json`. The Rust crate
-is not measured because it does not emit `CHECKPOINT`.
+is not measured.
 
 ## Rust crate
 

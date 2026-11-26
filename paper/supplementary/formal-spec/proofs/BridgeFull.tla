@@ -170,7 +170,7 @@ Escalate ==
 \* HUMAN_RESOLVED: the approval of every call queued during this escalation
 \* starts here, one countdown per call; a call that has one keeps it.
 Resolve ==
-    /\ Active /\ ss.hum = "Pend"
+    /\ Active /\ ss.hum = "Pend" /\ ss.humLeft > 0
     /\ ss' = [ss EXCEPT !.n = @ + 1, !.hum = "None", !.humLeft = NoTimer,
               !.appr = [k \in Keys |->
                           IF k \in ss.queue \ ss.held /\ ss.appr[k] = NoTimer
@@ -602,9 +602,12 @@ SP_Issue == ss.nid /= prv.nid =>
 \* T_total: never reset, runs down only while detached
 SP_Total == ss.totLeft <= prv.totLeft /\ (ss.totLeft < prv.totLeft => prv.att = "Det")
 \* a session ends by timeout only when a timer has run out
-SP_Timeout == (ss.endWhy = "timeout" /\ prv.endWhy /= "timeout") =>
-    \/ (prv.att = "Det" /\ (prv.detLeft = 0 \/ prv.totLeft = 0))
-    \/ (prv.hum = "Pend" /\ prv.humLeft = 0)
+SP_Timeout ==
+    /\ (ss.endWhy = "timeout" /\ prv.endWhy /= "timeout") =>
+         \/ (prv.att = "Det" /\ (prv.detLeft = 0 \/ prv.totLeft = 0))
+         \/ (prv.hum = "Pend" /\ prv.humLeft = 0)
+    \* the timeout wins over a resolve in the tick of T_human
+    /\ (prv.hum = "Pend" /\ ss.hum = "None") => prv.humLeft /= 0
 \* I15d
 SP_Register == ss.K /= prv.K =>
     \/ ExhR(prv)

@@ -219,3 +219,14 @@ fn operator_signed_bytes_and_signature_are_pinned() {
         assert!(!SchemeVerifier.verify("ed25519", &public, &msg_of(n), n["signature"].as_str().unwrap()), "{}", n["name"]);
     }
 }
+
+#[test]
+fn merkle_roots_match_the_known_answers() {
+    let k = kat();
+    let roots = k["merkle"]["roots"].as_array().unwrap();
+    assert!(!roots.is_empty());
+    for r in roots {
+        let leaves = strings(&r["leaves"]);
+        assert_eq!(merkle::merkle_root_hex(&leaves), r["root"].as_str().unwrap(), "{}", r["name"]);
+    }
+}

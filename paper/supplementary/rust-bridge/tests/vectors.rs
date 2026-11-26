@@ -93,10 +93,9 @@ struct Runner {
 fn config_of(v: &Value) -> Result<Config> {
     let mut c = (Config::default().t_detach, None, None, None, 900.0, 60.0, 64usize);
     let (mut policy, mut allow) = (DetachedCalls::Refuse, Vec::<String>::new());
-    // The Rust bridge does not implement I-CHECKPOINT emission yet;
-    // always disable checkpoints so V52-V54 (which set small thresholds)
-    // don't expect CHECKPOINT events that the Rust bridge won't emit.
-    let (n_cp, t_cp) = (1_000_000_000usize, 1.0e18);
+    // Checkpoints are off unless the vector sets a threshold, so that they do
+    // not add CHECKPOINT events to the lists the other vectors expect.
+    let (mut n_cp, mut t_cp) = (1_000_000_000usize, 1.0e18);
     if let Some(m) = v.as_object() {
         for (k, x) in m {
             match k.as_str() {
@@ -107,8 +106,8 @@ fn config_of(v: &Value) -> Result<Config> {
                 "t_approve" => c.4 = x.as_f64().unwrap(),
                 "t_nonce" => c.5 = x.as_f64().unwrap(),
                 "q_max" => c.6 = x.as_u64().unwrap() as usize,
-                "n_checkpoint" => { /* parsed but ignored; Rust bridge doesn't emit CHECKPOINT */ }
-                "t_checkpoint" => { /* parsed but ignored; Rust bridge doesn't emit CHECKPOINT */ }
+                "n_checkpoint" => n_cp = x.as_u64().unwrap() as usize,
+                "t_checkpoint" => t_cp = x.as_f64().unwrap(),
                 "detached_calls" => {
                     policy = match x.as_str().unwrap() {
                         "refuse" => DetachedCalls::Refuse,
@@ -960,10 +959,9 @@ fn run_all(label: &str, wire: bool, make: impl Fn() -> Arc<dyn TestStorage>) {
     let mut skipped: Vec<String> = Vec::new();
     for f in &files {
         let v: Value = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap();
-        // `requires` names optional features; this crate has no CHECKPOINT
-        // emission, so a vector that needs it is Python-only.
-        if v["requires"].as_array().is_some_and(|r| r.iter().any(|x| x == "checkpoint")) {
-            println!("{label} skip {} {} (requires checkpoint)", v["id"], v["title"]);
+        // `requires` names optional features; this crate has "checkpoint".
+        if v["requires"].as_array().is_some_and(|r| r.iter().any(|x| x != "checkpoint")) {
+            println!("{label} skip {} {} (requires a feature this crate lacks)", v["id"], v["title"]);
             skipped.push(v["id"].as_str().unwrap_or("?").to_string());
             continue;
         }
@@ -975,8 +973,7 @@ fn run_all(label: &str, wire: bool, make: impl Fn() -> Arc<dyn TestStorage>) {
         bad += !fails.is_empty() as usize;
     }
     assert_eq!(bad, 0, "{bad} vector(s) failed on {label}");
-    // The paper names exactly these as the vectors the crate does not run.
-    assert_eq!(skipped, ["V52", "V53", "V54", "V54b", "V54c", "V88", "V89"], "skipped vectors on {label}");
+    assert!(skipped.is_empty(), "skipped vectors on {label}: {skipped:?}");
 }
 
 #[test]
@@ -1127,6 +1124,62 @@ fn a_call_whose_content_has_no_canonical_form_is_refused_not_a_panic() {
         assert_eq!(r.unwrap_err().1, "bad_canonical");
     }
     assert_eq!(b.events("s").len(), before, "a refused call commits nothing");
+}
+
+#[test]
+fn a_checkpoint_carries_the_tree_size_and_the_rfc_9162_root() {
+    let clock = FakeClock::new(0.0);
+    let key = ClientKey::new("ck", &[7u8; 32]);
+    let mut cfg = Config::default();
+    cfg.n_checkpoint = 3;
+    let mut b = Bridge::new(MemStorage::new(), clock.clone(), Arc::new(SchemeVerifier), cfg)
+        .unwrap()
+        .with_grant_verifier(grant_verifier());
+    common::attach_ok(&mut b, &identity("s"), &key).unwrap();
+    b.escalate_to_human("s", "human_unavailable").unwrap();
+    b.client_disconnect("s", None, "x").unwrap();
+    let log = b.events("s");
+    let kinds: Vec<Kind> = log.iter().map(|e| e.kind).collect();
+    let cp: Vec<&Event> = log.iter().filter(|e| e.kind == Kind::CHECKPOINT).collect();
+    assert_eq!(cp.len(), 1, "one checkpoint after three events: {kinds:?}");
+    let n = cp[0].payload["tree_size"].as_u64().unwrap() as usize;
+    assert_eq!(n, cp[0].sequence as usize, "tree size is the log length before the checkpoint");
+    let leaves: Vec<String> = log[..n].iter().map(Event::hash).collect();
+    assert_eq!(cp[0].payload["root"].as_str().unwrap(), bridge_contract::merkle::merkle_root_hex(&leaves));
+    // a time threshold emits one too, on tick
+    let mut cfg = Config::default();
+    cfg.t_checkpoint = 10.0;
+    let mut b = Bridge::new(MemStorage::new(), clock.clone(), Arc::new(SchemeVerifier), cfg)
+        .unwrap()
+        .with_grant_verifier(grant_verifier());
+    common::attach_ok(&mut b, &identity("t"), &key).unwrap();
+    clock.advance(11.0);
+    b.tick(Some("t")).unwrap();
+    assert!(b.events("t").iter().any(|e| e.kind == Kind::CHECKPOINT));
+}
+
+#[test]
+fn recovery_rebuilds_the_checkpoint_tracker() {
+    let clock = FakeClock::new(0.0);
+    let storage = MemStorage::new();
+    let key = ClientKey::new("ck", &[7u8; 32]);
+    let mut cfg = Config::default();
+    cfg.n_checkpoint = 3;
+    let mut b = Bridge::new(storage.clone(), clock.clone(), Arc::new(SchemeVerifier), cfg.clone())
+        .unwrap()
+        .with_grant_verifier(grant_verifier());
+    common::attach_ok(&mut b, &identity("s"), &key).unwrap();
+    b.escalate_to_human("s", "human_unavailable").unwrap();
+    b.client_disconnect("s", None, "x").unwrap();
+    let count = |b: &Bridge| b.events("s").iter().filter(|e| e.kind == Kind::CHECKPOINT).count();
+    assert_eq!(count(&b), 1);
+    // after a restart the events since the last checkpoint (the recovery's own
+    // few) are short of the threshold, so no second checkpoint follows
+    let mut cfg = cfg;
+    cfg.n_checkpoint = 6;
+    let mut b = Bridge::recover_with(storage, clock, Arc::new(SchemeVerifier), cfg, Some(grant_verifier())).unwrap();
+    b.tick(Some("s")).unwrap();
+    assert_eq!(count(&b), 1, "no second checkpoint right after the first");
 }
 
 #[test]

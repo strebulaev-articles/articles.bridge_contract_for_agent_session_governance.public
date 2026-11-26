@@ -1081,9 +1081,13 @@ class Bridge:
         if not isinstance(new_key, ClientPublicKey):
             raise TypeError("add_client_key takes the client's public key "
                             "only (ClientKey.public())")
-        s = self._enter(sid)
+        # The signature comes first: a caller that has not proved a key of
+        # the session is answered as a bad signature whether the session is
+        # unknown, terminated, quarantined or key-exhausted (I11 (c)); the
+        # lifecycle is named only to an authentic caller.
+        s = self._sess.get(sid)
         record = (self.storage.key_record(sid, via_key_id)
-                  if via_key_id in s.keys else None)
+                  if s is not None and via_key_id in s.keys else None)
         scheme, public = record if record else (SCHEME_ED25519, None)
         if public is None or not _verify_scheme(
                 scheme, public,
@@ -1092,6 +1096,7 @@ class Bridge:
                                   nonce),
                 signature):
             raise AddClientRejected("bad_signature")
+        s = self._enter(sid)
         rec = self._nonces.get(sid, {}).get(nonce)
         bound = (rec is not None and rec.key_id == via_key_id
                  and rec.eligible)
@@ -2383,6 +2388,24 @@ def test_T6_human_timeout_terminates():
     _no_events_after_termination(env)
     with pytest.raises(BridgeError):
         env.bridge.client_disconnect(SID)
+
+
+def test_T6b_resolve_in_the_tick_of_t_human_loses_to_the_timeout():
+    """T6b: L2, I6 -- a resolve in the very tick of T_human is refused and
+    answered ``terminated``; the timeout wins.  One second earlier it is
+    accepted."""
+    env = Env()
+    env.bridge.escalate_to_human(SID)
+    env.clock.advance(Config().t_human)
+    with pytest.raises(BridgeError) as exc:
+        env.bridge.human_resolve(SID)
+    assert exc.value.reason == "terminated"
+    assert env.kinds()[-2:] == [GE.HUMAN_TIMEOUT, GE.TERMINATION]
+    env = Env()
+    env.bridge.escalate_to_human(SID)
+    env.clock.advance(Config().t_human - 1)
+    env.bridge.human_resolve(SID)
+    assert env.kinds()[-1] == GE.HUMAN_RESOLVED
 
 
 def test_T7_non_prefix_history_is_rejected_without_state_change():
@@ -6215,6 +6238,29 @@ def test_T152h_the_bounds_hold_with_nonces_bound_to_key_ids():
     _rejects(env, env.request("ck-1", nonce=other), "nonce_binding")
 
 
+def test_T152i_add_client_names_the_lifecycle_only_to_an_authentic_caller():
+    """I11(c), I15d: a registration that does not verify is answered as a bad
+    signature whether the session is unknown or terminated; the
+    lifecycle is named only to a caller whose signature verifies.  Nothing is
+    committed either way."""
+    env = Env()
+    b = env.bridge
+    new = ClientKey("ck-2").public()
+    nonce = b.challenge(SID, "ck-1").nonce
+    good = env.key.sign_add_client(SID, new, nonce)
+    forged = ClientKey("ck-1").sign_add_client(SID, new, nonce)
+    b.terminate(SID)
+    n0 = len(env.kinds())
+    for sid, sig in ((SID, forged), (SID, ""), ("sess-unknown", good)):
+        with pytest.raises(AddClientRejected) as exc:
+            b.add_client_key(sid, "ck-1", new, nonce, sig)
+        assert exc.value.reason == "bad_signature"
+    with pytest.raises(BridgeError) as exc:
+        b.add_client_key(SID, "ck-1", new, nonce, good)
+    assert exc.value.reason == "terminated"
+    assert len(env.kinds()) == n0
+
+
 # ----------------------------------------------------------------------
 # Verification comes before anything the session's state decides
 # ----------------------------------------------------------------------
@@ -6619,6 +6665,27 @@ def test_T146b_no_key_is_added_to_a_quarantined_session():
     assert b._sess[SID].keys == {"ck-1"}
     b.terminate(SID)
     assert env.kinds()[n:] == [GE.TERMINATION]
+
+
+def test_T146c_the_operator_ends_a_quarantined_exhausted_session_on_record():
+    """Rule Q, I11-REVOKE: the operator's signed termination of a session
+    that is both quarantined and key-exhausted appends OPERATOR_TERMINATION
+    and then TERMINATION; the signature is verified first. [trace: rule Q]"""
+    env = Env()
+    op_revoke(env.bridge, SID, "ck-1", reason="compromise")
+    env.storage.logs[SID][1].prev_hash = "00" * 32
+    env.restart()
+    b = env.bridge
+    assert b.is_quarantined(SID) and b._sess[SID].key_exhausted
+    n = len(env.kinds())
+    stale = TEST_OPERATOR.terminate(b.bridge_id, SID, "all_keys_revoked",
+                                    0, "00" * 32)
+    with pytest.raises(OperatorSignatureInvalid):
+        b.operator_terminate(SID, signature=stale)
+    assert len(env.kinds()) == n
+    op_terminate(b, SID)
+    assert env.kinds()[n:] == [GE.OPERATOR_TERMINATION, GE.TERMINATION]
+    assert env.cell()[2] == TERM
 
 
 def test_T69b_a_revoked_key_cannot_join_and_revocation_follows_the_signature():

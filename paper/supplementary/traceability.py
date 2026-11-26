@@ -61,7 +61,6 @@ LIMITS: dict[tuple[str, str], str] = {
     ("I8", "model"): "transport flag; not modelled",
     ("I-GRANT", "model"): "attach and grants not modelled",
     ("I-CHECKPOINT", "model"): "not modelled",
-    ("I-CHECKPOINT", "rust"): "the crate has no CHECKPOINT emission",
     ("I-SIGN-EVENT", "model"): "keys and services outside the bridge",
     ("I-SIGN-EVENT", "tests"): "outside the reference bridge; no test",
     ("I-SIGN-EVENT", "vectors"): "outside the reference bridge; no vector",

@@ -806,16 +806,18 @@ event-completeness rationale of Table~\ref{tab:event-completeness});
 \texttt{human\_timeout+detach\_timeout (simultaneous)};
 \item Transition to $\bot$.
 \end{enumerate}
-The order of (1) and (2) is not normative; both MUST be emitted
-before (3). The choice of \texttt{human\_timeout} as the leading
+The order is fixed: \texttt{HUMAN\_TIMEOUT}, then
+\texttt{DETACH\_TIMEOUT}, then \texttt{TERMINATION}, so that two logs of the
+same run are equal. The choice of \texttt{human\_timeout} as the leading
 reason-token in (3) follows a default priority rule, not an
 alphabetical one: the human escalation is the semantically more salient event for
 audit consumers. The bridge
 SHOULD apply this default consistently across all simultaneous-timeout
 cases; operators MAY override the default priority via configuration
 (e.g., to prefer \texttt{detach\_timeout} in deployments where
-detach is the more salient signal). An override is a deployment
-configuration, not a contract violation.
+detach is the more salient signal). An override changes only the leading
+token of the reason in (3), never the order of the events. An override is a
+deployment configuration, not a contract violation.
 
 \paragraph{Edge cases (normative).}
 \begin{enumerate}[leftmargin=2em]
@@ -830,7 +832,12 @@ applicable to the new cell and is not fired. If the request fails
 and the session transitions accordingly. The reference bridges follow the
 rule: a timer that expires in the tick of a re-attach or a join waits for the
 request, and one that expired in an earlier tick has ended the session, so
-the request is refused uniformly.
+the request is refused uniformly. The one exception is $T_{\text{human}}$: it
+wins over a resolve that arrives in its own tick (a resolve is the only request
+that moves a session out of the pending-approval cell; every other request
+leaves the session in that cell, so the rule above does not apply to it). The bridge ends the session
+with \texttt{HUMAN\_TIMEOUT} and \texttt{TERMINATION}, refuses the resolve and
+answers it \texttt{terminated}.
 \item \emph{The same idempotency key arriving with different content.}
 A second tool call submitted with an idempotency key that is already
 queued MUST NOT be queued, regardless of whether the content matches
@@ -888,7 +895,10 @@ bridge MUST terminate the session after recovery with
 cumulative cap $T_{\text{total}}$ has already been reached (downtime
 included), the reference bridge terminates the session after recovery with
 \texttt{DETACH\_TIMEOUT} and \texttt{TERMINATION}; $T_{\text{detach}}$
-itself has just restarted and cannot have elapsed.
+itself has just restarted and cannot have elapsed. The expiry of an
+approval, $T_{\text{approve}}$, is recorded as \texttt{valid\_until} in
+\texttt{HUMAN\_RESOLVED}; recovery reads it back from the log, so an approval
+that had lapsed before the restart stays lapsed.
 \item \textbf{Recovery failure.} If the chain does not verify, the
 bridge MUST NOT resume the session and leaves the key registry as it is.
 The bridge quarantines the session (rule~Q): it
@@ -1057,7 +1067,11 @@ session, the key id, the nonce and the prefix. The request is authentic
 iff the signature verifies for the operation received. A request that
 names a key id the session does not register is answered as one whose
 signature does not verify (\texttt{bad\_signature}), so the answer does not
-list the registered key ids; the log records \texttt{unknown\_key}.
+list the registered key ids; the log records \texttt{unknown\_key}. A
+registration of a further key (\texttt{add\_client}) is verified in the same
+order: the signature first, and the lifecycle of the session (unknown,
+terminated, quarantined, key-exhausted) is named only to a caller whose
+signature verified; any other caller is answered \texttt{bad\_signature}.
 \item \emph{Single use.} A nonce is consumed by the first authentic
 request that presents it, whether that request is then accepted or
 rejected for a later reason; a consumed nonce is never accepted again.
@@ -1240,17 +1254,21 @@ operation. The timers keep running: $T_{\text{detach}}$,
 $T_{\text{human}}$ and the cumulative cap $T_{\text{total}}$ are
 evaluated as in any session, a restart treats the session like any other
 (it is recovered as detached and $T_{\text{detach}}$ restarts), and the
-loss of a client's transport detaches it. Only these operations are
-permitted: \texttt{OPERATOR\_ADD\_KEY} (adds a new key, clears
+loss of a client's transport detaches it. The rule of permitted operations
+governs the operations that a client or the operator requests; the events the
+timers drive still fire. Only these operations are permitted: \texttt{OPERATOR\_ADD\_KEY} (adds a new key, clears
 \texttt{key\_exhausted}) and \texttt{OPERATOR\_TERMINATION}
 (transitions to $\bot$). A termination without the operator's signature
 (the unsigned \texttt{terminate} of the transport binding) is refused on an
 exhausted session and commits nothing; a quarantined session is still ended
-by it. Unless the operator adds a key, an exhausted
+by it. The operator's signed termination of a session that is both
+quarantined and key-exhausted appends \texttt{OPERATOR\_TERMINATION}, then
+\texttt{TERMINATION}, as for any exhausted session. Unless the operator adds a key, an exhausted
 session that is detached therefore terminates after the detachment bound
 ($T_{\text{detach}}$ of the detachment, or $T_{\text{total}}$); one that
 stays in $a=\textsc{Att}$ on a softly revoked key does not (see the hazard
-below); once
+below). A hard revocation of the last connected key also detaches the
+session, as defined in I11-REVOKE. Once
 the session has terminated, adding a key or terminating it changes
 nothing. This is distinct from rule~Q (storage
 corruption): key exhaustion is a deliberate action by an authorised

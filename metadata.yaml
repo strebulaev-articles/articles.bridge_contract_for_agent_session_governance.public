@@ -47,9 +47,8 @@ abstract: |
   Evidence: the product model is checked with TLC on bounded
   configurations; a conformance suite (T1--T158) and a mutation check
   in which every MUST invariant except the inspection-only I-SIGN-JWKS has
-  a killed mutant, on a Python bridge; vectors V01--V134 pass on it, and
-  all but the checkpoint-emission vectors (V52--V54c, V88, V89; they need a
-  feature the crate lacks) pass on a Rust crate. Both implementations have the
+  a killed mutant, on a Python bridge; vectors V01--V137 pass on it
+  and on a Rust crate. Both implementations have the
   same author; no third-party implementation exists. The evidence
   shows the consistency of one reading of the text, not independent
   confirmation; the limits are stated in the limitations section and
@@ -77,19 +76,18 @@ authors:
     corresponding: true
     email: ""   # optional; used for the corresponding-author footnote
 
-version: "0.10.4"
-version_label: "v0.10.4"
-date: "2026-11-25"
+version: "0.10.5"
+version_label: "v0.10.5"
+date: "2026-11-26"
 # Markdown printed under the current version heading in CHANGES.md.
 release_notes: |
   ### Changes in this release
-  - **Breaking wire change.** `challenge` takes a `key_id`, and the nonce is bound to it at issue. The answer to `challenge` is the same for any key identifier, registered or not. A nonce issued for a key that was not registered at issue never verifies, however the registry changes later, and a request that presents a nonce with another `key_id` is answered as any non-authentic request. A request that was presented and refused is never accepted later. The known-answer files, vectors, schemas and wire-format text are regenerated.
-  - Merkle checkpoints use the RFC 9162 tree hash (domain-separated leaves and interior nodes, no duplication of a last node); the checkpoint event carries the tree size and the root.
-  - A direct call outside the current scope is refused with reason `scope` and recorded as `TOOL_CALL_REJECTED`.
-  - Soft revocation of the key being verified abandons the verification, as a hard revocation does. Operator events verify the signature first. The approval expiry is recorded per call, and an approval is valid strictly before it. A timer that expires in the tick of a request waits for the request.
-  - Closed limitations: pre-registration replay of a nonce, join before signature, approval revival, timer tick, soft revocation while re-attaching, key addition on a quarantined session, direct calls outside the scope, and checkpoints after the end of a session.
-  - Formal evidence: the TLA+ model and the Python transcription follow the changes; TLC was rerun in Docker for every configuration with no error and every model mutant killed, the Apalache base and inductive checks were rerun, and the coverage of cells and actions per configuration was measured again. The Python and Rust mutation checks kill every mutant.
-  - The Internet-Draft source is brought to the same text and rebuilt.
+  - **Timers.** A resolve that arrives in the tick in which `T_human` expires loses to the timeout: the bridge ends the session with `HUMAN_TIMEOUT` and `TERMINATION`, refuses the resolve and answers it `terminated`. The model, the vectors, both bridges and the text state it, and a model mutant and a test cover it.
+  - **Registration of a further key.** `add_client` verifies the signature first; the state of the session (unknown, terminated, quarantined, key exhausted) is named only to a caller whose signature verified, and any other caller is answered `bad_signature`.
+  - **End of a session.** The order of the end events is fixed, and an operator termination of a quarantined, key-exhausted session is recorded.
+  - Formal evidence: TLC was rerun in Docker for every configuration with no error, every TLC and Apalache mutant is killed, and the traceability table and the TLC table are regenerated from the new logs.
+  - Publication: the arXiv source package is built by `make arxiv` from a clean directory and test-compiled without BibTeX; the status text names the posted Internet-Draft and the back matter says where code, vectors and model are.
+  - The Internet-Draft source carries the changed rules and is rebuilt as a new revision.
 
 license: "CC-BY-4.0"
 # The scaffold code is always MIT; the paper may be CC-BY-4.0 or MIT.
@@ -106,7 +104,7 @@ repo_url: "https://github.com/strebulaev-articles/articles.bridge_contract_for_a
 keywords: "agent, bridge contract, session governance, AGTP, GAR, PACE, conformance, session resumption, specification draft"
 
 # Legacy alias kept for older generated repos; the generator prefers `abstract`.
-description: "Bridge Contract for Agent Session Governance — independent specification draft, not submitted to the IETF."
+description: "Bridge Contract for Agent Session Governance — independent specification draft; an individual Internet-Draft with the same normative text is posted."
 
 # Zenodo uses the abstract as its description. Keep a separate `description`
 # only if you need a longer, deposit-specific text; the generator prefers

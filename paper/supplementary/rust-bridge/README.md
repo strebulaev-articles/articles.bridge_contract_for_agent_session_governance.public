@@ -84,6 +84,6 @@ prefix check or the answer-hash comparison makes the vectors fail (V02, V25).
 * The hash-chain encodings are RFC 8785 canonical JSON, pinned by
   `../vectors/bytes_kat.json`, which this crate and the Python bridge both
   read; the vectors still compare event kinds, not hashes.
-* Not implemented: I-CHECKPOINT (SHOULD), I-SIGN-EVENT (SHOULD), I8's source
+* Not implemented: I-SIGN-EVENT (SHOULD), I8's source
   of truth (the transport reports a replay through a flag), and the bridge's
   rate limiting of challenges and rejections (a SHOULD of I11).
